@@ -44,6 +44,7 @@ from apxm_program._generated.diagnostics import (
 from apxm_program._generated.permissions import Permission
 from apxm_program._generated.runtime_evidence import (
     LoopIterationCompletedFact,
+    ModelAttemptRecordedFact,
     decode_fact,
 )
 
@@ -175,3 +176,43 @@ def test_generated_runtime_evidence_binding_is_closed() -> None:
         pass
     else:
         raise AssertionError("unknown fact kind must fail closed")
+
+
+def test_generated_runtime_evidence_preserves_specialized_attempt_identity() -> None:
+    fact = decode_fact(
+        {
+            "fact_id": "attempt.1",
+            "event_sequence": 2,
+            "fact_kind": "attempt.recorded",
+            "program_invocation_id": "invocation.1",
+            "node_execution_id": "node-execution.1",
+            "air_node_id": "node.model",
+            "attempt_id": "attempt.1",
+            "attempt_index": 0,
+            "model_effect_id": "effect.1",
+            "request_digest": "sha256:" + "1" * 64,
+            "model_target_ref": "model-target.1",
+            "model_target_digest": "sha256:" + "2" * 64,
+            "model_deployment_ref": "deployment.1",
+            "exact_port_binding_digest": "sha256:" + "3" * 64,
+            "target_commitment_digest": "sha256:" + "4" * 64,
+            "generation_cohort_digest": "sha256:" + "5" * 64,
+            "target_generation": 1,
+            "target_port_contract_digest": "sha256:" + "6" * 64,
+            "target_composition_digest": "sha256:" + "7" * 64,
+            "native_input_tokens": 3,
+            "native_output_tokens": 5,
+        }
+    )
+    assert isinstance(fact, ModelAttemptRecordedFact)
+    assert fact.attempt_id == "attempt.1"
+    assert fact.native_output_tokens == 5
+
+    with pytest.raises(ValueError, match="expected exactly one oneOf branch"):
+        decode_fact(
+            {
+                "fact_id": "attempt.2",
+                "event_sequence": 3,
+                "fact_kind": "attempt.recorded",
+            }
+        )

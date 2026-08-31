@@ -2,7 +2,9 @@
 //! handler in-process; it supervises this binary over JSONL.
 
 use std::io::{self, BufReader};
+use std::sync::Arc;
 
+use apxm_commit_local::ReadAuthorizationBinding;
 use apxm_runtime_service::{RuntimeService, UnixEndpoint, serve_stdio, serve_unix};
 
 fn main() {
@@ -22,7 +24,29 @@ fn main() {
             }
         }
     }
-    let service = RuntimeService::from_env();
+    let service = match RuntimeService::try_from_env() {
+        Ok(service) => service,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    // A standalone child remains deny-by-default.  An owner-composed caller
+    // may inject an exact typed read binding through the transport environment;
+    // this does not make APXM a product authorization authority.
+    let service = match ReadAuthorizationBinding::from_env() {
+        Ok(Some(binding)) => {
+            let scope_ref = binding.scope_ref.as_str().to_owned();
+            service
+                .with_read_access_hook(Arc::new(binding))
+                .with_output_access_scope_ref(scope_ref)
+        }
+        Ok(None) => service,
+        Err(error) => {
+            eprintln!("invalid runtime read authorization binding: {error}");
+            std::process::exit(1);
+        }
+    };
     let result = if let Some(path) = socket {
         if let Err(error) = UnixEndpoint::new(path.clone()) {
             eprintln!("{error}");

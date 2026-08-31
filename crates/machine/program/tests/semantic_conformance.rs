@@ -15,7 +15,7 @@ use apxm_program::frontend_graph::{
     CapabilityRequirement, MAX_INSTRUCTION_BYTES, PermissionDecision, SkillInstructionSource,
     SkillRequirement,
 };
-use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
+use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage, StructuralRegionKind};
 use apxm_program::{
     FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
 };
@@ -558,6 +558,12 @@ fn source_map_enums_do_not_drift() {
         wire_members(SourceLanguage::ALL),
         languages,
         "source language closure drifted from schema",
+    );
+    let structural = schema_enum(&schema, "RegionSpan", "structural_kind");
+    assert_eq!(
+        wire_members(StructuralRegionKind::ALL),
+        structural,
+        "structural source lineage closure drifted from schema",
     );
 }
 

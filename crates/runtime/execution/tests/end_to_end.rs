@@ -18,8 +18,9 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
-    PromptEffectState,
+    PortBundleSpec, PortImplementation, PortSlot, PreparedSessionOutputRef, ProgramInstanceRef,
+    ProgramInvocationRef, PromptEffectState, SESSION_OUTPUT_REF_CONTRACT, SessionOutputPreparation,
+    SessionOutputVisibility,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -32,14 +33,16 @@ use apxm_program::runtime_evidence::{
 };
 
 use apxm_execution::{
-    CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort,
-    CapabilityRequest, CommittedNativeModelUsage, CommittedNativeModelUsageError,
+    CancellationToken, CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome,
+    CapabilityPort, CapabilityRequest, CommittedNativeModelUsage, CommittedNativeModelUsageError,
     CommittedNativeModelUsageGateError, CommittedNativeModelUsageOutcome,
     CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
     CompositionRequest, EventAwait, EventOutcome, EventPort, EvidencePositionRef,
     EvidencePositionRefType, ExecutionError, ExecutionPortBundle, ExecutionPorts, ExecutionRequest,
-    NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    NodeOutcome, ObservationFailurePolicy, ObservationRecorder, ObservationSink,
+    ObservationSinkError, StaticHookHandlerPort, StaticHookResult, execute,
 };
+use apxm_runtime_protocol::{Commitment, ObservationKind};
 
 /// The decision every admission in these fixtures carries unless a test
 /// replaces it. There is no "no decision" admission to write.
@@ -352,6 +355,17 @@ impl CapabilityPort for FakeCapability {
     }
 }
 
+struct UnknownCapability;
+
+#[async_trait]
+impl CapabilityPort for UnknownCapability {
+    async fn invoke(&self, _request: CapabilityRequest) -> CapabilityOutcome {
+        CapabilityOutcome::OutcomeUnknown {
+            message: "capability outcome is uncertain".into(),
+        }
+    }
+}
+
 struct RecordingCapability {
     requests: Mutex<Vec<CapabilityRequest>>,
     results: Mutex<VecDeque<String>>,
@@ -481,13 +495,34 @@ impl StaticHookHandlerPort for StaticHooks {
 struct FakeCommit {
     state: Mutex<(u64, Vec<Fact>)>,
     invocation_refs: Mutex<Vec<String>>,
+    observations: Mutex<Vec<Value>>,
+    output_refs: Mutex<Vec<Value>>,
     fail: bool,
+}
+
+struct RejectCommittedObservations;
+
+impl ObservationSink for RejectCommittedObservations {
+    fn publish(
+        &self,
+        observation: apxm_runtime_protocol::ExecutionObservation,
+    ) -> Result<(), ObservationSinkError> {
+        if observation.commitment == Commitment::Committed {
+            Err(ObservationSinkError::rejected(
+                "post-commit projection intentionally unavailable",
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 impl FakeCommit {
     fn new() -> Self {
         Self {
             state: Mutex::new((0, Vec::new())),
             invocation_refs: Mutex::new(Vec::new()),
+            observations: Mutex::new(Vec::new()),
+            output_refs: Mutex::new(Vec::new()),
             fail: false,
         }
     }
@@ -496,6 +531,8 @@ impl FakeCommit {
         Self {
             state: Mutex::new((0, Vec::new())),
             invocation_refs: Mutex::new(Vec::new()),
+            observations: Mutex::new(Vec::new()),
+            output_refs: Mutex::new(Vec::new()),
             fail: true,
         }
     }
@@ -506,9 +543,39 @@ impl FakeCommit {
     fn invocation_refs(&self) -> Vec<String> {
         self.invocation_refs.lock().unwrap().clone()
     }
+
+    fn observations(&self) -> Vec<Value> {
+        self.observations.lock().unwrap().clone()
+    }
+
+    fn output_refs(&self) -> Vec<Value> {
+        self.output_refs.lock().unwrap().clone()
+    }
 }
 #[async_trait]
 impl ExecutionCommitPort for FakeCommit {
+    async fn prepare_output(
+        &self,
+        preparation: SessionOutputPreparation,
+    ) -> Result<PreparedSessionOutputRef, String> {
+        let content_digest = format!("sha256:{:x}", Sha256::digest(&preparation.content));
+        Ok(PreparedSessionOutputRef {
+            contract: SESSION_OUTPUT_REF_CONTRACT.to_owned(),
+            ref_type: "SessionOutputRef".to_owned(),
+            output_ref: format!("output.prepared.{content_digest}"),
+            program_instance_id: preparation.program_instance_ref,
+            program_invocation_id: preparation.program_invocation_ref,
+            node_execution_id: preparation.node_execution_id,
+            occurrence_id: preparation.occurrence_id,
+            content_digest,
+            byte_length: preparation.content.len() as u64,
+            media_type: preparation.media_type,
+            visibility: SessionOutputVisibility::Committed,
+            access_scope_ref: preparation.access_scope_ref,
+            disclosure_ref: preparation.disclosure_ref,
+        })
+    }
+
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
         if self.fail {
             return ExecutionCommitResult::CompareConflict {
@@ -520,6 +587,14 @@ impl ExecutionCommitPort for FakeCommit {
             .lock()
             .unwrap()
             .push(request.program_invocation_ref.as_str().to_string());
+        self.observations
+            .lock()
+            .unwrap()
+            .extend(request.tuple.observations);
+        self.output_refs
+            .lock()
+            .unwrap()
+            .extend(request.tuple.output_refs);
         state.0 = request.expected_program_state_version + 1;
         state.1.extend(request.evidence_batch);
         ExecutionCommitResult::Committed {
@@ -1369,6 +1444,112 @@ async fn control_predicate_materializes_permitted_value_assembly_root() {
 }
 
 #[tokio::test]
+async fn structural_return_assembles_invocation_output_without_node_coordinates() {
+    let mut execution = request();
+    execution.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air",
+        "value_assemblies": [{
+            "value_id": "value.final",
+            "expression": {
+                "kind": "object",
+                "fields": [{
+                    "name": "text",
+                    "value": {"kind": "string", "value": "ready"}
+                }]
+            }
+        }],
+        "semantic_operations": [],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn",
+             "execution_order": 1, "operands": [
+                {"slot": "output", "value_id": "value.final", "type_ref": "Output"}
+            ]}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python",
+                        "node_spans": [], "region_annotations": []}
+    }))
+    .expect("structural return AIR");
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    assert!(execution.air.verify().is_accepted());
+
+    let commit = Arc::new(FakeCommit::new());
+    execute(&ports(commit.clone()), execution, Value::Null)
+        .await
+        .expect("structural return executes");
+
+    let output_refs = commit.output_refs();
+    assert_eq!(output_refs.len(), 1);
+    assert!(output_refs[0].get("node_execution_id").is_none());
+    assert!(output_refs[0].get("occurrence_id").is_none());
+    let terminal = commit
+        .observations()
+        .into_iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str)
+                == Some("terminal_committed")
+        })
+        .expect("terminal observation");
+    assert_eq!(
+        terminal.get("output_ref").and_then(Value::as_str),
+        output_refs[0].get("ref").and_then(Value::as_str)
+    );
+}
+
+#[tokio::test]
+async fn structural_return_forwards_entrypoint_input_without_node_coordinates() {
+    let mut execution = request();
+    execution.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air",
+        "value_assemblies": [],
+        "semantic_operations": [],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0,
+             "block_arguments": [{"value_id": "EchoAgent.param.input", "type_ref": "Input"}]},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn",
+             "execution_order": 1, "operands": [
+                {"slot": "output", "value_id": "EchoAgent.param.input", "type_ref": "Output"}
+            ]}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "typescript",
+                        "node_spans": [], "region_annotations": []}
+    }))
+    .expect("entrypoint passthrough AIR");
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    execution.initial_values = BTreeMap::from([(
+        "EchoAgent.param.input".to_owned(),
+        json!({"text": "from invocation input"}),
+    )]);
+    assert!(execution.air.verify().is_accepted());
+
+    let commit = Arc::new(FakeCommit::new());
+    execute(&ports(commit.clone()), execution, Value::Null)
+        .await
+        .expect("entrypoint input is an available return value");
+
+    let output_refs = commit.output_refs();
+    assert_eq!(output_refs.len(), 1);
+    assert!(output_refs[0].get("node_execution_id").is_none());
+    assert!(output_refs[0].get("occurrence_id").is_none());
+    let terminal = commit
+        .observations()
+        .into_iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str)
+                == Some("terminal_committed")
+        })
+        .expect("terminal observation");
+    assert_eq!(
+        terminal.get("output_ref").and_then(Value::as_str),
+        output_refs[0].get("ref").and_then(Value::as_str)
+    );
+}
+
+#[tokio::test]
 async fn control_predicate_refuses_unmaterialized_future_value() {
     let mut execution = request();
     execution.air = serde_json::from_value(json!({
@@ -1551,6 +1732,237 @@ async fn executes_all_five_ops_and_commits_atomically() {
 }
 
 #[tokio::test]
+async fn execution_observations_follow_live_boundaries_and_commit_last() {
+    let recorder = Arc::new(ObservationRecorder::new(256, 1024 * 1024));
+    let commit = Arc::new(FakeCommit::new());
+    let ports = ports(commit.clone()).with_observation_sink(recorder.clone());
+
+    execute(&ports, request(), json!({"iterations": 0}))
+        .await
+        .expect("run");
+
+    let observations = recorder.snapshot();
+    let durable_observations = commit.observations();
+    let output_refs = commit.output_refs();
+    assert!(!observations.is_empty());
+    assert!(!durable_observations.is_empty());
+    assert_eq!(output_refs.len(), 1);
+    assert_eq!(output_refs[0]["commitment"], "committed");
+    assert!(output_refs[0]["node_execution_id"].as_str().is_some());
+    assert!(output_refs[0]["occurrence_id"].as_str().is_some());
+    let durable_content_ref = durable_observations
+        .iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str) == Some("content_committed")
+        })
+        .and_then(|observation| observation.get("output_ref"))
+        .and_then(Value::as_str)
+        .expect("durable content commit observation carries its output ref");
+    assert_eq!(durable_content_ref, output_refs[0]["ref"].as_str().unwrap());
+    assert_eq!(durable_observations.len(), observations.len());
+    assert!(durable_observations.iter().any(|observation| {
+        observation.get("observation_kind").and_then(Value::as_str) == Some("terminal_committed")
+    }));
+    assert_eq!(
+        observations.first().unwrap().observation_kind,
+        ObservationKind::InvocationStarted
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::NodeStarted)
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::ModelAttempt)
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::CapabilityAttempt)
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::ProgramAttempt)
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::EventWaiting)
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.observation_kind == ObservationKind::EventResumed)
+    );
+    assert!(observations.iter().any(|observation| {
+        observation.observation_kind == ObservationKind::ContentPublished
+            && observation.commitment == Commitment::Provisional
+            && observation.content_ref.is_some()
+    }));
+
+    let first_committed = observations
+        .iter()
+        .position(|observation| observation.commitment == Commitment::Committed)
+        .expect("commit observations");
+    assert!(
+        observations[..first_committed]
+            .iter()
+            .all(|observation| observation.commitment == Commitment::Provisional)
+    );
+    assert_eq!(
+        observations.last().unwrap().observation_kind,
+        ObservationKind::EvidenceCommitted
+    );
+    let expected_evidence_ref = format!(
+        "evidence.{}.{}.{}",
+        observations.last().unwrap().program_invocation_id.as_str(),
+        "c1",
+        commit.facts().len()
+    );
+    assert_eq!(
+        observations
+            .last()
+            .unwrap()
+            .evidence_ref
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        expected_evidence_ref
+    );
+    assert!(
+        observations
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence)
+    );
+}
+
+#[tokio::test]
+async fn fail_closed_observation_sink_cannot_fail_after_atomic_commit() {
+    let commit = Arc::new(FakeCommit::new());
+    let ports = ports(commit.clone())
+        .with_observation_sink(Arc::new(RejectCommittedObservations))
+        .with_observation_failure_policy(ObservationFailurePolicy::FailClosed);
+
+    let report = execute(&ports, request(), json!({"iterations": 0}))
+        .await
+        .expect("post-commit sink delivery is best effort");
+
+    assert!(matches!(
+        report.commit,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    assert!(!commit.facts().is_empty());
+}
+
+#[tokio::test]
+async fn unknown_effect_does_not_commit_a_return_terminal() {
+    let commit = Arc::new(FakeCommit::new());
+    let report = execute(
+        &ports_with_capability(commit.clone(), Arc::new(UnknownCapability)),
+        request(),
+        json!({"iterations": 0}),
+    )
+    .await
+    .expect("unknown effects still commit an uncertainty record");
+
+    assert!(matches!(
+        report.commit,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    assert!(!commit
+        .facts()
+        .iter()
+        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::InvocationCommitted)));
+    let observations = commit.observations();
+    assert!(observations.iter().any(|observation| {
+        observation.get("observation_kind").and_then(Value::as_str) == Some("outcome_unknown")
+    }));
+    let terminal_unknown = observations
+        .iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str) == Some("outcome_unknown")
+                && observation.get("commitment").and_then(Value::as_str) == Some("committed")
+        })
+        .expect("unknown outcome has a committed owner observation");
+    assert!(
+        terminal_unknown
+            .get("node_execution_id")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(
+        terminal_unknown
+            .get("occurrence_id")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(
+        terminal_unknown
+            .get("evidence_ref")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(!observations.iter().any(|observation| {
+        observation.get("observation_kind").and_then(Value::as_str) == Some("terminal_committed")
+    }));
+}
+
+#[tokio::test]
+async fn cancellation_before_first_effect_commits_cancelled_without_output() {
+    let commit = Arc::new(FakeCommit::new());
+    let recorder = Arc::new(ObservationRecorder::new(256, 1024 * 1024));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let report = execute(
+        &ports(commit.clone())
+            .with_cancellation_token(cancellation)
+            .with_observation_sink(recorder.clone()),
+        request(),
+        Value::Null,
+    )
+    .await
+    .expect("cancellation commits its terminal evidence");
+
+    assert!(matches!(
+        report.commit,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    assert!(commit
+        .facts()
+        .iter()
+        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::InvocationCancelled)));
+    assert!(!commit
+        .facts()
+        .iter()
+        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::InvocationCommitted)));
+    assert!(commit.output_refs().is_empty());
+    let committed_observations = commit.observations();
+    let committed_cancel = committed_observations
+        .iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str)
+                == Some("invocation_cancelled")
+                && observation.get("commitment").and_then(Value::as_str) == Some("committed")
+        })
+        .expect("cancellation has a committed owner observation");
+    assert!(
+        committed_cancel
+            .get("evidence_ref")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    let live = recorder
+        .snapshot()
+        .into_iter()
+        .map(|observation| serde_json::to_value(observation).expect("live observation JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(live, commit.observations());
+}
+
+#[tokio::test]
 async fn capability_port_receives_arguments_authority_identity_and_stable_effect_facts() {
     let capability = Arc::new(RecordingCapability::default());
     execute(
@@ -1688,6 +2100,27 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
         }),
         "evidence carries the decision and the layer that produced it"
     );
+    let committed_observations = commit.observations();
+    let failed = committed_observations
+        .iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str) == Some("invocation_failed")
+                && observation.get("commitment").and_then(Value::as_str) == Some("committed")
+        })
+        .expect("failure has a committed owner observation");
+    assert!(
+        failed
+            .get("node_execution_id")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(
+        failed
+            .get("occurrence_id")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(failed.get("evidence_ref").and_then(Value::as_str).is_some());
 }
 
 /// An admitted allow changes nothing about the effect, and still leaves the

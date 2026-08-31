@@ -4,12 +4,18 @@ use std::io::{BufRead, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::RuntimeService;
-use apxm_runtime_protocol::{RuntimeHandshake, RuntimeRequest};
+use apxm_runtime_protocol::{
+    RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
+    RuntimeExecutionAdmissionHandshake, RuntimeExecutionAdmissionRequest, RuntimeHandshake,
+    RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2,
+};
 
 /// Maximum encoded JSONL frame, including its line terminator.
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
@@ -19,7 +25,37 @@ pub const RUNTIME_CHANNEL: &str = "runtime";
 pub const UNIX_IO_TIMEOUT_MS: u64 = 5_000;
 /// Maximum requests served on one local connection before it is drained.
 pub const MAX_FRAMES_PER_CONNECTION: usize = 256;
+/// Maximum concurrently active local Unix connections, including streams.
+pub const MAX_ACTIVE_UNIX_CONNECTIONS: usize = 64;
 const SOCKET_MODE: u32 = 0o600;
+
+struct UnixConnectionPermit(Arc<AtomicUsize>);
+
+impl UnixConnectionPermit {
+    fn try_acquire(active: Arc<AtomicUsize>) -> Option<Self> {
+        let mut current = active.load(Ordering::Acquire);
+        loop {
+            if current >= MAX_ACTIVE_UNIX_CONNECTIONS {
+                return None;
+            }
+            match active.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self(active)),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+impl Drop for UnixConnectionPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// One stdio JSONL frame.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +73,20 @@ pub struct StdioFrame {
 struct Envelope {
     handshake: RuntimeHandshake,
     request: RuntimeRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvelopeV2 {
+    handshake: RuntimeHandshakeV2,
+    request: RuntimeRequestV2,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionAdmissionEnvelope {
+    handshake: RuntimeExecutionAdmissionHandshake,
+    request: RuntimeExecutionAdmissionRequest,
 }
 
 /// Local Unix socket endpoint identity.
@@ -83,12 +133,17 @@ pub fn serve_stdio<R: BufRead, W: Write>(
     serve_frames(reader, writer, &mut service)
 }
 
-/// Bind an absolute Unix socket and serve one connection at a time.
-pub fn serve_unix(path: &str, mut service: RuntimeService) -> Result<(), String> {
+/// Bind an absolute Unix socket and serve concurrent local connections.
+pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
     let endpoint = UnixEndpoint::new(path)?;
     let listener = bind_secure_unix(&endpoint.path)?;
+    let shared = Arc::new(Mutex::new(service));
+    let active_connections = Arc::new(AtomicUsize::new(0));
     for incoming in listener.incoming() {
         let stream = incoming.map_err(|error| error.to_string())?;
+        let Some(permit) = UnixConnectionPermit::try_acquire(active_connections.clone()) else {
+            continue;
+        };
         stream
             .set_read_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
             .map_err(|error| error.to_string())?;
@@ -97,7 +152,11 @@ pub fn serve_unix(path: &str, mut service: RuntimeService) -> Result<(), String>
             .map_err(|error| error.to_string())?;
         let reader =
             std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-        let _ = serve_frames(reader, stream, &mut service);
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let _permit = permit;
+            let _ = serve_shared_frames(reader, stream, shared);
+        });
     }
     Ok(())
 }
@@ -128,21 +187,264 @@ fn serve_frames<R: BufRead, W: Write>(
                 frame.channel, RUNTIME_CHANNEL
             ));
         }
-        let envelope: Envelope =
+        let payload: serde_json::Value =
             serde_json::from_str(&frame.payload).map_err(|error| error.to_string())?;
-        let result = service
-            .handle(&envelope.handshake, envelope.request)
-            .map_err(|error| format!("{error:?}"))?;
-        let reply = StdioFrame {
-            channel: RUNTIME_CHANNEL.to_owned(),
-            payload: serde_json::to_string(&result).map_err(|error| error.to_string())?,
-        };
-        writer
-            .write_all(encode_jsonl(&reply).as_bytes())
-            .map_err(|error| error.to_string())?;
-        writer.flush().map_err(|error| error.to_string())?;
+        if is_observation_stream(&payload) {
+            return Err("long-lived observation streams require a Unix endpoint".to_owned());
+        }
+        let result = process_payload(payload, service)?;
+        write_result(&mut writer, result)?;
     }
     Ok(())
+}
+
+fn process_payload(
+    payload: serde_json::Value,
+    service: &mut RuntimeService,
+) -> Result<serde_json::Value, String> {
+    let protocol_version = payload
+        .get("handshake")
+        .and_then(|handshake| handshake.get("protocol_version"))
+        .and_then(serde_json::Value::as_str);
+    if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION) {
+        let envelope: EnvelopeV2 =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        serde_json::to_value(
+            service
+                .handle_v2(&envelope.handshake, envelope.request)
+                .map_err(|error| format!("{error:?}"))?,
+        )
+        .map_err(|error| error.to_string())
+    } else if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
+        let envelope: ExecutionAdmissionEnvelope =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        serde_json::to_value(
+            service.handle_execution_admission(&envelope.handshake, envelope.request),
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        let envelope: Envelope =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        serde_json::to_value(
+            service
+                .handle(&envelope.handshake, envelope.request)
+                .map_err(|error| format!("{error:?}"))?,
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+fn write_result<W: Write>(writer: &mut W, result: serde_json::Value) -> Result<(), String> {
+    let reply = StdioFrame {
+        channel: RUNTIME_CHANNEL.to_owned(),
+        payload: result.to_string(),
+    };
+    writer
+        .write_all(encode_jsonl(&reply).as_bytes())
+        .map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())
+}
+
+fn is_observation_stream(payload: &serde_json::Value) -> bool {
+    payload
+        .get("handshake")
+        .and_then(|value| value.get("protocol_version"))
+        .and_then(serde_json::Value::as_str)
+        == Some(RUNTIME_PROTOCOL_V2_VERSION)
+        && payload
+            .get("request")
+            .and_then(|value| value.get("method"))
+            .and_then(serde_json::Value::as_str)
+            == Some("observation.subscribe")
+        && payload
+            .get("request")
+            .and_then(|value| value.get("stream"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+}
+
+/// Serve independent Unix clients against one shared service.  A stream
+/// releases the service mutex while waiting for the driver's commit signal,
+/// allowing another client to start/finish execution and wake the subscriber.
+fn serve_shared_frames(
+    mut reader: std::io::BufReader<UnixStream>,
+    mut writer: UnixStream,
+    service: Arc<Mutex<RuntimeService>>,
+) -> Result<(), String> {
+    let mut frame_count = 0;
+    while let Some(line) = read_limited_line(&mut reader)? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let frame = decode_jsonl(&line)?;
+        frame_count += 1;
+        if frame_count > MAX_FRAMES_PER_CONNECTION {
+            return Err(format!(
+                "Runtime connection exceeds {MAX_FRAMES_PER_CONNECTION} frames"
+            ));
+        }
+        validate_frame(&frame)?;
+        let payload: serde_json::Value =
+            serde_json::from_str(&frame.payload).map_err(|error| error.to_string())?;
+        if is_observation_stream(&payload) {
+            return serve_observation_stream(payload, &mut writer, service);
+        }
+        let result = process_shared_payload(payload, service.clone())?;
+        write_result(&mut writer, result)?;
+    }
+    Ok(())
+}
+
+/// Dispatch one Unix request while allowing an invocation driver to run
+/// without the shared service mutex. Admission/claim and finalization remain
+/// serialized by that mutex; only the immutable execution lease crosses the
+/// unlocked interval.
+fn process_shared_payload(
+    payload: serde_json::Value,
+    service: Arc<Mutex<RuntimeService>>,
+) -> Result<serde_json::Value, String> {
+    let protocol_version = payload
+        .get("handshake")
+        .and_then(|handshake| handshake.get("protocol_version"))
+        .and_then(serde_json::Value::as_str);
+    if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION) {
+        let mut guard = service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?;
+        return process_payload(payload, &mut guard);
+    }
+
+    if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
+        let envelope: ExecutionAdmissionEnvelope =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        let mut guard = service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?;
+        return serde_json::to_value(
+            guard.handle_execution_admission(&envelope.handshake, envelope.request),
+        )
+        .map_err(|error| error.to_string());
+    }
+
+    let envelope: Envelope = serde_json::from_value(payload).map_err(|error| error.to_string())?;
+    if let RuntimeRequest::ProgramInvocationStart {
+        request_id,
+        program_instance_id,
+        owner_claim,
+        input,
+    } = envelope.request
+    {
+        let prepared = {
+            let mut guard = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned")?;
+            guard.cleanup_expired();
+            envelope
+                .handshake
+                .admit()
+                .map_err(|error| format!("{error:?}"))?;
+            guard.prepare_invocation(request_id, program_instance_id, owner_claim, input)
+        };
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(result) => return serde_json::to_value(result).map_err(|error| error.to_string()),
+        };
+        let execution = prepared.execute();
+        let result = {
+            let mut guard = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned")?;
+            guard.finish_invocation(&prepared, execution)
+        };
+        return serde_json::to_value(result).map_err(|error| error.to_string());
+    }
+
+    let mut guard = service
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?;
+    serde_json::to_value(
+        guard
+            .handle(&envelope.handshake, envelope.request)
+            .map_err(|error| format!("{error:?}"))?,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn validate_frame(frame: &StdioFrame) -> Result<(), String> {
+    if handshake_cross_wired(&frame.channel) {
+        return Err("cross-wired compilation handshake on runtime stdio".to_owned());
+    }
+    if frame.channel != RUNTIME_CHANNEL {
+        return Err(format!(
+            "unexpected runtime channel '{}'; expected '{}'",
+            frame.channel, RUNTIME_CHANNEL
+        ));
+    }
+    Ok(())
+}
+
+fn serve_observation_stream(
+    mut payload: serde_json::Value,
+    writer: &mut UnixStream,
+    service: Arc<Mutex<RuntimeService>>,
+) -> Result<(), String> {
+    let signal = service
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?
+        .observation_signal();
+    let request_value = payload
+        .get_mut("request")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "observation stream request is not an object".to_owned())?;
+    request_value.remove("stream");
+    let envelope: EnvelopeV2 =
+        serde_json::from_value(payload).map_err(|error| error.to_string())?;
+    let handshake = envelope.handshake;
+    let mut request = envelope.request;
+    if !matches!(request, RuntimeRequestV2::ObservationSubscribe { .. }) {
+        return Err("stream is only supported for observation.subscribe".to_owned());
+    }
+    loop {
+        let generation = signal.generation();
+        let result = {
+            let guard = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned")?;
+            guard
+                .handle_v2(&handshake, request.clone())
+                .map_err(|error| format!("{error:?}"))?
+        };
+        let is_page = matches!(
+            &result,
+            apxm_runtime_protocol::RuntimeResultV2::ObservationPage { .. }
+        );
+        let page = match &result {
+            apxm_runtime_protocol::RuntimeResultV2::ObservationPage { page, .. } => {
+                Some(page.clone())
+            }
+            apxm_runtime_protocol::RuntimeResultV2::Failed { .. } => None,
+            _ => return Err("observation stream returned a non-page result".to_owned()),
+        };
+        write_result(
+            writer,
+            serde_json::to_value(&result).map_err(|error| error.to_string())?,
+        )?;
+        if !is_page {
+            return Ok(());
+        }
+        let page = page.expect("observation page result");
+        if let RuntimeRequestV2::ObservationSubscribe { after_cursor, .. } = &mut request {
+            *after_cursor = page
+                .items
+                .last()
+                .map(|item| item.cursor.clone())
+                .or_else(|| Some(page.high_watermark.clone()));
+        }
+        if page.has_more {
+            continue;
+        }
+        signal.wait_for_change(generation);
+    }
 }
 
 fn read_limited_line<R: BufRead>(reader: &mut R) -> Result<Option<String>, String> {
@@ -287,7 +589,31 @@ pub fn handshake_cross_wired(other_protocol: &str) -> bool {
 mod tests {
     use super::*;
     use crate::RuntimeService;
-    use apxm_runtime_protocol::{RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest};
+    use apxm_program::air::AirModule;
+    use apxm_program::artifact::ExecutableArtifact;
+    use apxm_runtime_protocol::{
+        RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
+    };
+
+    fn fixture_artifact_bytes() -> Vec<u8> {
+        let air: AirModule = serde_json::from_value(serde_json::json!({
+            "schema_version": "apxm.air",
+            "semantic_operations": [],
+            "structural_ir": [],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
+        }))
+        .expect("fixture AIR");
+        ExecutableArtifact::from_air(&air)
+            .expect("fixture artifact")
+            .encode()
+            .expect("fixture artifact JSON")
+    }
 
     #[test]
     fn jsonl_round_trips() {
@@ -306,6 +632,20 @@ mod tests {
     }
 
     #[test]
+    fn unix_connection_permits_are_bounded_and_released() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut permits = (0..MAX_ACTIVE_UNIX_CONNECTIONS)
+            .map(|_| {
+                UnixConnectionPermit::try_acquire(active.clone())
+                    .expect("permit should be available below the limit")
+            })
+            .collect::<Vec<_>>();
+        assert!(UnixConnectionPermit::try_acquire(active.clone()).is_none());
+        drop(permits.pop());
+        assert!(UnixConnectionPermit::try_acquire(active.clone()).is_some());
+    }
+
+    #[test]
     fn streaming_reader_rejects_delimiterless_frame_without_unbounded_growth() {
         let input = vec![b'x'; MAX_FRAME_BYTES + 1];
         let error = serve_stdio(input.as_slice(), &mut Vec::new(), RuntimeService::default())
@@ -320,15 +660,143 @@ mod tests {
     }
 
     #[test]
+    fn observation_stream_requires_unix_transport() {
+        let payload = serde_json::json!({
+            "handshake": {"protocol_version": RUNTIME_PROTOCOL_V2_VERSION},
+            "request": {"method": "observation.subscribe", "stream": true}
+        });
+        assert!(is_observation_stream(&payload));
+        let frame = StdioFrame {
+            channel: RUNTIME_CHANNEL.to_owned(),
+            payload: payload.to_string(),
+        };
+        let error = serve_stdio(
+            encode_jsonl(&frame).as_bytes(),
+            &mut Vec::new(),
+            RuntimeService::default(),
+        )
+        .expect_err("stdio cannot carry a long-lived stream");
+        assert!(error.contains("Unix"));
+    }
+
+    #[test]
     fn relative_unix_path_is_rejected() {
         assert!(UnixEndpoint::new("runtime.sock").is_err());
         UnixEndpoint::new("/tmp/apxm-runtime.sock").unwrap();
     }
 
     #[test]
+    fn unix_shared_dispatch_rejects_blank_invocation_id_before_mutation() {
+        let bytes = fixture_artifact_bytes();
+        let mut service = RuntimeService::default();
+        let digest = service
+            .try_admit_artifact(bytes.clone())
+            .expect("fixture artifact admission");
+        let created = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "create".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("instance creation");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance creation");
+        };
+        service
+            .bind_admission(
+                &program_instance_id,
+                crate::materials_for_artifact(&bytes, "invocation", Vec::new(), Vec::new()),
+            )
+            .expect("invocation admission");
+        let reserved = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::EventReserve {
+                    request_id: "reserve".to_owned(),
+                    type_id: "UserInput".to_owned(),
+                },
+            )
+            .expect("event reservation");
+        assert!(matches!(reserved, RuntimeResult::EventReserved { .. }));
+
+        let instance_before = service.instances.get(&program_instance_id).map(|instance| {
+            (
+                instance.invocation.as_ref().map(|invocation| {
+                    (
+                        invocation.request_id.clone(),
+                        invocation.program_invocation_id.clone(),
+                        invocation.result.clone(),
+                    )
+                }),
+                instance.invocation_history.len(),
+                instance.invocation_bytes,
+                instance.state_entry.bytes,
+            )
+        });
+        let reservation_count_before = service.reservations.len();
+        let reservation_generation_before = service.next_generation;
+        let invocation_index_before = service.invocation_index.clone();
+        let active_cancellations_before = service.active_cancellations.len();
+        let shared = Arc::new(Mutex::new(service));
+        let payload = serde_json::json!({
+            "handshake": {"protocol_version": RUNTIME_PROTOCOL_VERSION},
+            "request": {
+                "method": "program_invocation_start",
+                "request_id": " \t\n ",
+                "program_instance_id": program_instance_id,
+                "owner_claim": owner_claim,
+                "input": null
+            }
+        });
+
+        let result = process_shared_payload(payload, Arc::clone(&shared)).expect("dispatch");
+        let result: RuntimeResult = serde_json::from_value(result).expect("runtime result");
+        assert!(matches!(
+            result,
+            RuntimeResult::Failed { request_id, code }
+                if request_id == " \t\n " && code == "invalid_request"
+        ));
+
+        let service = shared.lock().expect("service lock");
+        let instance_after = service.instances.get(&program_instance_id).map(|instance| {
+            (
+                instance.invocation.as_ref().map(|invocation| {
+                    (
+                        invocation.request_id.clone(),
+                        invocation.program_invocation_id.clone(),
+                        invocation.result.clone(),
+                    )
+                }),
+                instance.invocation_history.len(),
+                instance.invocation_bytes,
+                instance.state_entry.bytes,
+            )
+        });
+        assert_eq!(instance_after, instance_before);
+        assert_eq!(service.reservations.len(), reservation_count_before);
+        assert_eq!(service.next_generation, reservation_generation_before);
+        assert_eq!(service.invocation_index, invocation_index_before);
+        assert_eq!(
+            service.active_cancellations.len(),
+            active_cancellations_before
+        );
+    }
+
+    #[test]
     fn serve_stdio_handles_one_create() {
         let mut service = RuntimeService::default();
-        let digest = service.admit_artifact(br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#.to_vec());
+        let digest = service.admit_artifact(fixture_artifact_bytes());
         let envelope = Envelope {
             handshake: RuntimeHandshake {
                 protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
@@ -388,9 +856,9 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let bytes = br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#;
-        let digest = crate::artifact_digest(bytes);
-        std::fs::write(dir.join(digest.replace(':', "-")), bytes).unwrap();
+        let bytes = fixture_artifact_bytes();
+        let digest = crate::canonical_artifact_digest(&bytes).expect("artifact digest");
+        std::fs::write(dir.join(digest.replace(':', "-")), &bytes).unwrap();
         let service = RuntimeService::default().with_artifact_dir(dir);
         let envelope = Envelope {
             handshake: RuntimeHandshake {

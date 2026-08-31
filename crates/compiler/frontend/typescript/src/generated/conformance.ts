@@ -8,14 +8,15 @@
 // harness runs the same from the repository and from an installed package.
 //
 // Each vector supplies its authored text through the package's own
-// `submitAuthoredSource` and then calls the public `Agent(...)`, because
+// the private host bridge's `submitAuthoredSource` and then calls the public
+// `Agent(...)`, because
 // TypeScript capture reads authored source rather than a live closure and `tsc`
 // has already erased the typed interface from the module that runs. That import
 // makes this module Node-only; nothing in the browser authoring entrypoint
 // imports it.
 
 import { Agent, Capability, Context, Event, Model, Skill, Tool } from "../index.js";
-import { submitAuthoredSource } from "../node.js";
+import { submitAuthoredSource } from "../host.js";
 import { Allow, Ask } from "../permissions.js";
 
 type Input = any;

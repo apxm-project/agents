@@ -17,6 +17,7 @@ use crate::frontend_graph::FrontendGraph;
 use crate::grammar::{is_digest, is_identifier, is_schema_id};
 use crate::lower::frontend_graph_to_air;
 use crate::source_map::SourceMap;
+use crate::{EXECUTION_LINEAGE_COMPILER_IDENTITY, execution_lineage_ref};
 
 /// The canonical model-target Port contract an artifact's `model.call` binds to.
 ///
@@ -195,6 +196,10 @@ pub struct ExecutableArtifact {
     pub air_digest: String,
     pub air: AirModule,
     pub source_bundle_digest: String,
+    /// Opaque commitment to the exact source bundle, canonical AIR, and
+    /// compiler identity used to produce this artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_lineage_ref: Option<String>,
     /// Exact static Hook bindings and handler identities executed by the runtime.
     #[serde(default)]
     pub hook_bindings: Vec<crate::frontend_graph::HookBinding>,
@@ -217,6 +222,60 @@ impl std::fmt::Display for CodecError {
 impl std::error::Error for CodecError {}
 
 impl ExecutableArtifact {
+    /// Compute the content address of this artifact envelope.
+    ///
+    /// `artifact_digest` is a commitment to the complete envelope, including
+    /// the AIR, source bundle commitment, source map, entrypoints, Hooks and
+    /// semantic requirements. The digest field itself is blanked while
+    /// computing the commitment so the value is not self-referential.
+    pub fn canonical_digest(&self) -> Result<String, CodecError> {
+        let mut unsigned = self.clone();
+        unsigned.artifact_digest.clear();
+        let content = serde_json::to_vec(&unsigned).map_err(CodecError)?;
+        Ok(sha256_digest(&content))
+    }
+
+    /// Decode and verify the exact envelope the Runtime Service is allowed to
+    /// execute. This is intentionally stricter than [`Self::validate`]: the
+    /// latter is also used by schema vectors whose arbitrary digest values
+    /// exercise structural rules, while an execution boundary must verify the
+    /// digest and compiler lineage bound to the bytes it received.
+    pub fn decode_for_execution(bytes: &[u8], expected_digest: &str) -> Result<Self, String> {
+        let artifact = Self::decode(bytes).map_err(|error| error.to_string())?;
+        let canonical_bytes = artifact.encode().map_err(|error| error.to_string())?;
+        if bytes != canonical_bytes {
+            return Err("noncanonical_artifact_encoding".to_owned());
+        }
+        if artifact.artifact_digest != expected_digest {
+            return Err("artifact_digest_mismatch".to_owned());
+        }
+        if artifact.integrity_algorithm != IntegrityAlgorithm::Sha256 {
+            return Err("unsupported_integrity_algorithm".to_owned());
+        }
+        let computed = artifact
+            .canonical_digest()
+            .map_err(|error| error.to_string())?;
+        if computed != expected_digest {
+            return Err("artifact_digest_mismatch".to_owned());
+        }
+        let verdict = artifact.validate();
+        if !verdict.is_accepted() {
+            return Err("invalid_artifact".to_owned());
+        }
+        let Some(lineage) = artifact.execution_lineage_ref.as_deref() else {
+            return Err("missing_execution_lineage".to_owned());
+        };
+        let expected_lineage = execution_lineage_ref(
+            &artifact.source_bundle_digest,
+            &artifact.air_digest,
+            EXECUTION_LINEAGE_COMPILER_IDENTITY,
+        );
+        if lineage != expected_lineage {
+            return Err("execution_lineage_mismatch".to_owned());
+        }
+        Ok(artifact)
+    }
+
     /// Derive the canonical executable artifact for a verified FrontendGraph.
     ///
     /// Lowers structural AIR, digest-binds the source bundle (programs, imports,
@@ -274,9 +333,14 @@ impl ExecutableArtifact {
         let mut artifact = Self {
             schema_version: ArtifactVersion::V1,
             artifact_digest: String::new(),
-            air_digest,
+            air_digest: air_digest.clone(),
             air: air.clone(),
-            source_bundle_digest,
+            source_bundle_digest: source_bundle_digest.clone(),
+            execution_lineage_ref: Some(execution_lineage_ref(
+                &source_bundle_digest,
+                &air_digest,
+                EXECUTION_LINEAGE_COMPILER_IDENTITY,
+            )),
             // The AIR's sequence, not the authoring sequence: `hook_execution_order`
             // places each Hook body, so AIR order is the schedule. The authored
             // order is still bound verbatim by the source bundle above, and each
@@ -287,9 +351,9 @@ impl ExecutableArtifact {
             artifact_semantic_requirements,
             integrity_algorithm: IntegrityAlgorithm::Sha256,
         };
-        let content = serde_json::to_vec(&artifact)
-            .map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
-        artifact.artifact_digest = sha256_digest(&content);
+        artifact.artifact_digest = artifact
+            .canonical_digest()
+            .map_err(ArtifactBuildError::Codec)?;
         // The producer runs the same validation the consumer runs. Without this
         // the `typed_port_slot` grammar and requirement-scope rules only ever
         // executed against an artifact someone had already written to disk.
@@ -333,9 +397,14 @@ impl ExecutableArtifact {
         let mut artifact = Self {
             schema_version: ArtifactVersion::V1,
             artifact_digest: String::new(),
-            air_digest,
+            air_digest: air_digest.clone(),
             air: air.clone(),
-            source_bundle_digest,
+            source_bundle_digest: source_bundle_digest.clone(),
+            execution_lineage_ref: Some(execution_lineage_ref(
+                &source_bundle_digest,
+                &air_digest,
+                EXECUTION_LINEAGE_COMPILER_IDENTITY,
+            )),
             // Read from the AIR, not hardcoded empty. An empty vector here was
             // the original inert-Hook bug through a second door: the artifact
             // would seal a digest declaring no Hooks over an AIR that carries
@@ -347,8 +416,9 @@ impl ExecutableArtifact {
             artifact_semantic_requirements,
             integrity_algorithm: IntegrityAlgorithm::Sha256,
         };
-        let content = serde_json::to_vec(&artifact).map_err(codec)?;
-        artifact.artifact_digest = sha256_digest(&content);
+        artifact.artifact_digest = artifact
+            .canonical_digest()
+            .map_err(ArtifactBuildError::Codec)?;
         // Same producer-side gate `from_graph_and_air` runs: a module whose
         // operand slots, source map, or Hooks do not satisfy the artifact
         // contract does not become a digest-sealed artifact.
@@ -410,6 +480,21 @@ impl ExecutableArtifact {
             &self.source_bundle_digest,
             "source_bundle_digest",
         );
+        if let Some(lineage) = &self.execution_lineage_ref {
+            check_digest(&mut verdict, lineage, "execution_lineage_ref");
+            let expected = execution_lineage_ref(
+                &self.source_bundle_digest,
+                &self.air_digest,
+                EXECUTION_LINEAGE_COMPILER_IDENTITY,
+            );
+            if lineage != &expected {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    "execution_lineage_ref",
+                    "execution lineage reference does not match source, AIR, and compiler identity",
+                ));
+            }
+        }
 
         if self.entrypoints.is_empty() {
             verdict.push(Diagnostic::new(
@@ -1063,10 +1148,47 @@ mod from_air_tests {
     }
 
     #[test]
+    fn artifact_rejects_mismatched_execution_lineage() {
+        let mut artifact = ExecutableArtifact::from_air(&air(&["model.target"])).expect("from_air");
+        artifact.execution_lineage_ref = Some(sha256_digest(b"wrong-lineage"));
+        assert!(!artifact.validate().is_accepted());
+    }
+
+    #[test]
     fn model_free_air_has_no_requirements_but_still_validates() {
         let artifact = ExecutableArtifact::from_air(&air(&[])).expect("from_air");
         assert!(artifact.artifact_semantic_requirements.is_empty());
         assert!(artifact.validate().is_accepted());
+    }
+
+    #[test]
+    fn execution_decode_rejects_envelope_tampering_and_digest_mismatch() {
+        let artifact = ExecutableArtifact::from_air(&air(&["model.target"])).expect("from_air");
+        let bytes = artifact.encode().expect("encode");
+        assert!(
+            ExecutableArtifact::decode_for_execution(&bytes, &artifact.artifact_digest).is_ok()
+        );
+
+        let mut tampered: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        tampered["source_map"]["source_language"] = serde_json::json!("typescript");
+        let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered json");
+        assert!(
+            ExecutableArtifact::decode_for_execution(&tampered_bytes, &artifact.artifact_digest)
+                .is_err()
+        );
+        assert!(ExecutableArtifact::decode_for_execution(&bytes, "sha256:wrong").is_err());
+    }
+
+    #[test]
+    fn execution_decode_requires_compiler_lineage() {
+        let mut artifact = ExecutableArtifact::from_air(&air(&[])).expect("from_air");
+        artifact.execution_lineage_ref = None;
+        artifact.artifact_digest = artifact.canonical_digest().expect("digest");
+        let bytes = artifact.encode().expect("encode");
+        assert!(matches!(
+            ExecutableArtifact::decode_for_execution(&bytes, &artifact.artifact_digest),
+            Err(error) if error == "missing_execution_lineage"
+        ));
     }
 }
 

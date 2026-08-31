@@ -49,9 +49,10 @@ fn exact_invocation_admission_executes_the_canonical_fixture() {
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).expect("canonical result JSON");
-    assert_eq!(result["status"], "completed");
-    assert_eq!(result["runtime"], "apxm_execution");
-    assert_eq!(result["commit"]["status"], "committed");
+    assert_eq!(
+        result, "fixture.instance",
+        "the command returns the typed committed Session Output content"
+    );
 }
 
 #[test]

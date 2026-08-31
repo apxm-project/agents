@@ -65,6 +65,11 @@ RUSTC_SIGBUS_MARKER = "rustc interrupted by SIGBUS"
 TEMP_ARCHIVE_GLOB = ".tmp*.temp-archive"
 LIBRARY_SUFFIXES = frozenset({".a", ".dylib", ".dll", ".so"})
 RUN_TARGET_FLAGS = frozenset({"--bin", "--example", "--test", "--bench"})
+# Every dependency-resolving Cargo invocation goes through the checked-in
+# lockfile.  This keeps the Dekk wrapper reproducible and prevents a build or
+# test from silently rewriting Cargo.lock when the registry has changed.
+LOCKED_SUBCOMMANDS = frozenset({"build", "check", "clippy", "run", "test"})
+LOCK_FLAGS = frozenset({"--locked", "--frozen"})
 NATIVE_TOOLCHAIN_GATED_SUBCOMMANDS = frozenset({
     CargoCommand.BUILD.value,
     CargoCommand.TEST.value,
@@ -410,6 +415,14 @@ def _native_toolchain_readiness_error(
 
 
 def _run(command: list[str], *, project_root: Path, target_dir: Path) -> int:
+    if len(command) > 1 and command[0] == CARGO:
+        subcommand = command[1]
+        if subcommand in LOCKED_SUBCOMMANDS and not any(
+            flag in command[2:] for flag in LOCK_FLAGS
+        ):
+            # Cargo accepts command options after the subcommand.  Preserve
+            # caller-provided argument order while making the default safe.
+            command = [command[0], subcommand, "--locked", *command[2:]]
     env = _cargo_env(project_root, target_dir, command)
     if Path(command[0]).name == CARGO:
         target_error = _unsupported_linux_arm64_target_error(project_root, command[1:], env)

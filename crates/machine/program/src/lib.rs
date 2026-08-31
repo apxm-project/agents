@@ -35,7 +35,10 @@ pub use capability::{
     MAX_CAPABILITY_ARGUMENT_BYTES, capability_effect_id, capability_request_digest,
     capability_request_digest_sha256_hex,
 };
-pub use common::{IdempotencyKey, TypedErrorEnvelope, TypedRef};
+pub use common::{
+    EXECUTION_LINEAGE_COMPILER_IDENTITY, IdempotencyKey, TypedErrorEnvelope, TypedRef,
+    execution_lineage_ref,
+};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 pub use execution_commit::{
     AtomicWriteSetMember, CANONICAL_ATOMIC_WRITE_SET, CommitResult, ExecutionCommit,
@@ -59,4 +62,6 @@ pub use skill::{
     is_executable_skill_resource, verify_package_local_skill_json,
     verify_skill_discovery_root_json, verify_skill_package_json,
 };
-pub use source_map::{SourceLanguage, SourceMap, verify_source_map_json};
+pub use source_map::{
+    EdgeSpan, RegionSpan, SourceLanguage, SourceMap, StructuralRegionKind, verify_source_map_json,
+};

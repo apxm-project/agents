@@ -55,7 +55,7 @@ pub fn graph_attr_constants() -> Vec<FrontendConstant> {
 }
 
 pub fn graph_metric_constants() -> Vec<FrontendConstant> {
-    use constants::session::metrics_keys;
+    use constants::metrics::metrics_keys;
     use metrics_keys::graph_metric_keys;
 
     vec![

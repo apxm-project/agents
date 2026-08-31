@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.session-output-ref.v1",
+  "title": "SessionOutputRef",
+  "description": "An opaque, digest-addressed reference to runtime-produced content. The commitment state distinguishes prepared/provisional content from content made authoritative by an execution commit.",
+  "type": "object",
+  "required": [
+    "contract",
+    "ref_type",
+    "ref",
+    "program_instance_id",
+    "program_invocation_id",
+    "content_digest",
+    "byte_length",
+    "media_type",
+    "commitment",
+    "access_scope_ref"
+  ],
+  "properties": {
+    "contract": { "const": "apxm.session-output-ref.v1" },
+    "ref_type": { "const": "SessionOutputRef" },
+    "ref": { "$ref": "#/$defs/OpaqueRef" },
+    "program_instance_id": { "$ref": "#/$defs/OpaqueRef" },
+    "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+    "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+    "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+    "content_digest": { "$ref": "#/$defs/Digest" },
+    "byte_length": { "type": "integer", "minimum": 0 },
+    "media_type": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "commitment": {
+      "type": "string",
+      "enum": ["provisional", "committed"]
+    },
+    "access_scope_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "disclosure_ref": { "$ref": "#/$defs/OpaqueRef" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

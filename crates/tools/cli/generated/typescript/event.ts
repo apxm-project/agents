@@ -10,15 +10,15 @@ export interface EventMeta {
   span_id: string;
   parent_span_id: string | null;
   scope_id?: string;
-  program?: ProgramExecutionProvenance;
+  program_package?: ProgramPackageEventProvenance;
 }
 
 export type EventSource = "runtime" | "session" | "server" | "gui" | { backend: string } | { acp: string };
 
-export interface ProgramExecutionProvenance {
-  program_id: string;
-  program_version: string;
-  parent_program_id?: string;
+export interface ProgramPackageEventProvenance {
+  program_package_id: string;
+  program_package_digest: string;
+  parent_program_package_id?: string;
   parent_execution_id?: string;
   flow_name?: string;
 }
@@ -203,49 +203,6 @@ export interface PlanWorkflowEmittedEventPayload {
   [key: string]: unknown;
 }
 
-export interface WorkflowStartedEventPayload {
-  kind: "workflow_started";
-  workflow_name: string;
-  session_dir: string;
-  step_count: number;
-  [key: string]: unknown;
-}
-
-export interface WorkflowStepStartedEventPayload {
-  kind: "workflow_step_started";
-  workflow_name: string;
-  workflow_session_dir: string;
-  step_id: string;
-  step_index: number;
-  step_count: number;
-  [key: string]: unknown;
-}
-
-export interface WorkflowStepCompletedEventPayload {
-  kind: "workflow_step_completed";
-  workflow_name: string;
-  workflow_session_dir: string;
-  step_id: string;
-  step_index: number;
-  status: "success" | "failed" | "skipped";
-  success: boolean;
-  duration_ms: number;
-  session_dir?: string;
-  error?: string;
-  [key: string]: unknown;
-}
-
-export interface WorkflowFinishedEventPayload {
-  kind: "workflow_finished";
-  workflow_name: string;
-  session_dir: string;
-  status: "success" | "partial_failure" | "failed";
-  success: boolean;
-  duration_ms: number;
-  step_count: number;
-  [key: string]: unknown;
-}
-
 export interface ExecutionStartedEventPayload {
   kind: "execution_started";
   execution_id: string;
@@ -256,7 +213,7 @@ export interface ExecutionStartedEventPayload {
 
 export interface ExecuteCompleteEventPayload {
   kind: "execute_complete";
-  result: { "execution_id": string; "session_id": string; "outcome": { "status": "success"; } | { "status": "domain_failure"; "error": Record<string, unknown>; } | { "status": "cancellation"; } | { "status": "join_failure"; "failure": { "task": "scheduler_worker" | "scheduler_finalizer" | "runtime_finalizer"; "message": string; "cancelled": boolean; "panicked": boolean; }; }; } | { "execution_id"?: string; "workflow_id"?: string; "run_root"?: string; "trace_id"?: string; "results": Record<string, unknown>; "content": string | null; "session_dir": string | null; "stats": { "executed_nodes": number; "failed_nodes": number; "duration_ms": number; }; "llm_usage": { "input_tokens": number; "output_tokens": number; "total_requests": number; }; "tool_call_counts": Record<string, number>; "parked_session_id"?: string; };
+  result: unknown;
   [key: string]: unknown;
 }
 
@@ -451,19 +408,6 @@ export interface ContextWindowWarningEventPayload {
   [key: string]: unknown;
 }
 
-export interface SessionStartEventPayload {
-  kind: "session_start";
-  session_id: string;
-  [key: string]: unknown;
-}
-
-export interface SessionEndEventPayload {
-  kind: "session_end";
-  session_id: string;
-  total_turns: number;
-  [key: string]: unknown;
-}
-
 export interface SubagentSpawnBeginEventPayload {
   kind: "subagent_spawn_begin";
   agent_code: string;
@@ -587,10 +531,6 @@ export type KnownEventPayload =
   | PlanStepStartedEventPayload
   | PlanStepCompletedEventPayload
   | PlanWorkflowEmittedEventPayload
-  | WorkflowStartedEventPayload
-  | WorkflowStepStartedEventPayload
-  | WorkflowStepCompletedEventPayload
-  | WorkflowFinishedEventPayload
   | ExecutionStartedEventPayload
   | ExecuteCompleteEventPayload
   | MemoryReadEventPayload
@@ -613,8 +553,6 @@ export type KnownEventPayload =
   | CancelledEventPayload
   | LoopDetectedEventPayload
   | ContextWindowWarningEventPayload
-  | SessionStartEventPayload
-  | SessionEndEventPayload
   | SubagentSpawnBeginEventPayload
   | SubagentSpawnEndEventPayload
   | SubagentLlmCallBeginEventPayload
@@ -664,10 +602,6 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "plan_step_started": { name: "plan_step_started", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "plan_step_completed": { name: "plan_step_completed", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "plan_workflow_emitted": { name: "plan_workflow_emitted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "workflow_started": { name: "workflow_started", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "workflow_step_started": { name: "workflow_step_started", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "workflow_step_completed": { name: "workflow_step_completed", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "workflow_finished": { name: "workflow_finished", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "execution_started": { name: "execution_started", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "execute_complete": { name: "execute_complete", category: "lifecycle", terminal: true, terminalSense: "run_end" },
   "memory_read": { name: "memory_read", category: "observability", terminal: false, terminalSense: "n/a" },
@@ -690,8 +624,6 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },
   "context_window_warning": { name: "context_window_warning", category: "error", terminal: false, terminalSense: "n/a" },
-  "session_start": { name: "session_start", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "session_end": { name: "session_end", category: "lifecycle", terminal: true, terminalSense: "run_end" },
   "subagent_spawn_begin": { name: "subagent_spawn_begin", category: "agent", terminal: false, terminalSense: "n/a" },
   "subagent_spawn_end": { name: "subagent_spawn_end", category: "agent", terminal: false, terminalSense: "n/a" },
   "subagent_llm_call_begin": { name: "subagent_llm_call_begin", category: "agent", terminal: false, terminalSense: "n/a" },

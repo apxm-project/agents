@@ -72,6 +72,39 @@ class DekkCliWrapperTests(unittest.TestCase):
         self.assertIn("requires an exact `cargo run` target", rendered)
         self.assertIn("`--bin apxm`", rendered)
 
+    def test_cargo_wrapper_uses_checked_in_lockfile_by_default(self) -> None:
+        with mock.patch.object(
+            self.cargo_wrapper.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0),
+        ) as run_mock:
+            with mock.patch.dict(
+                self.cargo_wrapper.os.environ,
+                {"CC": "", "CXX": ""},
+                clear=False,
+            ):
+                exit_code = self.cargo_wrapper.main(["test", "-p", "apxm-core"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run_mock.call_args.args[0][:3], ["cargo", "test", "--locked"])
+
+    def test_cargo_wrapper_preserves_explicit_cargo_lock_mode(self) -> None:
+        with mock.patch.object(
+            self.cargo_wrapper.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0),
+        ) as run_mock:
+            with mock.patch.dict(
+                self.cargo_wrapper.os.environ,
+                {"CC": "", "CXX": ""},
+                clear=False,
+            ):
+                exit_code = self.cargo_wrapper.main(["build", "--frozen", "-p", "apxm-core"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn("--locked", run_mock.call_args.args[0])
+        self.assertEqual(run_mock.call_args.args[0][:3], ["cargo", "build", "--frozen"])
+
     def test_cargo_wrapper_fails_closed_on_macos_linux_compiler_mismatch(self) -> None:
         stderr = io.StringIO()
         with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):

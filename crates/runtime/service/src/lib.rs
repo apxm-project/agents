@@ -9,33 +9,53 @@ mod stdio;
 
 pub use composition::{
     AdmittedPackageHandlers, ArtifactStore, CanonicalRuntimeDescriptor, InvocationMaterials,
-    PackageHandlerWorkerCommand, artifact_digest, canonical_port_bindings_digest,
-    canonical_resource_ceiling_digest, canonical_runtime_descriptor, execute_admitted_artifact,
+    PackageHandlerWorkerCommand, RuntimeAdmissionProfile, artifact_digest,
+    canonical_artifact_digest, canonical_port_bindings_digest, canonical_resource_ceiling_digest,
+    canonical_runtime_descriptor, execute_admitted_artifact,
+    execute_admitted_artifact_resumable_for_instance,
+    execute_admitted_artifact_resumable_with_runtime_ports_and_cancellation,
+    execute_admitted_artifact_with_runtime_ports,
+    execute_admitted_artifact_with_runtime_ports_and_cancellation,
     execute_admitted_artifact_with_sandbox, materials_for_artifact,
-    validate_package_permission_resolution,
+    resume_admitted_artifact_with_runtime_ports, validate_package_permission_resolution,
+    verify_invocation_materials,
 };
 pub use stdio::{
-    MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION, RUNTIME_CHANNEL, StdioFrame, UNIX_IO_TIMEOUT_MS,
-    UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio, serve_unix,
+    MAX_ACTIVE_UNIX_CONNECTIONS, MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION, RUNTIME_CHANNEL,
+    StdioFrame, UNIX_IO_TIMEOUT_MS, UnixEndpoint, decode_jsonl, encode_jsonl,
+    handshake_cross_wired, serve_stdio, serve_unix,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io::Read;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::{Component, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use apxm_ais::permissions::PermissionDecision;
 use apxm_capability_iface::sandbox::SandboxRegistry;
+use apxm_commit_local::{
+    CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, ReadAccessHook,
+};
 use apxm_execution::{
-    ApprovalBroker, ApprovalDecision, DenyBroker, Observation, RecordingObserver,
+    ApprovalBroker, ApprovalDecision, CancellationToken, Continuation, DenyBroker,
+    ObservationRecorder,
 };
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventApplicationResult};
-use apxm_program::air::AirModule;
-use apxm_runtime_protocol::{
-    ProtocolError, RuntimeHandshake, RuntimeOwnerClaim, RuntimeRequest, RuntimeResult,
+use apxm_kernel::{
+    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult, ProgramInstanceRef,
 };
+use apxm_program::air::AirModule;
+use apxm_program::artifact::ExecutableArtifact;
+use apxm_runtime_protocol::{
+    EventInspection, EventStatus, ExecutionObservation, ProtocolError,
+    RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
+    RuntimeExecutionAdmissionRequest, RuntimeFailureCode, RuntimeHandshake, RuntimeHandshakeV2,
+    RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2,
+};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -88,8 +108,6 @@ pub struct RuntimeStatePolicy {
     pub applications: StateQuota,
     /// Cancellation markers needed by an invocation while it is settling.
     pub cancellations: StateQuota,
-    /// Last committed output retained for the interaction client.
-    pub last_output: StateQuota,
     /// Ordered live observations retained for deterministic consumers.
     pub observations: StateQuota,
     /// Maximum serialized invocation input retained for idempotency.
@@ -105,7 +123,6 @@ impl Default for RuntimeStatePolicy {
             reservations: StateQuota::new(2048, 16 * 1024 * 1024, Duration::from_secs(3600)),
             applications: StateQuota::new(4096, 64 * 1024 * 1024, Duration::from_secs(3600)),
             cancellations: StateQuota::new(2048, 8 * 1024 * 1024, Duration::from_secs(3600)),
-            last_output: StateQuota::new(1, 16 * 1024 * 1024, Duration::from_secs(1800)),
             observations: StateQuota::new(4096, 8 * 1024 * 1024, Duration::from_secs(3600)),
             max_input_bytes: 4 * 1024 * 1024,
         }
@@ -128,33 +145,128 @@ pub struct RuntimeService {
     reservations: BTreeMap<(String, u64), ReservationState>,
     reservation_bytes: u64,
     next_generation: u64,
-    last_output: Option<Value>,
-    last_output_at: Option<Instant>,
-    last_output_bytes: u64,
     handlers: Option<AdmittedPackageHandlers>,
     package_root: Option<PathBuf>,
     sandbox_registry: Option<Arc<SandboxRegistry>>,
-    observer: RecordingObserver,
-    observation_bytes: Mutex<u64>,
+    /// Authoritative local commit/read adapter shared by execution and V2
+    /// reads. It is the only source used for committed terminal truth.
+    execution_backend: RuntimeExecutionBackend,
+    /// Bounded live observation sink. It is intentionally non-authoritative;
+    /// reconnect/read APIs use the commit adapter's typed records.
+    observation_sink: Arc<ObservationRecorder>,
     broker: Arc<dyn ApprovalBroker>,
     cancelled: BTreeMap<String, StateEntry>,
+    /// Cooperative cancellation signals for invocations currently inside the
+    /// driver. Durable cancellation markers remain separate service state;
+    /// this map is only the active in-process control plane.
+    active_cancellations: BTreeMap<String, CancellationToken>,
     cancellation_bytes: u64,
     disconnected: bool,
     artifact_dir: Option<PathBuf>,
     state_policy: RuntimeStatePolicy,
+    /// Whether protocol invocation starts persist parked continuations. The
+    /// reference service uses the resumable path; the legacy embedded CLI
+    /// helper can explicitly opt into single-shot execution.
+    resumable_invocations: bool,
+    startup_error: Option<RuntimeServiceStartupError>,
+    observation_signal: ObservationSignal,
+    /// Runtime-owned immutable admission carriers. When absent, invocation
+    /// admission remains fail-closed.
+    admission_profile: Option<RuntimeAdmissionProfile>,
 }
+
+/// Process-local wakeup for owner-side observation subscribers.  The durable
+/// commit adapter remains the source of truth; this signal only avoids polling
+/// while a long-lived Unix subscription waits for another commit.
+#[derive(Clone)]
+pub(crate) struct ObservationSignal(Arc<(Mutex<u64>, Condvar)>);
+
+impl ObservationSignal {
+    fn new() -> Self {
+        Self(Arc::new((Mutex::new(0), Condvar::new())))
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        *self.0.0.lock().expect("observation signal lock")
+    }
+
+    pub(crate) fn notify(&self) {
+        let mut generation = self.0.0.lock().expect("observation signal lock");
+        *generation = generation.saturating_add(1);
+        self.0.1.notify_all();
+    }
+
+    pub(crate) fn wait_for_change(&self, prior: u64) {
+        let mut generation = self.0.0.lock().expect("observation signal lock");
+        while *generation == prior {
+            generation = self.0.1.wait(generation).expect("observation signal wait");
+        }
+    }
+}
+
+/// Typed production startup failures. Runtime Service never silently creates
+/// an ephemeral state directory because doing so would make committed reads
+/// disappear across restart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuntimeServiceStartupError {
+    MissingRuntimeStateDir,
+    EmptyRuntimeStateDir,
+    RelativeRuntimeStateDir(PathBuf),
+    UnsafeRuntimeStateDir(PathBuf),
+    OpenRuntimeStateDir(String),
+    InvalidAdmissionProfile(String),
+}
+
+impl std::fmt::Display for RuntimeServiceStartupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingRuntimeStateDir => {
+                formatter.write_str("APXM_RUNTIME_STATE_DIR is required")
+            }
+            Self::EmptyRuntimeStateDir => {
+                formatter.write_str("APXM_RUNTIME_STATE_DIR must not be empty")
+            }
+            Self::RelativeRuntimeStateDir(path) => write!(
+                formatter,
+                "APXM_RUNTIME_STATE_DIR must be absolute: {}",
+                path.display()
+            ),
+            Self::UnsafeRuntimeStateDir(path) => write!(
+                formatter,
+                "APXM_RUNTIME_STATE_DIR contains an unsafe parent component: {}",
+                path.display()
+            ),
+            Self::OpenRuntimeStateDir(error) => {
+                write!(
+                    formatter,
+                    "cannot open APXM runtime state directory: {error}"
+                )
+            }
+            Self::InvalidAdmissionProfile(error) => {
+                write!(formatter, "invalid APXM runtime admission profile: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RuntimeServiceStartupError {}
 
 impl Default for RuntimeService {
     fn default() -> Self {
-        Self::from_env()
+        // Keep the library default deterministic for embedded/unit callers.
+        // Production composition roots must opt into `try_from_env` (or
+        // `from_env`) so an absent state directory cannot be hidden.
+        Self::in_memory()
     }
 }
 
 impl RuntimeService {
-    /// Product handler. Loads committed artifacts from `APXM_ARTIFACT_DIR`.
-    #[must_use]
-    pub fn from_env() -> Self {
-        let mut service = Self {
+    fn unconfigured() -> Self {
+        let observation_signal = ObservationSignal::new();
+        let observation_sink = Arc::new(ObservationRecorder::default());
+        let signal_for_observer = observation_signal.clone();
+        observation_sink.set_notifier(Arc::new(move || signal_for_observer.notify()));
+        Self {
             artifacts: ArtifactStore::default(),
             artifact_meta: BTreeMap::new(),
             artifact_bytes: 0,
@@ -169,33 +281,136 @@ impl RuntimeService {
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
             next_generation: 0,
-            last_output: None,
-            last_output_at: None,
-            last_output_bytes: 0,
             handlers: None,
             package_root: None,
             sandbox_registry: None,
-            observer: RecordingObserver::default(),
-            observation_bytes: Mutex::new(0),
+            execution_backend: RuntimeExecutionBackend::Unavailable(
+                "runtime state has not been opened".to_owned(),
+            ),
+            observation_sink,
             broker: Arc::new(DenyBroker),
             cancelled: BTreeMap::new(),
+            active_cancellations: BTreeMap::new(),
             cancellation_bytes: 0,
             disconnected: false,
             artifact_dir: None,
             state_policy: RuntimeStatePolicy::default(),
-        };
+            resumable_invocations: true,
+            startup_error: None,
+            observation_signal,
+            admission_profile: None,
+        }
+    }
+
+    /// Product handler. Loads committed artifacts from `APXM_ARTIFACT_DIR`.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut service = Self::unconfigured();
+        match runtime_state_dir_from_env() {
+            Ok(root) => match FilesystemExecutionCommit::open(root.clone()) {
+                Ok(commit) => {
+                    service.execution_backend =
+                        RuntimeExecutionBackend::Filesystem(Arc::new(commit));
+                    if let Err(error) = service.rehydrate_runtime_state() {
+                        service.startup_error = Some(
+                            RuntimeServiceStartupError::OpenRuntimeStateDir(error.clone()),
+                        );
+                        service.execution_backend = RuntimeExecutionBackend::Unavailable(error);
+                    } else {
+                    }
+                }
+                Err(error) => {
+                    service.execution_backend =
+                        RuntimeExecutionBackend::Unavailable(error.to_string());
+                    service.startup_error = Some(RuntimeServiceStartupError::OpenRuntimeStateDir(
+                        error.to_string(),
+                    ));
+                }
+            },
+            Err(error) => {
+                service.execution_backend = RuntimeExecutionBackend::Unavailable(error.to_string());
+                service.startup_error = Some(error);
+            }
+        }
         if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR")
             && !dir.trim().is_empty()
         {
             service.artifact_dir = Some(PathBuf::from(dir));
         }
+        match RuntimeAdmissionProfile::from_env() {
+            Ok(profile) => service.admission_profile = profile,
+            Err(error) => {
+                service.startup_error =
+                    Some(RuntimeServiceStartupError::InvalidAdmissionProfile(error));
+            }
+        }
         service
+    }
+
+    /// Fallible production constructor. A stable, absolute runtime state
+    /// directory is mandatory so restart reads retain their authority.
+    pub fn try_from_env() -> Result<Self, RuntimeServiceStartupError> {
+        let service = Self::from_env();
+        if let Some(error) = service.startup_error.clone() {
+            Err(error)
+        } else {
+            Ok(service)
+        }
+    }
+
+    /// Return the startup failure retained by the non-fallible compatibility
+    /// constructor, if production state could not be opened.
+    #[must_use]
+    pub fn startup_error(&self) -> Option<&RuntimeServiceStartupError> {
+        self.startup_error.as_ref()
     }
 
     /// Load admitted artifacts from a shared directory written by Compilation Service.
     #[must_use]
     pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
         self.artifact_dir = Some(dir);
+        self
+    }
+
+    /// Compose one explicit Runtime-owned admission profile. Production
+    /// standalone composition normally loads this from the image carriers.
+    #[must_use]
+    pub fn with_admission_profile(mut self, profile: RuntimeAdmissionProfile) -> Self {
+        self.admission_profile = Some(profile);
+        self
+    }
+
+    /// Bind the service to one explicit runtime-owned state directory. This
+    /// is useful for an embedding composition root and for restart tests; the
+    /// directory contains the durable commit/read record, never artifacts.
+    #[must_use]
+    pub fn with_runtime_state_dir(mut self, dir: PathBuf) -> Self {
+        self.execution_backend = match validate_runtime_state_dir(dir) {
+            Err(error) => {
+                self.startup_error = Some(error.clone());
+                RuntimeExecutionBackend::Unavailable(error.to_string())
+            }
+            Ok(dir) => match FilesystemExecutionCommit::open(dir.clone()) {
+                Ok(commit) => {
+                    self.execution_backend = RuntimeExecutionBackend::Filesystem(Arc::new(commit));
+                    if let Err(error) = self.rehydrate_runtime_state() {
+                        self.startup_error = Some(RuntimeServiceStartupError::OpenRuntimeStateDir(
+                            error.clone(),
+                        ));
+                        self.execution_backend = RuntimeExecutionBackend::Unavailable(error);
+                    } else {
+                        self.startup_error = None;
+                    }
+                    return self;
+                }
+                Err(error) => {
+                    self.startup_error = Some(RuntimeServiceStartupError::OpenRuntimeStateDir(
+                        error.to_string(),
+                    ));
+                    RuntimeExecutionBackend::Unavailable(error.to_string())
+                }
+            },
+        };
         self
     }
 
@@ -206,10 +421,224 @@ impl RuntimeService {
         self
     }
 
+    /// Use the legacy single-shot execution profile for an embedded caller.
+    /// This does not change the Runtime protocol's resumable service path and
+    /// is retained only for callers that require an immediate committed output
+    /// from a fixture that contains an event wait.
+    #[must_use]
+    pub fn with_single_shot_invocations(mut self) -> Self {
+        self.resumable_invocations = false;
+        self
+    }
+
     /// The active bounded state policy.
     #[must_use]
     pub fn state_policy(&self) -> &RuntimeStatePolicy {
         &self.state_policy
+    }
+
+    /// Obtain the non-authoritative wakeup used by the Unix stream adapter.
+    pub(crate) fn observation_signal(&self) -> ObservationSignal {
+        self.observation_signal.clone()
+    }
+
+    /// Replace the composition-owned reauthorization/audit hook used by typed
+    /// execution reads. APXM does not implement product authorization; the
+    /// supplied hook is invoked for every read operation.
+    #[must_use]
+    pub fn with_read_access_hook(mut self, hook: Arc<dyn ReadAccessHook>) -> Self {
+        self.execution_backend = self.execution_backend.with_read_access_hook(hook);
+        self
+    }
+
+    /// Bind the caller-supplied scope used for committed output references.
+    /// This is a composition seam; APXM does not interpret the scope.
+    #[must_use]
+    pub fn with_output_access_scope_ref(self, reference: String) -> Self {
+        self.execution_backend
+            .set_default_access_scope_ref(reference);
+        self
+    }
+
+    /// Explicitly authorize reads for an embedded owner-local conformance
+    /// composition. Production services must bind their own policy hook.
+    #[must_use]
+    pub fn with_embedded_read_access(self) -> Self {
+        self.with_read_access_hook(Arc::new(apxm_commit_local::AllowReadAccess))
+    }
+
+    /// Construct an explicitly in-memory service for unit and protocol tests.
+    /// Production composition uses [`RuntimeService::from_env`], which opens
+    /// the filesystem-backed owner-local commit adapter.
+    #[must_use]
+    pub fn in_memory() -> Self {
+        let mut service = Self::unconfigured();
+        service.execution_backend =
+            RuntimeExecutionBackend::Memory(Arc::new(InMemoryExecutionCommit::new()));
+        service.startup_error = None;
+        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR")
+            && !dir.trim().is_empty()
+        {
+            service.artifact_dir = Some(PathBuf::from(dir));
+        }
+        service
+    }
+}
+
+/// The service's injected execution/read backend. Keeping this choice at the
+/// composition root prevents Protocol/2 reads and the driver from observing
+/// different stores, while making in-memory state an explicit test choice.
+enum RuntimeExecutionBackend {
+    Memory(Arc<InMemoryExecutionCommit>),
+    Filesystem(Arc<FilesystemExecutionCommit>),
+    Unavailable(String),
+}
+
+impl RuntimeExecutionBackend {
+    fn commit_port(&self) -> Arc<dyn ExecutionCommitPort> {
+        match self {
+            Self::Memory(commit) => commit.clone(),
+            Self::Filesystem(commit) => commit.clone(),
+            Self::Unavailable(reason) => Arc::new(UnavailableExecutionCommit {
+                reason: reason.clone(),
+            }),
+        }
+    }
+
+    fn read_execution_with_live(
+        &self,
+        request: apxm_runtime_protocol::ExecutionReadRequest,
+        live_observations: &[ExecutionObservation],
+    ) -> Result<apxm_runtime_protocol::ExecutionReadResult, CommitLocalError> {
+        match self {
+            Self::Memory(commit) => commit.read_execution_with_live(request, live_observations),
+            Self::Filesystem(commit) => commit.read_execution_with_live(request, live_observations),
+            Self::Unavailable(reason) => Err(CommitLocalError::Io(reason.clone())),
+        }
+    }
+
+    fn with_read_access_hook(self, hook: Arc<dyn ReadAccessHook>) -> Self {
+        match self {
+            Self::Memory(commit) => {
+                commit.set_read_access_hook(hook);
+                Self::Memory(commit)
+            }
+            Self::Filesystem(commit) => {
+                let root = commit.root().to_path_buf();
+                drop(commit);
+                match FilesystemExecutionCommit::open_with_read_access_hook(root, hook) {
+                    Ok(commit) => Self::Filesystem(Arc::new(commit)),
+                    Err(error) => Self::Unavailable(error.to_string()),
+                }
+            }
+            Self::Unavailable(reason) => Self::Unavailable(reason),
+        }
+    }
+
+    fn set_default_access_scope_ref(&self, reference: String) {
+        match self {
+            Self::Memory(commit) => commit.set_default_access_scope_ref(reference),
+            Self::Filesystem(commit) => commit.set_default_access_scope_ref(reference),
+            Self::Unavailable(_) => {}
+        }
+    }
+
+    fn runtime_metadata(&self) -> Option<Value> {
+        match self {
+            Self::Memory(commit) => commit.runtime_metadata(),
+            Self::Filesystem(commit) => commit.runtime_metadata(),
+            Self::Unavailable(_) => None,
+        }
+    }
+
+    fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), String> {
+        match self {
+            Self::Memory(commit) => {
+                commit.set_runtime_metadata(metadata);
+                Ok(())
+            }
+            Self::Filesystem(commit) => commit
+                .set_runtime_metadata(metadata)
+                .map_err(|error| error.to_string()),
+            Self::Unavailable(reason) => Err(reason.clone()),
+        }
+    }
+
+    fn load_continuation(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<apxm_kernel::CommittedContinuation> {
+        match self {
+            Self::Memory(commit) => {
+                block_on(commit.load_continuation_with_integrity(program_instance_ref))
+            }
+            Self::Filesystem(commit) => {
+                block_on(commit.load_continuation_with_integrity(program_instance_ref))
+            }
+            Self::Unavailable(_) => None,
+        }
+    }
+}
+
+fn runtime_state_dir_from_env() -> Result<PathBuf, RuntimeServiceStartupError> {
+    runtime_state_dir_from_value(std::env::var_os("APXM_RUNTIME_STATE_DIR"))
+}
+
+fn runtime_state_dir_from_value(
+    value: Option<std::ffi::OsString>,
+) -> Result<PathBuf, RuntimeServiceStartupError> {
+    let value = value.ok_or(RuntimeServiceStartupError::MissingRuntimeStateDir)?;
+    if value.to_string_lossy().trim().is_empty() {
+        return Err(RuntimeServiceStartupError::EmptyRuntimeStateDir);
+    }
+    validate_runtime_state_dir(PathBuf::from(value))
+}
+
+fn validate_runtime_state_dir(path: PathBuf) -> Result<PathBuf, RuntimeServiceStartupError> {
+    if !path.is_absolute() {
+        return Err(RuntimeServiceStartupError::RelativeRuntimeStateDir(path));
+    }
+    if path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        return Err(RuntimeServiceStartupError::UnsafeRuntimeStateDir(path));
+    }
+    Ok(path)
+}
+
+struct UnavailableExecutionCommit {
+    reason: String,
+}
+
+#[async_trait]
+impl ExecutionCommitPort for UnavailableExecutionCommit {
+    async fn prepare_output(
+        &self,
+        _preparation: apxm_kernel::SessionOutputPreparation,
+    ) -> Result<apxm_kernel::PreparedSessionOutputRef, String> {
+        Err(self.reason.clone())
+    }
+
+    async fn commit(&self, _request: ExecutionCommitRequest) -> ExecutionCommitResult {
+        ExecutionCommitResult::OutcomeUnknown {
+            reconciliation_ref: format!("reconcile:backend-unavailable:{}", self.reason),
+        }
+    }
+
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
+        0
+    }
+
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
+        None
+    }
+
+    async fn load_continuation_with_integrity(
+        &self,
+        _program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<apxm_kernel::CommittedContinuation> {
+        None
     }
 }
 
@@ -230,27 +659,249 @@ struct InstanceState {
     materials: Option<InvocationMaterials>,
     owner_claim: RuntimeOwnerClaim,
     invocation: Option<InvocationState>,
+    /// Immutable request-id history retained after a terminal invocation so
+    /// retries replay their original result even after the instance admits a
+    /// later invocation.
+    invocation_history: BTreeMap<String, InvocationState>,
     invocation_bytes: u64,
     state_entry: StateEntry,
 }
 
+#[derive(Clone)]
 struct InvocationState {
+    request_id: String,
+    input_fingerprint: String,
+    program_invocation_id: String,
+    /// `None` while the owner is executing outside the service mutex.
+    result: Option<RuntimeResult>,
+}
+
+/// All immutable/materialized inputs needed to execute one invocation after
+/// its service-owned claim has been installed.  The lease contains no mutable
+/// service maps; cancellation and finalization remain serialized by the
+/// RuntimeService mutex while the driver itself runs independently.
+pub(crate) struct PreparedInvocation {
+    request_id: String,
+    program_instance_id: String,
+    invocation_id: String,
+    /// The caller-supplied invocation input, bound to the artifact's exact
+    /// entrypoint parameter by the composition root before the driver starts.
+    input: Value,
+    air: AirModule,
+    artifact_bytes: Vec<u8>,
+    materials: InvocationMaterials,
+    handlers: Option<AdmittedPackageHandlers>,
+    package_root: Option<PathBuf>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    execution_backend: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Arc<ObservationRecorder>,
+    broker: Arc<dyn ApprovalBroker>,
+    cancellation: CancellationToken,
+    resumable: bool,
+}
+
+impl PreparedInvocation {
+    pub(crate) fn execute(&self) -> Result<Value, String> {
+        block_on(async {
+            for (capability_ref, decision) in &self.air.capability_permission_requests {
+                if !matches!(decision, PermissionDecision::Ask { .. }) {
+                    continue;
+                }
+                match self.broker.resolve_ask(capability_ref).await {
+                    ApprovalDecision::Allow => {}
+                    ApprovalDecision::Deny => return Err("ask_denied".to_owned()),
+                    ApprovalDecision::Timeout => return Err("ask_timeout".to_owned()),
+                }
+            }
+            if self.resumable {
+                composition::execute_admitted_artifact_resumable_for_instance_with_input(
+                    self.air.clone(),
+                    &self.artifact_bytes,
+                    &self.materials,
+                    self.handlers.as_ref(),
+                    self.package_root.as_deref(),
+                    self.sandbox_registry.clone(),
+                    self.execution_backend.clone(),
+                    Some(self.observation_sink.clone()),
+                    Some(self.cancellation.clone()),
+                    ProgramInstanceRef::new(self.program_instance_id.clone()),
+                    self.input.clone(),
+                )
+                .await
+            } else {
+                composition::execute_admitted_artifact_with_runtime_ports_and_cancellation_with_input(
+                    self.air.clone(),
+                    &self.artifact_bytes,
+                    &self.materials,
+                    self.handlers.as_ref(),
+                    self.package_root.as_deref(),
+                    self.sandbox_registry.clone(),
+                    self.execution_backend.clone(),
+                    Some(self.observation_sink.clone()),
+                    Some(self.cancellation.clone()),
+                    self.input.clone(),
+                )
+                .await
+            }
+        })
+    }
+}
+
+struct ReservationState {
+    owner_claim: RuntimeOwnerClaim,
+    type_id: String,
+    status: EventStatus,
+    occurrence_id: Option<String>,
+    state_entry: StateEntry,
+}
+
+struct ApplicationState {
+    event_ref: CanonicalEventRef,
+    occurrence_id: String,
+    payload: Value,
+    state_entry: StateEntry,
+}
+
+const RUNTIME_METADATA_SCHEMA: &str = "apxm.runtime-service.metadata.v1";
+
+/// Durable service-owned metadata. The commit-local adapter stores this as
+/// opaque JSON and authenticates it together with execution records; this
+/// type is the only owner that interprets it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableRuntimeMetadata {
+    schema_version: String,
+    artifacts: BTreeMap<String, Vec<u8>>,
+    artifact_admissions: BTreeMap<String, InvocationMaterials>,
+    instances: BTreeMap<String, DurableInstanceState>,
+    reservations: Vec<DurableReservationState>,
+    applications: BTreeMap<String, DurableApplicationState>,
+    cancelled: BTreeSet<String>,
+    next_generation: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableInstanceState {
+    artifact_digest: String,
+    materials: Option<InvocationMaterials>,
+    owner_claim: RuntimeOwnerClaim,
+    invocation: Option<DurableInvocationState>,
+    #[serde(default)]
+    invocation_history: BTreeMap<String, DurableInvocationState>,
+    invocation_bytes: u64,
+    state_entry: DurableStateEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableInvocationState {
     request_id: String,
     input_fingerprint: String,
     program_invocation_id: String,
     result: RuntimeResult,
 }
 
-struct ReservationState {
-    owner_claim: RuntimeOwnerClaim,
-    _type_id: String,
-    state_entry: StateEntry,
+fn durable_invocation(invocation: &InvocationState) -> DurableInvocationState {
+    DurableInvocationState {
+        request_id: invocation.request_id.clone(),
+        input_fingerprint: invocation.input_fingerprint.clone(),
+        program_invocation_id: invocation.program_invocation_id.clone(),
+        // A running invocation cannot survive a process restart. Persist its
+        // durable projection as uncertain so a cancellation marker never
+        // becomes an orphan and callers can reconcile it.
+        result: invocation
+            .result
+            .clone()
+            .unwrap_or_else(|| RuntimeResult::Failed {
+                request_id: invocation.request_id.clone(),
+                code: "outcome_unknown".to_owned(),
+            }),
+    }
 }
 
-struct ApplicationState {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableReservationState {
+    event_id: String,
+    generation: u64,
+    owner_claim: RuntimeOwnerClaim,
+    type_id: String,
+    status: EventStatus,
+    occurrence_id: Option<String>,
+    state_entry: DurableStateEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableApplicationState {
     event_ref: CanonicalEventRef,
+    occurrence_id: String,
     payload: Value,
-    state_entry: StateEntry,
+    state_entry: DurableStateEntry,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableStateEntry {
+    bytes: u64,
+    expires_at_ms: u64,
+}
+
+fn runtime_failure_code(error: &CommitLocalError) -> RuntimeFailureCode {
+    match error {
+        CommitLocalError::Unauthorized(_) => RuntimeFailureCode::Unauthorized,
+        CommitLocalError::RetentionGap { .. } => RuntimeFailureCode::RetentionGap,
+        CommitLocalError::InvalidRead(_)
+        | CommitLocalError::InvalidCursor(_)
+        | CommitLocalError::InvalidRequest(_) => RuntimeFailureCode::InvalidRequest,
+        CommitLocalError::OutputNotPrepared { .. }
+        | CommitLocalError::OutputScopeMismatch { .. }
+        | CommitLocalError::ProvisionalOutput => RuntimeFailureCode::NotFound,
+        _ => RuntimeFailureCode::Unavailable,
+    }
+}
+
+fn invocation_result_from_execution_output(
+    request_id: String,
+    program_invocation_id: String,
+    output: &Value,
+) -> RuntimeResult {
+    match output
+        .get("commit")
+        .and_then(|commit| commit.get("status"))
+        .and_then(Value::as_str)
+    {
+        Some("committed") => RuntimeResult::ProgramInvocationStarted {
+            request_id,
+            program_invocation_id,
+        },
+        Some("suspended") => RuntimeResult::ProgramInvocationStarted {
+            request_id,
+            program_invocation_id,
+        },
+        Some("compare_conflict") => RuntimeResult::Failed {
+            request_id,
+            code: "compare_conflict".to_owned(),
+        },
+        Some("failed") => RuntimeResult::Failed {
+            request_id,
+            code: "invocation_failed".to_owned(),
+        },
+        Some("cancelled") => RuntimeResult::Cancelled { request_id },
+        Some("outcome_unknown") | None | Some(_) => RuntimeResult::Failed {
+            request_id,
+            code: "outcome_unknown".to_owned(),
+        },
+    }
+}
+
+fn execution_admission_request_id(request: &RuntimeExecutionAdmissionRequest) -> String {
+    match request {
+        RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission { request_id, .. } => {
+            request_id.clone()
+        }
+    }
 }
 
 impl RuntimeService {
@@ -258,6 +909,416 @@ impl RuntimeService {
         // Instant is monotonic, so expiry is not affected by wall-clock
         // adjustments or an operator changing the system time.
         Instant::now()
+    }
+
+    fn epoch_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .unwrap_or(0)
+    }
+
+    fn durable_entry(entry: StateEntry) -> DurableStateEntry {
+        let remaining = entry
+            .expires_at
+            .checked_duration_since(Self::now())
+            .unwrap_or_default();
+        DurableStateEntry {
+            bytes: entry.bytes,
+            expires_at_ms: Self::epoch_millis()
+                .saturating_add(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX)),
+        }
+    }
+
+    fn restore_entry(entry: DurableStateEntry, ttl: Duration) -> StateEntry {
+        let now_ms = Self::epoch_millis();
+        let remaining_ms = entry.expires_at_ms.saturating_sub(now_ms);
+        let remaining = Duration::from_millis(remaining_ms).min(ttl);
+        StateEntry {
+            bytes: entry.bytes,
+            expires_at: Self::now().checked_add(remaining).unwrap_or_else(Self::now),
+        }
+    }
+
+    fn runtime_metadata(&self) -> DurableRuntimeMetadata {
+        DurableRuntimeMetadata {
+            schema_version: RUNTIME_METADATA_SCHEMA.to_owned(),
+            artifacts: self
+                .artifact_meta
+                .keys()
+                .filter_map(|digest| {
+                    self.artifacts
+                        .get(digest)
+                        .map(|bytes| (digest.clone(), bytes.to_vec()))
+                })
+                .collect(),
+            artifact_admissions: self.artifact_admissions.clone(),
+            instances: self
+                .instances
+                .iter()
+                .map(|(id, instance)| {
+                    (
+                        id.clone(),
+                        DurableInstanceState {
+                            artifact_digest: instance.artifact_digest.clone(),
+                            materials: instance.materials.clone(),
+                            owner_claim: instance.owner_claim.clone(),
+                            invocation: instance
+                                .invocation
+                                .as_ref()
+                                .map(|invocation| durable_invocation(invocation)),
+                            invocation_history: instance
+                                .invocation_history
+                                .iter()
+                                .map(|(request_id, invocation)| {
+                                    (request_id.clone(), durable_invocation(invocation))
+                                })
+                                .collect(),
+                            invocation_bytes: instance.invocation_bytes,
+                            state_entry: Self::durable_entry(instance.state_entry),
+                        },
+                    )
+                })
+                .collect(),
+            reservations: self
+                .reservations
+                .iter()
+                .map(
+                    |((event_id, generation), reservation)| DurableReservationState {
+                        event_id: event_id.clone(),
+                        generation: *generation,
+                        owner_claim: reservation.owner_claim.clone(),
+                        type_id: reservation.type_id.clone(),
+                        status: reservation.status,
+                        occurrence_id: reservation.occurrence_id.clone(),
+                        state_entry: Self::durable_entry(reservation.state_entry),
+                    },
+                )
+                .collect(),
+            applications: self
+                .applications
+                .iter()
+                .map(|(key, application)| {
+                    (
+                        key.clone(),
+                        DurableApplicationState {
+                            event_ref: application.event_ref.clone(),
+                            occurrence_id: application.occurrence_id.clone(),
+                            payload: application.payload.clone(),
+                            state_entry: Self::durable_entry(application.state_entry),
+                        },
+                    )
+                })
+                .collect(),
+            cancelled: self.cancelled.keys().cloned().collect(),
+            next_generation: self.next_generation,
+        }
+    }
+
+    fn persist_runtime_state(&self) -> Result<(), String> {
+        let metadata = serde_json::to_value(self.runtime_metadata())
+            .map_err(|error| format!("runtime metadata encode failed: {error}"))?;
+        self.execution_backend.set_runtime_metadata(Some(metadata))
+    }
+
+    fn rehydrate_runtime_state(&mut self) -> Result<(), String> {
+        let Some(value) = self.execution_backend.runtime_metadata() else {
+            return Ok(());
+        };
+        let metadata: DurableRuntimeMetadata = serde_json::from_value(value)
+            .map_err(|error| format!("runtime metadata decode failed: {error}"))?;
+        if metadata.schema_version != RUNTIME_METADATA_SCHEMA {
+            return Err(format!(
+                "runtime metadata schema mismatch: {}",
+                metadata.schema_version
+            ));
+        }
+
+        let mut artifacts = ArtifactStore::default();
+        let mut artifact_meta = BTreeMap::new();
+        let mut artifact_bytes = 0_u64;
+        for (digest, bytes) in metadata.artifacts {
+            if !apxm_core::grammar::is_digest(&digest)
+                || ExecutableArtifact::decode_for_execution(&bytes, &digest).is_err()
+            {
+                return Err("runtime metadata contains an invalid artifact join".to_owned());
+            }
+            let size =
+                u64::try_from(bytes.len()).map_err(|_| "artifact size overflow".to_owned())?;
+            artifacts.commit_named(digest.clone(), bytes);
+            artifact_meta.insert(digest, Self::entry(size, self.state_policy.artifacts.ttl));
+            artifact_bytes = artifact_bytes.saturating_add(size);
+        }
+        let mut admission_bytes = 0_u64;
+        for (digest, materials) in &metadata.artifact_admissions {
+            if artifacts.get(digest).is_none() || materials.admission.artifact_digest != *digest {
+                return Err("runtime metadata contains an invalid admission join".to_owned());
+            }
+            admission_bytes = admission_bytes
+                .checked_add(Self::materials_size(materials).ok_or("admission size overflow")?)
+                .ok_or("admission size overflow")?;
+        }
+
+        let mut instances = BTreeMap::new();
+        let mut invocation_index = BTreeMap::new();
+        let mut instance_bytes = 0_u64;
+        for (instance_id, durable) in metadata.instances {
+            if instance_id.trim().is_empty()
+                || artifacts.get(&durable.artifact_digest).is_none()
+                || durable.owner_claim.validate().is_err()
+            {
+                return Err("runtime metadata contains an invalid instance join".to_owned());
+            }
+            if durable.materials.as_ref().is_some_and(|materials| {
+                materials.admission.artifact_digest != durable.artifact_digest
+            }) {
+                return Err(
+                    "runtime metadata contains an invalid instance admission join".to_owned(),
+                );
+            }
+            let mut invocation_history = durable.invocation_history;
+            for (request_id, invocation) in &invocation_history {
+                if request_id.trim().is_empty()
+                    || invocation.request_id != *request_id
+                    || invocation.program_invocation_id.trim().is_empty()
+                    || !invocation
+                        .program_invocation_id
+                        .starts_with(&format!("{instance_id}:"))
+                {
+                    return Err(
+                        "runtime metadata contains an invalid invocation history".to_owned()
+                    );
+                }
+                if invocation_index
+                    .insert(
+                        invocation.program_invocation_id.clone(),
+                        instance_id.clone(),
+                    )
+                    .is_some()
+                {
+                    return Err("runtime metadata contains a duplicate invocation".to_owned());
+                }
+            }
+            let invocation = durable
+                .invocation
+                .map(|invocation| {
+                    if invocation.program_invocation_id.trim().is_empty()
+                        || invocation.request_id.trim().is_empty()
+                        || !invocation
+                            .program_invocation_id
+                            .starts_with(&format!("{instance_id}:"))
+                    {
+                        return Err("runtime metadata contains an invalid invocation".to_owned());
+                    }
+                    let state = InvocationState {
+                        request_id: invocation.request_id,
+                        input_fingerprint: invocation.input_fingerprint,
+                        program_invocation_id: invocation.program_invocation_id,
+                        result: Some(invocation.result),
+                    };
+                    let durable_state = DurableInvocationState {
+                        request_id: state.request_id.clone(),
+                        input_fingerprint: state.input_fingerprint.clone(),
+                        program_invocation_id: state.program_invocation_id.clone(),
+                        result: state.result.clone().expect("rehydrated result"),
+                    };
+                    if let Some(existing) = invocation_history.get(&state.request_id) {
+                        if existing.program_invocation_id != state.program_invocation_id
+                            || existing.input_fingerprint != state.input_fingerprint
+                        {
+                            return Err(
+                                "runtime metadata contains a conflicting invocation request"
+                                    .to_owned(),
+                            );
+                        }
+                    } else {
+                        invocation_history.insert(state.request_id.clone(), durable_state);
+                    }
+                    Ok(state)
+                })
+                .transpose()?;
+            let invocation_history = invocation_history
+                .into_iter()
+                .map(|(request_id, invocation)| {
+                    (
+                        request_id,
+                        InvocationState {
+                            request_id: invocation.request_id,
+                            input_fingerprint: invocation.input_fingerprint,
+                            program_invocation_id: invocation.program_invocation_id,
+                            result: Some(invocation.result),
+                        },
+                    )
+                })
+                .collect();
+            let state_entry =
+                Self::restore_entry(durable.state_entry, self.state_policy.instances.ttl);
+            instance_bytes = instance_bytes.saturating_add(state_entry.bytes);
+            instances.insert(
+                instance_id,
+                InstanceState {
+                    artifact_digest: durable.artifact_digest,
+                    materials: durable.materials,
+                    owner_claim: durable.owner_claim,
+                    invocation,
+                    invocation_history,
+                    invocation_bytes: durable.invocation_bytes,
+                    state_entry,
+                },
+            );
+        }
+
+        let mut reservations = BTreeMap::new();
+        let mut reservation_bytes = 0_u64;
+        let mut maximum_generation = 0_u64;
+        for durable in metadata.reservations {
+            let event_ref = CanonicalEventRef {
+                event_id: durable.event_id.clone(),
+                generation: durable.generation,
+            };
+            event_ref
+                .validate()
+                .map_err(|_| "runtime metadata contains an invalid event ref")?;
+            maximum_generation = maximum_generation.max(durable.generation);
+            durable
+                .owner_claim
+                .validate()
+                .map_err(|_| "runtime metadata contains an invalid event claim")?;
+            if durable.type_id.trim().is_empty()
+                || reservations
+                    .insert(
+                        (durable.event_id.clone(), durable.generation),
+                        ReservationState {
+                            owner_claim: durable.owner_claim,
+                            type_id: durable.type_id,
+                            status: durable.status,
+                            occurrence_id: durable.occurrence_id,
+                            state_entry: Self::restore_entry(
+                                durable.state_entry,
+                                self.state_policy.reservations.ttl,
+                            ),
+                        },
+                    )
+                    .is_some()
+            {
+                return Err("runtime metadata contains a duplicate event reservation".to_owned());
+            }
+            reservation_bytes = reservation_bytes.saturating_add(
+                reservations
+                    .get(&(durable.event_id, durable.generation))
+                    .expect("inserted reservation")
+                    .state_entry
+                    .bytes,
+            );
+        }
+        let mut applications = BTreeMap::new();
+        let mut application_bytes = 0_u64;
+        for (key, durable) in metadata.applications {
+            durable
+                .event_ref
+                .validate()
+                .map_err(|_| "runtime metadata contains an invalid application event ref")?;
+            let reservation = reservations
+                .get(&(
+                    durable.event_ref.event_id.clone(),
+                    durable.event_ref.generation,
+                ))
+                .ok_or("runtime metadata contains an orphan event application")?;
+            if reservation.status != EventStatus::Fulfilled {
+                return Err("runtime metadata contains an unfulfilled event application".to_owned());
+            }
+            if durable.occurrence_id.trim().is_empty()
+                || reservation.occurrence_id.as_deref() != Some(durable.occurrence_id.as_str())
+            {
+                return Err(
+                    "runtime metadata contains an invalid event application join".to_owned(),
+                );
+            }
+            let application_entry =
+                Self::restore_entry(durable.state_entry, self.state_policy.applications.ttl);
+            application_bytes = application_bytes.saturating_add(application_entry.bytes);
+            if key.trim().is_empty()
+                || applications
+                    .insert(
+                        key,
+                        ApplicationState {
+                            event_ref: durable.event_ref,
+                            occurrence_id: durable.occurrence_id,
+                            payload: durable.payload,
+                            state_entry: application_entry,
+                        },
+                    )
+                    .is_some()
+            {
+                return Err("runtime metadata contains a duplicate event application".to_owned());
+            }
+        }
+        let cancellation_bytes = metadata
+            .cancelled
+            .iter()
+            .map(|id| u64::try_from(id.len()).unwrap_or(u64::MAX))
+            .fold(0_u64, u64::saturating_add);
+        for invocation_id in &metadata.cancelled {
+            if !invocation_index.contains_key(invocation_id) {
+                return Err("runtime metadata contains an orphan cancellation".to_owned());
+            }
+        }
+        if artifact_meta.len() > self.state_policy.artifacts.max_entries
+            || artifact_bytes > self.state_policy.artifacts.max_bytes
+            || metadata.artifact_admissions.len() > self.state_policy.admissions.max_entries
+            || admission_bytes > self.state_policy.admissions.max_bytes
+            || instances.len() > self.state_policy.instances.max_entries
+            || instance_bytes > self.state_policy.instances.max_bytes
+            || reservations.len() > self.state_policy.reservations.max_entries
+            || reservation_bytes > self.state_policy.reservations.max_bytes
+            || applications.len() > self.state_policy.applications.max_entries
+            || application_bytes > self.state_policy.applications.max_bytes
+            || metadata.cancelled.len() > self.state_policy.cancellations.max_entries
+            || cancellation_bytes > self.state_policy.cancellations.max_bytes
+        {
+            return Err("runtime metadata exceeds the configured state policy".to_owned());
+        }
+        if metadata.next_generation < maximum_generation {
+            return Err("runtime metadata generation watermark is behind a reservation".to_owned());
+        }
+
+        self.artifacts = artifacts;
+        self.artifact_meta = artifact_meta;
+        self.artifact_bytes = artifact_bytes;
+        self.artifact_admissions = metadata.artifact_admissions;
+        self.admission_meta = self
+            .artifact_admissions
+            .iter()
+            .map(|(digest, materials)| {
+                (
+                    digest.clone(),
+                    Self::entry(
+                        Self::materials_size(materials).unwrap_or(0),
+                        self.state_policy.admissions.ttl,
+                    ),
+                )
+            })
+            .collect();
+        self.admission_bytes = admission_bytes;
+        self.instances = instances;
+        self.invocation_index = invocation_index;
+        self.instance_bytes = instance_bytes;
+        self.reservations = reservations;
+        self.reservation_bytes = reservation_bytes;
+        self.applications = applications;
+        self.application_bytes = application_bytes;
+        self.cancelled = metadata
+            .cancelled
+            .into_iter()
+            .map(|id| {
+                let bytes = u64::try_from(id.len()).unwrap_or(u64::MAX);
+                (id, Self::entry(bytes, self.state_policy.cancellations.ttl))
+            })
+            .collect();
+        self.cancellation_bytes = cancellation_bytes;
+        self.next_generation = metadata.next_generation;
+        Ok(())
     }
 
     fn entry(bytes: u64, ttl: Duration) -> StateEntry {
@@ -287,21 +1348,6 @@ impl RuntimeService {
         u64::try_from(total).ok()
     }
 
-    fn output_size(output: &Value) -> Option<u64> {
-        u64::try_from(serde_json::to_vec(output).ok()?.len()).ok()
-    }
-
-    fn observation_size(observation: &Observation) -> Option<u64> {
-        let bytes = match observation {
-            Observation::ProvisionalContent { content_ref } => content_ref.len(),
-            Observation::EventLifecycle { event_id, phase } => {
-                event_id.len().checked_add(phase.len())?
-            }
-            Observation::TerminalCommit { commit_id } => commit_id.len(),
-        };
-        u64::try_from(bytes).ok()
-    }
-
     /// Remove only entries whose typed TTL has elapsed. No live owner claim,
     /// invocation idempotency record, or event application is evicted.
     pub fn cleanup_expired(&mut self) {
@@ -310,7 +1356,16 @@ impl RuntimeService {
         let expired_instances = self
             .instances
             .iter()
-            .filter_map(|(id, instance)| instance.state_entry.expired(now).then_some(id.clone()))
+            .filter_map(|(id, instance)| {
+                // A claimed invocation may execute for longer than its
+                // instance TTL. Keep that owner claim and invocation index
+                // alive until finalization.
+                let running = instance
+                    .invocation
+                    .as_ref()
+                    .is_some_and(|invocation| invocation.result.is_none());
+                (instance.state_entry.expired(now) && !running).then_some(id.clone())
+            })
             .collect::<Vec<_>>();
         for id in expired_instances {
             if let Some(instance) = self.instances.remove(&id) {
@@ -408,16 +1463,9 @@ impl RuntimeService {
                 true
             }
         });
-
-        if self.last_output_at.is_some_and(|created| {
-            created
-                .checked_add(self.state_policy.last_output.ttl)
-                .is_none_or(|expiry| now >= expiry)
-        }) {
-            self.last_output = None;
-            self.last_output_at = None;
-            self.last_output_bytes = 0;
-        }
+        // Expiry is a durable lifecycle transition too. Persist the cleaned
+        // projection before another operation can observe it.
+        let _ = self.persist_runtime_state();
     }
 
     /// Bind package-local Capability handlers for subsequent invocations.
@@ -445,7 +1493,7 @@ impl RuntimeService {
         self.sandbox_registry = sandbox_registry;
     }
 
-    /// Commit AIR/artifact bytes. The digest is the only executable identity.
+    /// Commit canonical executable-artifact bytes. Raw AIR is rejected.
     pub fn admit_artifact(&mut self, bytes: Vec<u8>) -> String {
         self.try_admit_artifact(bytes).unwrap_or_default()
     }
@@ -456,7 +1504,8 @@ impl RuntimeService {
     /// artifact.
     pub fn try_admit_artifact(&mut self, bytes: Vec<u8>) -> Result<String, String> {
         self.cleanup_expired();
-        let digest = artifact_digest(&bytes);
+        let digest =
+            canonical_artifact_digest(&bytes).map_err(|_| "invalid_artifact".to_owned())?;
         self.try_admit_named_artifact(digest.clone(), bytes)?;
         Ok(digest)
     }
@@ -466,7 +1515,7 @@ impl RuntimeService {
         if size > MAX_ARTIFACT_BYTES || size > self.state_policy.artifacts.max_bytes {
             return Err("artifact_too_large".to_owned());
         }
-        if artifact_digest(&bytes) != digest {
+        if ExecutableArtifact::decode_for_execution(&bytes, &digest).is_err() {
             return Err("artifact_digest_mismatch".to_owned());
         }
         if self.artifacts.get(&digest).is_some() {
@@ -480,12 +1529,14 @@ impl RuntimeService {
         ) {
             return Err(Self::quota_code("artifact"));
         }
-        self.artifacts.commit(bytes);
+        self.artifacts.commit_named(digest.clone(), bytes);
         self.artifact_meta.insert(
             digest.clone(),
             Self::entry(size, self.state_policy.artifacts.ttl),
         );
         self.artifact_bytes = self.artifact_bytes.saturating_add(size);
+        self.persist_runtime_state()
+            .map_err(|_| "runtime_state_unavailable".to_owned())?;
         Ok(())
     }
 
@@ -511,6 +1562,11 @@ impl RuntimeService {
         if materials.admission.artifact_digest != artifact_digest {
             return Err("artifact_digest_mismatch".to_owned());
         }
+        let artifact_bytes = self
+            .artifacts
+            .get(&artifact_digest)
+            .ok_or_else(|| "unknown_artifact".to_owned())?;
+        verify_invocation_materials(artifact_bytes, &materials)?;
         let invocation_bytes = self
             .instances
             .get(program_instance_id)
@@ -533,6 +1589,8 @@ impl RuntimeService {
         instance.materials = Some(materials);
         instance.state_entry.bytes = next_state_bytes;
         self.instance_bytes = next_bytes;
+        self.persist_runtime_state()
+            .map_err(|_| "runtime_state_unavailable".to_owned())?;
         Ok(())
     }
 
@@ -553,6 +1611,11 @@ impl RuntimeService {
         if materials.admission.artifact_digest != artifact_digest {
             return Err("artifact_digest_mismatch".to_owned());
         }
+        let artifact_bytes = self
+            .artifacts
+            .get(artifact_digest)
+            .ok_or_else(|| "unknown_artifact".to_owned())?;
+        verify_invocation_materials(artifact_bytes, &materials)?;
         let size =
             Self::materials_size(&materials).ok_or_else(|| "admission_too_large".to_owned())?;
         if size > self.state_policy.admissions.max_bytes {
@@ -585,20 +1648,9 @@ impl RuntimeService {
             Self::entry(size, self.state_policy.admissions.ttl),
         );
         self.admission_bytes = next_bytes;
+        self.persist_runtime_state()
+            .map_err(|_| "runtime_state_unavailable".to_owned())?;
         Ok(())
-    }
-
-    /// Last committed invocation output, when one completed.
-    #[must_use]
-    pub fn last_output(&self) -> Option<&Value> {
-        if self.last_output_at.is_some_and(|created| {
-            created
-                .checked_add(self.state_policy.last_output.ttl)
-                .is_none_or(|expiry| Instant::now() >= expiry)
-        }) {
-            return None;
-        }
-        self.last_output.as_ref()
     }
 
     /// Artifact bytes previously admitted under `digest`.
@@ -619,14 +1671,100 @@ impl RuntimeService {
         self.broker = broker;
     }
 
-    /// Projected observations in driver order. Payloads are never included.
-    #[must_use]
-    pub fn observations(&self) -> Vec<Observation> {
-        self.observer
-            .observations
-            .lock()
-            .expect("observer lock")
-            .clone()
+    /// Handle the negotiated APXM execution read/observation surface.
+    pub fn handle_v2(
+        &self,
+        handshake: &RuntimeHandshakeV2,
+        request: RuntimeRequestV2,
+    ) -> Result<RuntimeResultV2, ProtocolError> {
+        let negotiated = handshake.negotiate(&RuntimeHandshakeV2::server())?;
+        let request_id = request.request_id();
+        let feature = request.feature();
+        let node_requested = matches!(
+            &request,
+            RuntimeRequestV2::ProgramInvocationInspect {
+                node_execution_id: Some(_),
+                ..
+            }
+        );
+        if !negotiated.contains(&feature) {
+            return Ok(RuntimeResultV2::Failed {
+                request_id,
+                code: RuntimeFailureCode::UnsupportedFeature,
+            });
+        }
+        request
+            .validate()
+            .map_err(|_| ProtocolError::InvalidRequest)?;
+        let execution_read_request = request.as_execution_read_request();
+        let live_observations = if matches!(
+            &execution_read_request,
+            apxm_runtime_protocol::ExecutionReadRequest::ObservationSubscribe { .. }
+        ) {
+            self.observation_sink.snapshot()
+        } else {
+            Vec::new()
+        };
+        let result = self
+            .execution_backend
+            .read_execution_with_live(execution_read_request, &live_observations);
+        match result {
+            Ok(apxm_runtime_protocol::ExecutionReadResult::ObservationPage { page }) => {
+                Ok(RuntimeResultV2::ObservationPage { request_id, page })
+            }
+            Ok(apxm_runtime_protocol::ExecutionReadResult::ProgramInvocationInspection {
+                inspection,
+            }) if !node_requested => Ok(RuntimeResultV2::ProgramInvocationInspection {
+                request_id,
+                inspection,
+            }),
+            Ok(apxm_runtime_protocol::ExecutionReadResult::ProgramInvocationInspection {
+                ..
+            }) => Ok(RuntimeResultV2::Failed {
+                request_id,
+                code: RuntimeFailureCode::InvalidRequest,
+            }),
+            Ok(apxm_runtime_protocol::ExecutionReadResult::NodeExecutionInspection {
+                inspection,
+            }) if node_requested => {
+                if request
+                    .as_execution_read_request()
+                    .validate_node_inspection(&inspection)
+                    .is_err()
+                {
+                    return Ok(RuntimeResultV2::Failed {
+                        request_id,
+                        code: RuntimeFailureCode::InvalidRequest,
+                    });
+                }
+                Ok(RuntimeResultV2::NodeExecutionInspection {
+                    request_id,
+                    inspection,
+                })
+            }
+            Ok(apxm_runtime_protocol::ExecutionReadResult::NodeExecutionInspection { .. }) => {
+                Ok(RuntimeResultV2::Failed {
+                    request_id,
+                    code: RuntimeFailureCode::InvalidRequest,
+                })
+            }
+            Ok(apxm_runtime_protocol::ExecutionReadResult::Content { content }) => {
+                Ok(RuntimeResultV2::Content {
+                    request_id,
+                    content,
+                })
+            }
+            Ok(apxm_runtime_protocol::ExecutionReadResult::Output { output }) => {
+                Ok(RuntimeResultV2::Output { request_id, output })
+            }
+            Ok(apxm_runtime_protocol::ExecutionReadResult::EvidencePage { page }) => {
+                Ok(RuntimeResultV2::EvidencePage { request_id, page })
+            }
+            Err(error) => Ok(RuntimeResultV2::Failed {
+                request_id,
+                code: runtime_failure_code(&error),
+            }),
+        }
     }
 
     /// Record a client disconnect. This does not fabricate `finish_reason: stop`.
@@ -642,6 +1780,20 @@ impl RuntimeService {
     ) -> Result<RuntimeResult, ProtocolError> {
         self.cleanup_expired();
         handshake.admit()?;
+        let request_id = match &request {
+            RuntimeRequest::ProgramInstanceCreate { request_id, .. }
+            | RuntimeRequest::ProgramInvocationStart { request_id, .. }
+            | RuntimeRequest::EventReserve { request_id, .. }
+            | RuntimeRequest::EventFulfill { request_id, .. }
+            | RuntimeRequest::EventList { request_id, .. }
+            | RuntimeRequest::EventInspect { request_id, .. }
+            | RuntimeRequest::EventExpire { request_id, .. }
+            | RuntimeRequest::EventCancel { request_id, .. }
+            | RuntimeRequest::ProgramInvocationCancel { request_id, .. } => request_id,
+        };
+        if request_id.trim().is_empty() {
+            return Err(ProtocolError::InvalidRequest);
+        }
         match request {
             RuntimeRequest::ProgramInstanceCreate {
                 request_id,
@@ -662,16 +1814,143 @@ impl RuntimeService {
                 owner_claim,
                 application,
             } => self.fulfill_event(request_id, owner_claim, application),
+            RuntimeRequest::EventList {
+                request_id,
+                owner_claim,
+            } => self.list_events(request_id, owner_claim),
             RuntimeRequest::EventInspect {
                 request_id,
                 owner_claim,
                 event_ref,
             } => self.inspect_event(request_id, owner_claim, event_ref),
+            RuntimeRequest::EventExpire {
+                request_id,
+                owner_claim,
+                event_ref,
+            } => self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Expired),
+            RuntimeRequest::EventCancel {
+                request_id,
+                owner_claim,
+                event_ref,
+            } => {
+                self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Cancelled)
+            }
             RuntimeRequest::ProgramInvocationCancel {
                 request_id,
                 owner_claim,
                 program_invocation_id,
             } => Ok(self.cancel_invocation(request_id, owner_claim, program_invocation_id)),
+        }
+    }
+
+    /// Handle the separately negotiated execution-admission mutation
+    /// envelope. It is deliberately not accepted by the frozen Protocol/1
+    /// request union or by the read-only Runtime/2 handshake.
+    pub fn handle_execution_admission(
+        &mut self,
+        handshake: &RuntimeExecutionAdmissionHandshake,
+        request: RuntimeExecutionAdmissionRequest,
+    ) -> RuntimeResult {
+        self.cleanup_expired();
+        if let Err(error) = handshake.admit() {
+            return RuntimeResult::Failed {
+                request_id: execution_admission_request_id(&request),
+                code: format!("{error:?}"),
+            };
+        }
+        match request {
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id,
+                program_instance_id,
+                owner_claim,
+                admission_profile_ref,
+            } => self.bind_invocation_admission(
+                request_id,
+                program_instance_id,
+                owner_claim,
+                admission_profile_ref,
+            ),
+        }
+    }
+
+    fn bind_invocation_admission(
+        &mut self,
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        admission_profile_ref: String,
+    ) -> RuntimeResult {
+        if request_id.trim().is_empty() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        if owner_claim.validate().is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_owner_claim".to_owned(),
+            };
+        }
+        let Some(instance) = self.instances.get(&program_instance_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_instance".to_owned(),
+            };
+        };
+        if instance.owner_claim != owner_claim {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "owner_mismatch".to_owned(),
+            };
+        }
+        let Some(profile) = self.admission_profile.as_ref() else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "missing_invocation_admission_profile".to_owned(),
+            };
+        };
+        if profile.profile_ref() != admission_profile_ref {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_invocation_admission_profile".to_owned(),
+            };
+        }
+        let Some(artifact_bytes) = self.artifacts.get(&instance.artifact_digest) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_artifact".to_owned(),
+            };
+        };
+        let local_materials = profile.materials_for_artifact(artifact_bytes);
+        if verify_invocation_materials(artifact_bytes, &local_materials).is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_invocation_admission".to_owned(),
+            };
+        }
+        if let Some(existing) = instance.materials.as_ref()
+            && existing != &local_materials
+        {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "admission_conflict".to_owned(),
+            };
+        }
+        match self.bind_admission(&program_instance_id, local_materials) {
+            Ok(()) => {
+                let artifact_digest = self
+                    .instances
+                    .get(&program_instance_id)
+                    .map(|instance| instance.artifact_digest.clone())
+                    .unwrap_or_default();
+                RuntimeResult::ProgramInstanceAdmissionBound {
+                    request_id,
+                    program_instance_id,
+                    artifact_digest,
+                }
+            }
+            Err(code) => RuntimeResult::Failed { request_id, code },
         }
     }
 }
@@ -682,7 +1961,7 @@ impl RuntimeService {
         request_id: String,
         artifact_digest: String,
     ) -> Result<RuntimeResult, ProtocolError> {
-        if !is_strict_digest(&artifact_digest) {
+        if !apxm_core::grammar::is_digest(&artifact_digest) {
             return Err(ProtocolError::SourceAsExecutable);
         }
         if self.artifacts.get(&artifact_digest).is_none()
@@ -721,16 +2000,32 @@ impl RuntimeService {
                 materials,
                 owner_claim: owner_claim.clone(),
                 invocation: None,
+                invocation_history: BTreeMap::new(),
                 invocation_bytes: 0,
                 state_entry: Self::entry(material_bytes, self.state_policy.instances.ttl),
             },
         );
         self.instance_bytes = self.instance_bytes.saturating_add(material_bytes);
+        if self.persist_runtime_state().is_err() {
+            self.instances.remove(&id);
+            self.instance_bytes = self.instance_bytes.saturating_sub(material_bytes);
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            });
+        }
         Ok(RuntimeResult::ProgramInstanceCreated {
             request_id,
             program_instance_id: id,
             owner_claim,
             artifact_digest,
+            admission_profile: self.admission_profile.as_ref().map(|profile| {
+                RuntimeAdmissionProfileDescriptor {
+                    profile_ref: profile.profile_ref().to_owned(),
+                    port_bindings_digest: canonical_port_bindings_digest(),
+                    resource_ceiling_digest: canonical_resource_ceiling_digest(),
+                }
+            }),
         })
     }
 
@@ -741,61 +2036,112 @@ impl RuntimeService {
         owner_claim: RuntimeOwnerClaim,
         input: Value,
     ) -> RuntimeResult {
+        let prepared =
+            match self.prepare_invocation(request_id, program_instance_id, owner_claim, input) {
+                Ok(prepared) => prepared,
+                Err(result) => return result,
+            };
+        let execution = prepared.execute();
+        self.finish_invocation(&prepared, execution)
+    }
+
+    /// Atomically validate and claim an invocation, returning only owned
+    /// execution inputs. The caller must run the returned driver without the
+    /// service mutex and then call [`Self::finish_invocation`].
+    pub(crate) fn prepare_invocation(
+        &mut self,
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        input: Value,
+    ) -> Result<PreparedInvocation, RuntimeResult> {
+        if request_id.trim().is_empty() {
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            });
+        }
         if u64::try_from(request_id.len()).unwrap_or(u64::MAX) > self.state_policy.max_input_bytes {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id: "request_id_too_large".to_owned(),
                 code: "request_id_too_large".to_owned(),
-            };
+            });
         }
         if owner_claim.validate().is_err() {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "invalid_owner_claim".to_owned(),
-            };
+            });
         }
         if self.disconnected {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "disconnected".to_owned(),
-            };
+            });
         }
         let Some(instance) = self.instances.get(&program_instance_id) else {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "unknown_instance".to_owned(),
-            };
+            });
         };
         if instance.owner_claim != owner_claim {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "owner_mismatch".to_owned(),
-            };
+            });
         }
         let input_fingerprint = serde_json::to_string(&input).unwrap_or_default();
         let input_bytes = u64::try_from(input_fingerprint.len()).unwrap_or(u64::MAX);
         if input_bytes > self.state_policy.max_input_bytes {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "input_too_large".to_owned(),
-            };
+            });
+        }
+        if let Some(prior) = instance.invocation_history.get(&request_id) {
+            if prior.input_fingerprint != input_fingerprint {
+                return Err(RuntimeResult::Failed {
+                    request_id,
+                    code: "invocation_idempotency_conflict".to_owned(),
+                });
+            }
+            if self.cancelled.contains_key(&prior.program_invocation_id) {
+                return Err(RuntimeResult::Cancelled { request_id });
+            }
+            return Err(prior
+                .result
+                .clone()
+                .unwrap_or_else(|| RuntimeResult::Failed {
+                    request_id,
+                    code: "invocation_in_progress".to_owned(),
+                }));
         }
         if let Some(prior) = instance.invocation.as_ref() {
             if prior.request_id == request_id {
                 if self.cancelled.contains_key(&prior.program_invocation_id) {
-                    return RuntimeResult::Cancelled { request_id };
+                    return Err(RuntimeResult::Cancelled { request_id });
                 }
                 if prior.input_fingerprint == input_fingerprint {
-                    return prior.result.clone();
+                    return Err(prior
+                        .result
+                        .clone()
+                        .unwrap_or_else(|| RuntimeResult::Failed {
+                            request_id: request_id.clone(),
+                            code: "invocation_in_progress".to_owned(),
+                        }));
                 }
-                return RuntimeResult::Failed {
+                return Err(RuntimeResult::Failed {
                     request_id,
                     code: "invocation_idempotency_conflict".to_owned(),
-                };
+                });
             }
-            return RuntimeResult::Failed {
-                request_id,
-                code: "invocation_already_started".to_owned(),
-            };
+            if prior.result.is_none() {
+                return Err(RuntimeResult::Failed {
+                    request_id,
+                    code: "invocation_already_started".to_owned(),
+                });
+            }
         }
         let instance_base_bytes = instance.state_entry.bytes;
         let request_bytes = u64::try_from(request_id.len()).unwrap_or(u64::MAX);
@@ -808,39 +2154,38 @@ impl RuntimeService {
             .saturating_sub(instance_base_bytes)
             .saturating_add(instance_with_input);
         if aggregate_instance_bytes > self.state_policy.instances.max_bytes {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: Self::quota_code("instance"),
-            };
+            });
         }
         let invocation_id = format!("{program_instance_id}:inv-{}", Uuid::new_v4());
         let artifact_digest = instance.artifact_digest.clone();
         let Some(bytes) = self.artifacts.get(&artifact_digest) else {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "unknown_artifact".to_owned(),
-            };
+            });
         };
         let bytes = bytes.to_vec();
-        let Ok(air) = serde_json::from_slice::<AirModule>(&bytes) else {
-            return RuntimeResult::Failed {
+        let Ok(artifact) = ExecutableArtifact::decode_for_execution(&bytes, &artifact_digest)
+        else {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "invalid_artifact".to_owned(),
-            };
+            });
         };
+        let air = artifact.air.clone();
         if let Err(code) =
             validate_package_permission_resolution(&air, self.package_root.as_deref())
         {
-            return RuntimeResult::Failed { request_id, code };
-        }
-        if let Err(code) = block_on(self.resolve_asks(&air)) {
-            return RuntimeResult::Failed { request_id, code };
+            return Err(RuntimeResult::Failed { request_id, code });
         }
         let Some(bound_materials) = instance.materials.as_ref() else {
-            return RuntimeResult::Failed {
+            return Err(RuntimeResult::Failed {
                 request_id,
                 code: "missing_invocation_admission".to_owned(),
-            };
+            });
         };
         let mut materials = InvocationMaterials {
             admission: bound_materials.admission.clone(),
@@ -851,62 +2196,28 @@ impl RuntimeService {
         // supplied admission fields intact except for this runtime-minted
         // identity, which is not caller-authoritative.
         materials.admission.invocation_id.clone_from(&invocation_id);
-        let result = match block_on(execute_admitted_artifact_with_sandbox(
+        let cancellation = CancellationToken::new();
+        self.active_cancellations
+            .insert(invocation_id.clone(), cancellation.clone());
+        let prepared = PreparedInvocation {
+            request_id: request_id.clone(),
+            program_instance_id: program_instance_id.clone(),
+            invocation_id: invocation_id.clone(),
+            input: input.clone(),
             air,
-            &bytes,
-            &materials,
-            self.handlers.as_ref(),
-            self.package_root.as_deref(),
-            self.sandbox_registry.clone(),
-        )) {
-            Ok(output) => {
-                if self.disconnected
-                    || self.invocation_is_cancelled(&program_instance_id, &invocation_id)
-                {
-                    return RuntimeResult::Failed {
-                        request_id,
-                        code: "disconnected".to_owned(),
-                    };
-                }
-                let Some(output_bytes) = Self::output_size(&output) else {
-                    return RuntimeResult::Failed {
-                        request_id,
-                        code: "output_too_large".to_owned(),
-                    };
-                };
-                if self.state_policy.last_output.max_entries == 0
-                    || output_bytes > self.state_policy.last_output.max_bytes
-                {
-                    return RuntimeResult::Failed {
-                        request_id,
-                        code: "output_too_large".to_owned(),
-                    };
-                }
-                if !self.project_execution(&output, &invocation_id) {
-                    return RuntimeResult::Failed {
-                        request_id,
-                        code: Self::quota_code("observation"),
-                    };
-                }
-                if let Some(dir) = &self.artifact_dir {
-                    let _ = std::fs::write(
-                        dir.join(format!("{}.output.json", invocation_id.replace(':', "-"))),
-                        serde_json::to_vec(&output).unwrap_or_else(|_| b"{}".to_vec()),
-                    );
-                }
-                self.last_output = Some(output);
-                self.last_output_at = Some(Self::now());
-                self.last_output_bytes = output_bytes;
-                RuntimeResult::ProgramInvocationStarted {
-                    request_id: request_id.clone(),
-                    program_invocation_id: invocation_id.clone(),
-                }
-            }
-            Err(code) => RuntimeResult::Failed {
-                request_id: request_id.clone(),
-                code,
-            },
+            artifact_bytes: bytes,
+            materials,
+            handlers: self.handlers.clone(),
+            package_root: self.package_root.clone(),
+            sandbox_registry: self.sandbox_registry.clone(),
+            execution_backend: self.execution_backend.commit_port(),
+            observation_sink: self.observation_sink.clone(),
+            broker: self.broker.clone(),
+            cancellation,
+            resumable: self.resumable_invocations,
         };
+        // Publish the invocation index and provisional state before releasing
+        // the mutex. Cancellation therefore sees the exact owner claim.
         if let Some(instance) = self.instances.get_mut(&program_instance_id) {
             self.instance_bytes = self
                 .instance_bytes
@@ -914,14 +2225,102 @@ impl RuntimeService {
                 .saturating_add(instance_with_input);
             instance.state_entry.bytes = instance_with_input;
             instance.invocation_bytes = input_bytes.saturating_add(request_bytes);
-            instance.invocation = Some(InvocationState {
+            let invocation = InvocationState {
                 request_id: request_id.clone(),
-                input_fingerprint,
+                input_fingerprint: input_fingerprint.clone(),
                 program_invocation_id: invocation_id.clone(),
-                result: result.clone(),
+                result: None,
+            };
+            instance
+                .invocation_history
+                .insert(request_id.clone(), invocation.clone());
+            instance.invocation = Some(invocation);
+        }
+        self.invocation_index
+            .insert(invocation_id, program_instance_id.clone());
+        if self.persist_runtime_state().is_err() {
+            self.invocation_index.remove(&prepared.invocation_id);
+            self.active_cancellations.remove(&prepared.invocation_id);
+            if let Some(instance) = self.instances.get_mut(&program_instance_id) {
+                self.instance_bytes = self
+                    .instance_bytes
+                    .saturating_sub(instance.state_entry.bytes)
+                    .saturating_add(instance_base_bytes);
+                instance.state_entry.bytes = instance_base_bytes;
+                instance.invocation_bytes = 0;
+                instance.invocation = None;
+                instance.invocation_history.remove(&request_id);
+            }
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
             });
-            self.invocation_index
-                .insert(invocation_id, program_instance_id.clone());
+        }
+        Ok(prepared)
+    }
+
+    /// Finalize a previously claimed invocation after its driver has run.
+    /// Durable commit output remains the only execution authority; this method
+    /// only publishes the protocol result and releases the active token.
+    pub(crate) fn finish_invocation(
+        &mut self,
+        prepared: &PreparedInvocation,
+        execution: Result<Value, String>,
+    ) -> RuntimeResult {
+        let suspended = execution
+            .as_ref()
+            .ok()
+            .and_then(|output| output.get("status"))
+            .and_then(Value::as_str)
+            == Some("suspended");
+        let result = match execution {
+            Ok(output) => {
+                let result = invocation_result_from_execution_output(
+                    prepared.request_id.clone(),
+                    prepared.invocation_id.clone(),
+                    &output,
+                );
+                if !matches!(result, RuntimeResult::ProgramInvocationStarted { .. }) {
+                    result
+                } else if self.disconnected
+                    || self.invocation_is_cancelled(
+                        &prepared.program_instance_id,
+                        &prepared.invocation_id,
+                    )
+                {
+                    RuntimeResult::Failed {
+                        request_id: prepared.request_id.clone(),
+                        code: "disconnected".to_owned(),
+                    }
+                } else {
+                    result
+                }
+            }
+            Err(code) => RuntimeResult::Failed {
+                request_id: prepared.request_id.clone(),
+                code,
+            },
+        };
+        self.active_cancellations.remove(&prepared.invocation_id);
+        self.observation_signal.notify();
+        if !suspended
+            && let Some(instance) = self.instances.get_mut(&prepared.program_instance_id)
+            && let Some(invocation) = instance.invocation.as_mut()
+            && invocation.program_invocation_id == prepared.invocation_id
+        {
+            invocation.result = Some(result.clone());
+        }
+        if !suspended
+            && let Some(instance) = self.instances.get_mut(&prepared.program_instance_id)
+            && let Some(invocation) = instance.invocation_history.get_mut(&prepared.request_id)
+        {
+            invocation.result = Some(result.clone());
+        }
+        if self.persist_runtime_state().is_err() {
+            return RuntimeResult::Failed {
+                request_id: prepared.request_id.clone(),
+                code: "runtime_state_unavailable".to_owned(),
+            };
         }
         result
     }
@@ -978,102 +2377,30 @@ impl RuntimeService {
             }
             debug_assert_eq!(invocation.program_invocation_id, program_invocation_id);
         }
-        self.cancelled.insert(program_invocation_id, marker);
+        let cancellation_id = program_invocation_id.clone();
+        self.cancelled.insert(cancellation_id.clone(), marker);
         self.cancellation_bytes = self.cancellation_bytes.saturating_add(marker_bytes);
+        if self.persist_runtime_state().is_err() {
+            self.cancelled.remove(&cancellation_id);
+            self.cancellation_bytes = self.cancellation_bytes.saturating_sub(marker_bytes);
+            return RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            };
+        }
+        // Publish the durable marker before signalling the driver. The
+        // service mutex makes this an atomic owner transition: finalization
+        // cannot publish a successful protocol result without observing the
+        // cancellation decision.
+        if let Some(cancellation) = self.active_cancellations.get(&cancellation_id) {
+            cancellation.cancel();
+        }
         RuntimeResult::Cancelled { request_id }
     }
 
     fn invocation_is_cancelled(&self, program_instance_id: &str, invocation_id: &str) -> bool {
         let _ = program_instance_id;
         self.cancelled.contains_key(invocation_id)
-    }
-
-    async fn resolve_asks(&self, air: &AirModule) -> Result<(), String> {
-        for (capability_ref, decision) in &air.capability_permission_requests {
-            if !matches!(decision, PermissionDecision::Ask { .. }) {
-                continue;
-            }
-            match self.broker.resolve_ask(capability_ref).await {
-                ApprovalDecision::Allow => {}
-                ApprovalDecision::Deny => return Err("ask_denied".to_owned()),
-                ApprovalDecision::Timeout => return Err("ask_timeout".to_owned()),
-            }
-        }
-        Ok(())
-    }
-
-    fn record_observation(&self, observation: Observation) -> bool {
-        let Some(size) = Self::observation_size(&observation) else {
-            return false;
-        };
-        let mut observations = self.observer.observations.lock().expect("observer lock");
-        let mut current_bytes = self
-            .observation_bytes
-            .lock()
-            .expect("observation byte counter lock");
-        if !Self::quota_available(
-            self.state_policy.observations,
-            observations.len(),
-            *current_bytes,
-            size,
-        ) {
-            return false;
-        }
-        observations.push(observation);
-        *current_bytes = (*current_bytes).saturating_add(size);
-        true
-    }
-
-    fn project_execution(&self, output: &Value, commit_id: &str) -> bool {
-        if let Some(nodes) = output
-            .pointer("/results/node_outcomes")
-            .and_then(Value::as_array)
-        {
-            for node in nodes {
-                let kind = node.get("kind").and_then(Value::as_str).unwrap_or("");
-                match kind {
-                    "model.call" => {
-                        let content_ref = node
-                            .get("node_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("model")
-                            .to_owned();
-                        if !self.record_observation(Observation::ProvisionalContent { content_ref })
-                        {
-                            return false;
-                        }
-                    }
-                    "await.event" => {
-                        let event_id = node
-                            .pointer("/outcome/event_ref")
-                            .and_then(Value::as_str)
-                            .or_else(|| node.get("node_id").and_then(Value::as_str))
-                            .unwrap_or("event")
-                            .to_owned();
-                        let phase = node
-                            .pointer("/outcome/status")
-                            .and_then(Value::as_str)
-                            .unwrap_or("applied")
-                            .to_owned();
-                        if !self.record_observation(Observation::EventLifecycle { event_id, phase })
-                        {
-                            return false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if output.get("content").is_some()
-            && !self.record_observation(Observation::ProvisionalContent {
-                content_ref: format!("content:{commit_id}"),
-            })
-        {
-            return false;
-        }
-        self.record_observation(Observation::TerminalCommit {
-            commit_id: commit_id.to_owned(),
-        })
     }
 
     fn reserve_event(
@@ -1115,11 +2442,22 @@ impl RuntimeService {
             (event_ref.event_id.clone(), event_ref.generation),
             ReservationState {
                 owner_claim: owner_claim.clone(),
-                _type_id: type_id,
+                type_id,
+                status: EventStatus::Pending,
+                occurrence_id: None,
                 state_entry: Self::entry(type_bytes, self.state_policy.reservations.ttl),
             },
         );
         self.reservation_bytes = self.reservation_bytes.saturating_add(type_bytes);
+        if self.persist_runtime_state().is_err() {
+            self.reservations
+                .remove(&(event_ref.event_id.clone(), event_ref.generation));
+            self.reservation_bytes = self.reservation_bytes.saturating_sub(type_bytes);
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            });
+        }
         Ok(RuntimeResult::EventReserved {
             request_id,
             owner_claim,
@@ -1152,6 +2490,7 @@ impl RuntimeService {
         let key = application.idempotency_key.clone();
         if let Some(prior) = self.applications.get(&key) {
             if prior.payload != application.occurrence.payload
+                || prior.occurrence_id != application.occurrence.occurrence_id
                 || prior.event_ref != application.event_ref
             {
                 return Ok(RuntimeResult::EventApplied {
@@ -1163,6 +2502,15 @@ impl RuntimeService {
                 request_id,
                 result: EventApplicationResult::Fulfilled,
             });
+        }
+        if reservation.status != EventStatus::Pending {
+            let result = match reservation.status {
+                EventStatus::Fulfilled => EventApplicationResult::Fulfilled,
+                EventStatus::Expired => EventApplicationResult::Expired,
+                EventStatus::Cancelled => EventApplicationResult::Cancelled,
+                EventStatus::Pending => unreachable!(),
+            };
+            return Ok(RuntimeResult::EventApplied { request_id, result });
         }
         let payload_bytes = u64::try_from(
             serde_json::to_vec(&application.occurrence.payload)
@@ -1190,24 +2538,146 @@ impl RuntimeService {
             key.clone(),
             ApplicationState {
                 event_ref: application.event_ref.clone(),
+                occurrence_id: application.occurrence.occurrence_id.clone(),
                 payload: application.occurrence.payload.clone(),
                 state_entry: Self::entry(application_bytes, self.state_policy.applications.ttl),
             },
         );
         self.application_bytes = self.application_bytes.saturating_add(application_bytes);
+        if let Some(reservation) = self.reservations.get_mut(&(
+            application.event_ref.event_id.clone(),
+            application.event_ref.generation,
+        )) {
+            reservation.status = EventStatus::Fulfilled;
+            reservation.occurrence_id = Some(application.occurrence.occurrence_id.clone());
+        }
         // Event application is the only wake authority. A fulfill with no
         // parked continuation still records the application; it does not
         // invent a successful invocation finish.
         let _ = wake_authority(&application);
+        if self.persist_runtime_state().is_err() {
+            self.applications.remove(&key);
+            self.application_bytes = self.application_bytes.saturating_sub(application_bytes);
+            if let Some(reservation) = self.reservations.get_mut(&(
+                application.event_ref.event_id.clone(),
+                application.event_ref.generation,
+            )) {
+                reservation.status = EventStatus::Pending;
+                reservation.occurrence_id = None;
+            }
+            return Ok(RuntimeResult::EventApplied {
+                request_id,
+                result: EventApplicationResult::Rejected,
+            });
+        }
+        // The fulfilled application is the sole wake authority. Once its
+        // durable record is visible, synchronously hand the exact event and
+        // occurrence payload to the canonical resumable driver. The driver
+        // owns continuation removal, the resume observation, and the next
+        // atomic commit; this path never reconstructs execution from output.
+        let _ = self.resume_fulfilled_event(
+            &application.event_ref,
+            application.occurrence.payload.clone(),
+        );
         Ok(RuntimeResult::EventApplied {
             request_id,
             result: EventApplicationResult::Fulfilled,
         })
     }
 
+    fn resume_fulfilled_event(
+        &mut self,
+        event_ref: &CanonicalEventRef,
+        delivered: Value,
+    ) -> Result<(), String> {
+        let mut candidate = None;
+        for (instance_id, instance) in &self.instances {
+            let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
+            let Some(committed) = self
+                .execution_backend
+                .load_continuation(&program_instance_ref)
+            else {
+                continue;
+            };
+            let continuation: Continuation = serde_json::from_value(committed.payload)
+                .map_err(|error| format!("invalid committed continuation: {error}"))?;
+            if continuation
+                .event_ref
+                .as_ref()
+                .is_some_and(|reference| reference.as_str() == event_ref.event_id)
+            {
+                if candidate.is_some() {
+                    return Err("event maps to multiple parked invocations".to_owned());
+                }
+                let Some(invocation) = instance.invocation.as_ref() else {
+                    return Err("parked continuation has no invocation state".to_owned());
+                };
+                if invocation.program_invocation_id != continuation.program_invocation_ref.as_str()
+                {
+                    return Err("parked continuation invocation mismatch".to_owned());
+                }
+                candidate = Some((
+                    instance_id.clone(),
+                    continuation,
+                    instance.artifact_digest.clone(),
+                    instance.materials.clone(),
+                ));
+            }
+        }
+        let Some((instance_id, continuation, artifact_digest, materials)) = candidate else {
+            return Err("no parked continuation matches fulfilled event".to_owned());
+        };
+        let Some(mut materials) = materials else {
+            return Err("parked invocation admission is unavailable".to_owned());
+        };
+        let Some(artifact_bytes) = self.artifacts.get(&artifact_digest) else {
+            return Err("parked invocation artifact is unavailable".to_owned());
+        };
+        materials
+            .admission
+            .invocation_id
+            .clone_from(&continuation.program_invocation_ref.as_str().to_owned());
+        let output = block_on(resume_admitted_artifact_with_runtime_ports(
+            continuation.air.clone(),
+            artifact_bytes,
+            &materials,
+            self.handlers.as_ref(),
+            self.package_root.as_deref(),
+            self.sandbox_registry.clone(),
+            self.execution_backend.commit_port(),
+            Some(self.observation_sink.clone()),
+            ProgramInstanceRef::new(instance_id.clone()),
+            apxm_kernel::EventRef::new(event_ref.event_id.clone())
+                .map_err(|error| error.to_string())?,
+            delivered,
+        ))?;
+        if output.get("status").and_then(Value::as_str) != Some("suspended") {
+            let result = invocation_result_from_execution_output(
+                self.instances
+                    .get(&instance_id)
+                    .and_then(|instance| instance.invocation.as_ref())
+                    .map(|invocation| invocation.request_id.clone())
+                    .ok_or_else(|| "resumed invocation disappeared".to_owned())?,
+                continuation.program_invocation_ref.as_str().to_owned(),
+                &output,
+            );
+            if let Some(instance) = self.instances.get_mut(&instance_id)
+                && let Some(invocation) = instance.invocation.as_mut()
+            {
+                invocation.result = Some(result.clone());
+                if let Some(history) = instance.invocation_history.get_mut(&invocation.request_id) {
+                    history.result = Some(result);
+                }
+            }
+            self.persist_runtime_state()?;
+        }
+        self.observation_signal.notify();
+        Ok(())
+    }
+
     fn load_persisted_artifact(&self, digest: &str) -> Option<Vec<u8>> {
         let dir = self.artifact_dir.as_ref()?;
-        if !is_strict_digest(digest) {
+        if !apxm_core::grammar::is_digest(digest) {
             return None;
         }
         let dir_meta = std::fs::symlink_metadata(dir).ok()?;
@@ -1232,13 +2702,52 @@ impl RuntimeService {
         file.take(MAX_ARTIFACT_BYTES + 1)
             .read_to_end(&mut bytes)
             .ok()?;
-        if bytes.len() as u64 > MAX_ARTIFACT_BYTES || artifact_digest(&bytes) != digest {
+        if bytes.len() as u64 > MAX_ARTIFACT_BYTES
+            || canonical_artifact_digest(&bytes).ok().as_deref() != Some(digest)
+            || ExecutableArtifact::decode_for_execution(&bytes, digest).is_err()
+        {
             return None;
         }
         Some(bytes)
     }
 
-    #[allow(clippy::unused_self)]
+    fn event_inspection(
+        event_ref: &CanonicalEventRef,
+        reservation: &ReservationState,
+    ) -> EventInspection {
+        EventInspection {
+            event_ref: event_ref.clone(),
+            type_id: reservation.type_id.clone(),
+            status: reservation.status,
+            occurrence_id: reservation.occurrence_id.clone(),
+        }
+    }
+
+    fn list_events(
+        &mut self,
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+    ) -> Result<RuntimeResult, ProtocolError> {
+        owner_claim.validate()?;
+        let events = self
+            .reservations
+            .iter()
+            .filter(|(_, reservation)| {
+                reservation.owner_claim == owner_claim && reservation.status == EventStatus::Pending
+            })
+            .map(|((event_id, generation), reservation)| {
+                Self::event_inspection(
+                    &CanonicalEventRef {
+                        event_id: event_id.clone(),
+                        generation: *generation,
+                    },
+                    reservation,
+                )
+            })
+            .collect();
+        Ok(RuntimeResult::EventListed { request_id, events })
+    }
+
     fn inspect_event(
         &mut self,
         request_id: String,
@@ -1261,21 +2770,58 @@ impl RuntimeService {
         if reservation.owner_claim != owner_claim {
             return Err(ProtocolError::OwnerMismatch);
         }
-        Ok(RuntimeResult::Failed {
+        Ok(RuntimeResult::EventInspected {
             request_id,
-            code: "inspect_ok".to_owned(),
+            inspection: Self::event_inspection(&event_ref, reservation),
         })
     }
-}
 
-fn is_strict_digest(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix("sha256:") else {
-        return false;
-    };
-    hex.len() == 64
-        && hex
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    fn change_event_status(
+        &mut self,
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        event_ref: CanonicalEventRef,
+        status: EventStatus,
+    ) -> Result<RuntimeResult, ProtocolError> {
+        event_ref
+            .validate()
+            .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
+        owner_claim.validate()?;
+        let reservation_key = (event_ref.event_id.clone(), event_ref.generation);
+        {
+            {
+                let Some(reservation) = self.reservations.get_mut(&reservation_key) else {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "unknown_reservation".to_owned(),
+                    });
+                };
+                if reservation.owner_claim != owner_claim {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
+                if reservation.status == EventStatus::Pending {
+                    reservation.status = status;
+                }
+            }
+        }
+        if self.persist_runtime_state().is_err() {
+            if let Some(reservation) = self.reservations.get_mut(&reservation_key) {
+                reservation.status = EventStatus::Pending;
+            }
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            });
+        }
+        let reservation = self
+            .reservations
+            .get(&reservation_key)
+            .expect("reservation remains after status update");
+        Ok(RuntimeResult::EventLifecycleChanged {
+            request_id,
+            inspection: Self::event_inspection(&event_ref, reservation),
+        })
+    }
 }
 
 /// Prove this crate does not name a source-port type in its public API.
@@ -1307,9 +2853,31 @@ fn block_on<T>(future: impl Future<Output = T>) -> T {
 mod tests {
     use super::*;
     use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventOccurrence};
-    use apxm_runtime_protocol::{RUNTIME_PROTOCOL_VERSION, RuntimeRequest};
+    use apxm_program::air::AirModule;
+    use apxm_program::artifact::ExecutableArtifact;
+    use apxm_runtime_protocol::{
+        GrantRef, PrincipalRef, ProgramInvocationId, RUNTIME_PROTOCOL_VERSION, ReadContext,
+        ReadPurpose, RequestId, RuntimeFailureCode, RuntimeHandshakeV2, RuntimeRequest,
+        RuntimeRequestV2, RuntimeResultV2, ScopeRef,
+    };
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct InvocationGate {
+        released: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl ApprovalBroker for InvocationGate {
+        async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+            while !self.released.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+            ApprovalDecision::Allow
+        }
+    }
 
     fn handshake() -> RuntimeHandshake {
         RuntimeHandshake {
@@ -1326,7 +2894,384 @@ mod tests {
     }
 
     fn fixture_air_bytes() -> Vec<u8> {
-        fs::read(fixture_dir().join("canonical-execute.air.json")).expect("fixture AIR")
+        let raw = fs::read(fixture_dir().join("canonical-execute.air.json")).expect("fixture AIR");
+        let air: AirModule = serde_json::from_slice(&raw).expect("fixture AIR JSON");
+        ExecutableArtifact::from_air(&air)
+            .expect("canonical fixture artifact")
+            .encode()
+            .expect("canonical fixture artifact JSON")
+    }
+
+    fn capability_air_bytes() -> Vec<u8> {
+        let raw = fs::read(fixture_dir().join("canonical-skill-execute.air.json"))
+            .expect("skill fixture AIR");
+        let air: AirModule = serde_json::from_slice(&raw).expect("skill fixture AIR JSON");
+        ExecutableArtifact::from_air(&air)
+            .expect("canonical skill fixture artifact")
+            .encode()
+            .expect("canonical skill fixture artifact JSON")
+    }
+
+    fn read_context(purpose: ReadPurpose) -> ReadContext {
+        ReadContext {
+            request_id: RequestId::new("read.request").expect("request id"),
+            scope_ref: ScopeRef::new("scope.local").expect("scope"),
+            principal_ref: PrincipalRef::new("principal.local").expect("principal"),
+            grant_ref: GrantRef::new("grant.local").expect("grant"),
+            correlation_id: None,
+            purpose,
+        }
+    }
+
+    #[test]
+    fn runtime_state_configuration_fails_closed_before_opening_storage() {
+        assert_eq!(
+            runtime_state_dir_from_value(None),
+            Err(RuntimeServiceStartupError::MissingRuntimeStateDir)
+        );
+        assert_eq!(
+            runtime_state_dir_from_value(Some(std::ffi::OsString::from(""))),
+            Err(RuntimeServiceStartupError::EmptyRuntimeStateDir)
+        );
+        assert_eq!(
+            runtime_state_dir_from_value(Some(std::ffi::OsString::from("relative/state"))),
+            Err(RuntimeServiceStartupError::RelativeRuntimeStateDir(
+                PathBuf::from("relative/state")
+            ))
+        );
+        assert_eq!(
+            runtime_state_dir_from_value(Some(std::ffi::OsString::from("/tmp/../state"))),
+            Err(RuntimeServiceStartupError::UnsafeRuntimeStateDir(
+                PathBuf::from("/tmp/../state")
+            ))
+        );
+    }
+
+    #[test]
+    fn runtime_service_reopens_the_same_explicit_state_directory() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let first = RuntimeService::in_memory().with_runtime_state_dir(path.clone());
+        assert!(first.startup_error().is_none());
+        drop(first);
+
+        let second = RuntimeService::in_memory().with_runtime_state_dir(path);
+        assert!(second.startup_error().is_none());
+    }
+
+    #[test]
+    fn runtime_service_rehydrates_claims_invocations_reads_cancellation_and_events() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (instance_id, claim, invocation_id, event_ref, event_claim, event_application) = {
+            let mut service = RuntimeService::default()
+                .with_runtime_state_dir(path.clone())
+                .with_embedded_read_access();
+            let instance_id = create_started(&mut service, capability_air_bytes());
+            let claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "restart.start".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: claim.clone(),
+                        input: serde_json::json!({}),
+                    },
+                )
+                .expect("start request");
+            let invocation_id = match started {
+                RuntimeResult::ProgramInvocationStarted {
+                    program_invocation_id,
+                    ..
+                } => program_invocation_id,
+                other => panic!("expected committed invocation, got {other:?}"),
+            };
+            let reserved = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventReserve {
+                        request_id: "restart.reserve".to_owned(),
+                        type_id: "UserInput".to_owned(),
+                    },
+                )
+                .expect("reserve request");
+            let (event_ref, event_claim) = match reserved {
+                RuntimeResult::EventReserved {
+                    event_ref,
+                    owner_claim,
+                    ..
+                } => (event_ref, owner_claim),
+                other => panic!("expected event reservation, got {other:?}"),
+            };
+            let event_application = EventApplication {
+                event_ref: event_ref.clone(),
+                occurrence: EventOccurrence {
+                    occurrence_id: "restart.occurrence".to_owned(),
+                    source_kind: "human.terminal".to_owned(),
+                    mapping_digest: "restart.mapping".to_owned(),
+                    source_record: "restart.source".to_owned(),
+                    payload: serde_json::json!({"answer": "ok"}),
+                },
+                idempotency_key: "restart.application".to_owned(),
+            };
+            service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventFulfill {
+                        request_id: "restart.fulfill".to_owned(),
+                        owner_claim: event_claim.clone(),
+                        application: event_application.clone(),
+                    },
+                )
+                .expect("fulfill request");
+            (
+                instance_id,
+                claim,
+                invocation_id,
+                event_ref,
+                event_claim,
+                event_application,
+            )
+        };
+
+        let mut service = RuntimeService::default()
+            .with_runtime_state_dir(path)
+            .with_embedded_read_access();
+        let replay = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "restart.start".to_owned(),
+                    program_instance_id: instance_id.clone(),
+                    owner_claim: claim.clone(),
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("idempotent start after restart");
+        assert!(matches!(
+            replay,
+            RuntimeResult::ProgramInvocationStarted { ref program_invocation_id, .. }
+                if program_invocation_id == &invocation_id
+        ));
+
+        let inspection = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new(invocation_id.clone())
+                        .expect("invocation ref"),
+                    node_execution_id: None,
+                },
+            )
+            .expect("inspection after restart");
+        assert!(matches!(
+            inspection,
+            RuntimeResultV2::ProgramInvocationInspection { .. }
+        ));
+        let observations = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ObservationSubscribe {
+                    context: read_context(ReadPurpose::Observation),
+                    program_invocation_id: ProgramInvocationId::new(invocation_id.clone())
+                        .expect("invocation ref"),
+                    after_cursor: None,
+                    limit: 100,
+                },
+            )
+            .expect("observations after restart");
+        assert!(matches!(
+            observations,
+            RuntimeResultV2::ObservationPage { .. }
+        ));
+
+        let cancelled = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "restart.cancel".to_owned(),
+                    owner_claim: claim,
+                    program_invocation_id: invocation_id,
+                },
+            )
+            .expect("cancel after restart");
+        assert!(matches!(cancelled, RuntimeResult::Cancelled { .. }));
+
+        let inspected = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::EventInspect {
+                    request_id: "restart.inspect-event".to_owned(),
+                    owner_claim: event_claim.clone(),
+                    event_ref: event_ref.clone(),
+                },
+            )
+            .expect("event inspect after restart");
+        assert!(matches!(
+            inspected,
+            RuntimeResult::EventInspected { inspection, .. }
+                if inspection.status == EventStatus::Fulfilled
+        ));
+        let replayed_event = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::EventFulfill {
+                    request_id: "restart.fulfill-replay".to_owned(),
+                    owner_claim: event_claim,
+                    application: event_application,
+                },
+            )
+            .expect("event application replay after restart");
+        assert!(matches!(
+            replayed_event,
+            RuntimeResult::EventApplied {
+                result: EventApplicationResult::Fulfilled,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn v2_reads_are_typed_and_fail_closed_for_unknown_invocations() {
+        let service = RuntimeService::default();
+        let result = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new("invocation.missing")
+                        .expect("invocation"),
+                    node_execution_id: None,
+                },
+            )
+            .expect("protocol admission");
+        assert!(matches!(
+            result,
+            RuntimeResultV2::Failed {
+                code: RuntimeFailureCode::Unauthorized,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn v2_enforces_client_server_feature_intersection_per_request() {
+        let service = RuntimeService::default();
+        let mut client = RuntimeHandshakeV2::server();
+        client
+            .supported_features
+            .retain(|feature| *feature == apxm_runtime_protocol::RuntimeFeature::ContentRead);
+        let result = service
+            .handle_v2(
+                &client,
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new("invocation.missing")
+                        .expect("invocation"),
+                    node_execution_id: None,
+                },
+            )
+            .expect("protocol admission remains valid");
+        assert!(matches!(
+            result,
+            RuntimeResultV2::Failed {
+                code: RuntimeFailureCode::UnsupportedFeature,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn invocation_result_preserves_commit_uncertainty() {
+        let compare = invocation_result_from_execution_output(
+            "request.compare".to_owned(),
+            "invocation.compare".to_owned(),
+            &serde_json::json!({
+                "commit": {"status": "compare_conflict"}
+            }),
+        );
+        assert!(matches!(
+            compare,
+            RuntimeResult::Failed { ref code, .. } if code == "compare_conflict"
+        ));
+        let unknown = invocation_result_from_execution_output(
+            "request.unknown".to_owned(),
+            "invocation.unknown".to_owned(),
+            &serde_json::json!({
+                "commit": {"status": "outcome_unknown"}
+            }),
+        );
+        assert!(matches!(
+            unknown,
+            RuntimeResult::Failed { ref code, .. } if code == "outcome_unknown"
+        ));
+    }
+
+    #[test]
+    fn authorized_v2_inspection_reads_the_committed_execution_record() {
+        let mut service = RuntimeService::default()
+            .with_read_access_hook(std::sync::Arc::new(apxm_commit_local::AllowReadAccess));
+        let instance = create_started(&mut service, capability_air_bytes());
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    owner_claim: owner_claim(&service, &instance),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("start request");
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = started
+        else {
+            panic!("expected committed invocation: {started:?}");
+        };
+        let result = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id)
+                        .expect("invocation ref"),
+                    node_execution_id: None,
+                },
+            )
+            .expect("inspection request");
+        let RuntimeResultV2::ProgramInvocationInspection { inspection, .. } = result else {
+            panic!("expected invocation inspection");
+        };
+        assert_eq!(
+            inspection.status,
+            apxm_runtime_protocol::ProgramInvocationStatus::Failed
+        );
+        let invocation_ref = inspection.program_invocation_id.clone();
+        let node_execution_id = inspection
+            .node_execution_refs
+            .first()
+            .expect("committed node execution ref")
+            .clone();
+        let node = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: invocation_ref.clone(),
+                    node_execution_id: Some(node_execution_id.clone()),
+                },
+            )
+            .expect("node inspection request");
+        assert!(matches!(
+            node,
+            RuntimeResultV2::NodeExecutionInspection { inspection, .. }
+                if inspection.node_execution_id == node_execution_id
+                    && inspection.program_invocation_id == invocation_ref
+        ));
     }
 
     #[test]
@@ -1349,20 +3294,12 @@ mod tests {
         else {
             panic!("create");
         };
-        let admission: apxm_kernel::InvocationAdmission = serde_json::from_slice(
-            &fs::read(fixture_dir().join("canonical-execute.invocation-admission.json")).unwrap(),
-        )
-        .unwrap();
         let release = fs::read(fixture_dir().join("canonical-execute.release.json")).unwrap();
         let provenance = fs::read(fixture_dir().join("canonical-execute.provenance.json")).unwrap();
         service
             .bind_admission(
                 &program_instance_id,
-                InvocationMaterials {
-                    admission,
-                    release_bytes: release,
-                    provenance_bytes: provenance,
-                },
+                materials_for_artifact(&fixture_air_bytes(), "ignored", release, provenance),
             )
             .unwrap();
         let started = service
@@ -1376,14 +3313,200 @@ mod tests {
                 },
             )
             .unwrap();
+        match started {
+            RuntimeResult::ProgramInvocationStarted { .. } => {}
+            RuntimeResult::Failed { ref code, .. } if code == "outcome_unknown" => {}
+            other => panic!("unexpected invocation transition: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_invocation_allows_next_and_replays_immutable_history() {
+        let mut service = RuntimeService::default();
+        let bytes = capability_air_bytes();
+        let instance = create_started(&mut service, bytes);
+        let claim = owner_claim(&service, &instance);
+        let first = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "history.first".to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: claim.clone(),
+                    input: serde_json::json!({"turn": 1}),
+                },
+            )
+            .expect("first invocation");
+        let first_id = match first {
+            RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } => program_invocation_id,
+            other => panic!("first invocation failed: {other:?}"),
+        };
+        let second = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "history.second".to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: claim.clone(),
+                    input: serde_json::json!({"turn": 2}),
+                },
+            )
+            .expect("second invocation");
+        assert!(matches!(
+            second,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
+        let replay = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "history.first".to_owned(),
+                    program_instance_id: instance,
+                    owner_claim: claim,
+                    input: serde_json::json!({"turn": 1}),
+                },
+            )
+            .expect("first retry");
+        assert!(matches!(
+            replay,
+            RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } if program_invocation_id == first_id
+        ));
+    }
+
+    #[test]
+    fn event_fulfill_resumes_the_committed_continuation() {
+        let mut service = RuntimeService::default().with_embedded_read_access();
+        let reserved = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::EventReserve {
+                    request_id: "resume.reserve".to_owned(),
+                    type_id: "UserInput".to_owned(),
+                },
+            )
+            .expect("reserve event");
+        let (event_ref, event_claim) = match reserved {
+            RuntimeResult::EventReserved {
+                event_ref,
+                owner_claim,
+                ..
+            } => (event_ref, owner_claim),
+            other => panic!("event reservation failed: {other:?}"),
+        };
+        let mut raw: Value = serde_json::from_slice(
+            &fs::read(fixture_dir().join("canonical-execute.air.json")).expect("fixture AIR"),
+        )
+        .expect("fixture AIR JSON");
+        raw["semantic_operations"][2]["operands"][0]["value_id"] =
+            Value::String(event_ref.event_id.clone());
+        let air: AirModule = serde_json::from_value(raw).expect("event AIR");
+        let bytes = ExecutableArtifact::from_air(&air)
+            .expect("event artifact")
+            .encode()
+            .expect("event artifact bytes");
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "resume.create".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("create instance");
+        let (instance, claim) = match created {
+            RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                owner_claim,
+                ..
+            } => (program_instance_id, owner_claim),
+            other => panic!("instance creation failed: {other:?}"),
+        };
+        service
+            .bind_admission(
+                &instance,
+                materials_for_artifact(&bytes, "resume.admission", b"{}".to_vec(), b"{}".to_vec()),
+            )
+            .expect("bind admission");
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "resume.start".to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: claim,
+                    input: Value::Null,
+                },
+            )
+            .expect("start invocation");
         assert!(matches!(
             started,
             RuntimeResult::ProgramInvocationStarted { .. }
         ));
-        let output = service.last_output().expect("committed output");
-        assert_eq!(output["schema_version"], "apxm.local-execute-result");
-        assert_eq!(output["status"], "completed");
-        assert!(output["results"]["node_outcomes"].as_array().is_some());
+        assert!(
+            service
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance.clone()))
+                .is_some(),
+            "start must persist continuation"
+        );
+        let fulfilled = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::EventFulfill {
+                    request_id: "resume.fulfill".to_owned(),
+                    owner_claim: event_claim,
+                    application: EventApplication {
+                        event_ref,
+                        occurrence: EventOccurrence {
+                            occurrence_id: "resume.occurrence".to_owned(),
+                            source_kind: "human.terminal".to_owned(),
+                            mapping_digest: "resume.mapping".to_owned(),
+                            source_record: "resume.source".to_owned(),
+                            payload: serde_json::json!({"answer": "ok"}),
+                        },
+                        idempotency_key: "resume.application".to_owned(),
+                    },
+                },
+            )
+            .expect("fulfill event");
+        assert!(matches!(
+            fulfilled,
+            RuntimeResult::EventApplied {
+                result: EventApplicationResult::Fulfilled,
+                ..
+            }
+        ));
+        assert!(
+            service
+                .instances
+                .get(&instance)
+                .and_then(|instance| instance.invocation.as_ref())
+                .and_then(|invocation| invocation.result.as_ref())
+                .is_some(),
+            "fulfilled event must settle the resumed invocation"
+        );
+        let replay = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "resume.start".to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: owner_claim(&service, &instance),
+                    input: Value::Null,
+                },
+            )
+            .expect("replay resumed invocation");
+        assert!(matches!(
+            replay,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
     }
 
     #[test]
@@ -1399,6 +3522,88 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err, ProtocolError::SourceAsExecutable);
+    }
+
+    #[test]
+    fn protocol_v1_rejects_empty_mutation_request_ids() {
+        let owner_claim = RuntimeOwnerClaim::mint();
+        let application = EventApplication {
+            event_ref: CanonicalEventRef {
+                event_id: "evt.1".to_owned(),
+                generation: 1,
+            },
+            occurrence: EventOccurrence {
+                occurrence_id: "occurrence.1".to_owned(),
+                source_kind: "test.source".to_owned(),
+                mapping_digest: "mapping.1".to_owned(),
+                source_record: "record.1".to_owned(),
+                payload: serde_json::json!(null),
+            },
+            idempotency_key: "idempotency.1".to_owned(),
+        };
+        let requests = vec![
+            RuntimeRequest::ProgramInstanceCreate {
+                request_id: String::new(),
+                artifact_digest: format!("sha256:{}", "0".repeat(64)),
+            },
+            RuntimeRequest::ProgramInvocationStart {
+                request_id: String::new(),
+                program_instance_id: "pi.1".to_owned(),
+                owner_claim: owner_claim.clone(),
+                input: serde_json::json!(null),
+            },
+            RuntimeRequest::EventReserve {
+                request_id: String::new(),
+                type_id: "UserInput".to_owned(),
+            },
+            RuntimeRequest::EventFulfill {
+                request_id: String::new(),
+                owner_claim: owner_claim.clone(),
+                application,
+            },
+            RuntimeRequest::EventList {
+                request_id: String::new(),
+                owner_claim: owner_claim.clone(),
+            },
+            RuntimeRequest::EventInspect {
+                request_id: String::new(),
+                owner_claim: owner_claim.clone(),
+                event_ref: CanonicalEventRef {
+                    event_id: "evt.1".to_owned(),
+                    generation: 1,
+                },
+            },
+            RuntimeRequest::EventExpire {
+                request_id: String::new(),
+                owner_claim: owner_claim.clone(),
+                event_ref: CanonicalEventRef {
+                    event_id: "evt.1".to_owned(),
+                    generation: 1,
+                },
+            },
+            RuntimeRequest::EventCancel {
+                request_id: String::new(),
+                owner_claim: owner_claim.clone(),
+                event_ref: CanonicalEventRef {
+                    event_id: "evt.1".to_owned(),
+                    generation: 1,
+                },
+            },
+            RuntimeRequest::ProgramInvocationCancel {
+                request_id: String::new(),
+                owner_claim,
+                program_invocation_id: "invocation.1".to_owned(),
+            },
+        ];
+        for request in requests {
+            let mut service = RuntimeService::default();
+            assert_eq!(
+                service.handle(&handshake(), request),
+                Err(ProtocolError::InvalidRequest)
+            );
+            assert!(service.instances.is_empty());
+            assert!(service.reservations.is_empty());
+        }
     }
 
     #[test]
@@ -1445,7 +3650,7 @@ mod tests {
     fn persisted_artifact_bytes_are_digest_verified() {
         let dir = tempfile::tempdir().expect("artifact directory");
         let bytes = fixture_air_bytes();
-        let digest = artifact_digest(&bytes);
+        let digest = canonical_artifact_digest(&bytes).expect("canonical fixture digest");
         let path = dir.path().join(digest.replace(':', "-"));
         let mut tampered = bytes;
         tampered.push(b' ');
@@ -1460,10 +3665,13 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(matches!(
-            result,
-            RuntimeResult::Failed { ref code, .. } if code == "unknown_artifact"
-        ));
+        assert!(
+            matches!(
+                result,
+                RuntimeResult::Failed { ref code, .. } if code == "unknown_artifact"
+            ),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -1504,6 +3712,127 @@ mod tests {
             result,
             RuntimeResult::Failed { code, .. } if code == "missing_invocation_admission"
         ));
+    }
+
+    #[test]
+    fn tampered_admission_is_rejected_before_state_mutation() {
+        let mut service = RuntimeService::default();
+        let bytes = fixture_air_bytes();
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "tamper.create".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("create instance");
+        let (instance, claim) = match created {
+            RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                owner_claim,
+                ..
+            } => (program_instance_id, owner_claim),
+            other => panic!("instance creation failed: {other:?}"),
+        };
+        let release = fs::read(fixture_dir().join("canonical-execute.release.json")).unwrap();
+        let provenance = fs::read(fixture_dir().join("canonical-execute.provenance.json")).unwrap();
+        let mut materials =
+            materials_for_artifact(&bytes, "tamper.invocation", release, provenance);
+        materials.release_bytes.push(b'x');
+        let error = service
+            .bind_admission(&instance, materials)
+            .expect_err("tampered admission must fail before binding");
+        assert!(
+            error.starts_with("release digest mismatch:"),
+            "unexpected admission error: {error}"
+        );
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "tamper.start".to_owned(),
+                    program_instance_id: instance,
+                    owner_claim: claim,
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("start request");
+        assert!(matches!(
+            started,
+            RuntimeResult::Failed { code, .. } if code == "missing_invocation_admission"
+        ));
+    }
+
+    #[test]
+    fn persisted_artifact_create_bind_and_start_uses_the_wire_admission_seam() {
+        let artifact_directory = tempfile::tempdir().expect("artifact directory");
+        let bytes = fixture_air_bytes();
+        let digest = canonical_artifact_digest(&bytes).expect("canonical artifact digest");
+        fs::write(
+            artifact_directory.path().join(digest.replace(':', "-")),
+            &bytes,
+        )
+        .expect("persist artifact");
+
+        // This is the same composition used by the standalone binary: the
+        // executable is loaded from the shared artifact directory, while
+        // admission arrives explicitly over the Runtime protocol.
+        let profile = RuntimeAdmissionProfile::from_carriers(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+        )
+        .expect("admission profile");
+        let profile_ref = profile.profile_ref().to_owned();
+        let mut service = RuntimeService::default()
+            .with_artifact_dir(artifact_directory.path().to_path_buf())
+            .with_admission_profile(profile);
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "create.persisted".to_owned(),
+                    artifact_digest: digest.clone(),
+                },
+            )
+            .expect("create persisted artifact instance");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance creation");
+        };
+        let bound = service.handle_execution_admission(
+            &RuntimeExecutionAdmissionHandshake::server(),
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id: "bind.persisted".to_owned(),
+                program_instance_id: program_instance_id.clone(),
+                owner_claim: owner_claim.clone(),
+                admission_profile_ref: profile_ref,
+            },
+        );
+        assert!(matches!(
+            bound,
+            RuntimeResult::ProgramInstanceAdmissionBound { .. }
+        ));
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "start.persisted".to_owned(),
+                    program_instance_id,
+                    owner_claim,
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("start admitted persisted artifact");
+        assert!(
+            matches!(started, RuntimeResult::ProgramInvocationStarted { .. }),
+            "admitted persisted artifact did not start: {started:?}"
+        );
     }
 
     #[test]
@@ -1558,6 +3887,14 @@ mod tests {
         assert!(!accepts_source_packages());
     }
 
+    #[test]
+    fn raw_air_is_not_admitted_as_an_executable_artifact() {
+        let raw_air = br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#;
+        let mut service = RuntimeService::default();
+        assert_eq!(service.admit_artifact(raw_air.to_vec()), "");
+        assert!(service.artifact_bytes(&artifact_digest(raw_air)).is_none());
+    }
+
     fn create_started(service: &mut RuntimeService, bytes: Vec<u8>) -> String {
         let digest = service.admit_artifact(bytes.clone());
         let created = service
@@ -1600,56 +3937,18 @@ mod tests {
     }
 
     fn ask_air_bytes() -> Vec<u8> {
-        let mut air: serde_json::Value = serde_json::from_slice(&fixture_air_bytes()).unwrap();
+        let mut air: serde_json::Value = serde_json::from_slice(
+            &fs::read(fixture_dir().join("canonical-capability-execute.air.json")).unwrap(),
+        )
+        .unwrap();
         air["capability_permission_requests"] = serde_json::json!({
-            "cap.send": { "decision": "ask", "reason": "confirm" }
+            "read_skill": { "decision": "ask", "reason": "confirm" }
         });
-        serde_json::to_vec(&air).unwrap()
-    }
-
-    #[test]
-    fn execute_projects_stream_then_terminal() {
-        let mut service = RuntimeService::default();
-        let instance = create_started(&mut service, fixture_air_bytes());
-        let started = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::ProgramInvocationStart {
-                    request_id: "s".to_owned(),
-                    owner_claim: owner_claim(&service, &instance),
-                    program_instance_id: instance,
-                    input: serde_json::json!({}),
-                },
-            )
-            .unwrap();
-        assert!(matches!(
-            started,
-            RuntimeResult::ProgramInvocationStarted { .. }
-        ));
-        let observations = service.observations();
-        assert!(
-            observations
-                .iter()
-                .any(|item| matches!(item, Observation::EventLifecycle { .. })),
-            "event lifecycle without payload: {observations:?}"
-        );
-        assert!(
-            observations
-                .iter()
-                .any(|item| matches!(item, Observation::ProvisionalContent { .. })),
-            "provisional content-ref: {observations:?}"
-        );
-        let last = observations.last().expect("terminal");
-        assert!(
-            matches!(last, Observation::TerminalCommit { .. }),
-            "terminal commit last: {observations:?}"
-        );
-        for item in &observations {
-            if let Observation::EventLifecycle { event_id, phase } = item {
-                assert!(!event_id.is_empty());
-                assert!(!phase.is_empty());
-            }
-        }
+        let air: AirModule = serde_json::from_value(air).unwrap();
+        ExecutableArtifact::from_air(&air)
+            .unwrap()
+            .encode()
+            .unwrap()
     }
 
     #[test]
@@ -1671,8 +3970,6 @@ mod tests {
             matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_denied"),
             "{result:?}"
         );
-        assert!(service.last_output().is_none());
-        assert!(service.observations().is_empty());
     }
 
     #[test]
@@ -1695,7 +3992,6 @@ mod tests {
             matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_timeout"),
             "{result:?}"
         );
-        assert!(service.last_output().is_none());
     }
 
     #[test]
@@ -1735,6 +4031,109 @@ mod tests {
     }
 
     #[test]
+    fn a_second_client_cancels_a_long_running_invocation_and_commits_terminal_truth() {
+        let bytes = ask_air_bytes();
+        let mut service = RuntimeService::default().with_embedded_read_access();
+        let digest = service
+            .try_admit_artifact(bytes.clone())
+            .expect("artifact admission");
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "create.long-running".to_owned(),
+                    artifact_digest: digest.clone(),
+                },
+            )
+            .expect("instance create");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance creation");
+        };
+        let mut materials = materials_for_artifact(
+            &bytes,
+            format!("{program_instance_id}:invocation-admission"),
+            b"{}".to_vec(),
+            b"{}".to_vec(),
+        );
+        // The runtime binds the canonical envelope digest, not the raw byte
+        // hash used by the generic fixture helper.
+        materials.admission.artifact_digest = digest;
+        service
+            .bind_admission(&program_instance_id, materials)
+            .expect("invocation admission");
+
+        let gate = Arc::new(InvocationGate {
+            released: Arc::new(AtomicBool::new(false)),
+        });
+        service.bind_approval_broker(gate.clone());
+        let shared = Arc::new(Mutex::new(service));
+        let prepared = {
+            let mut guard = shared.lock().expect("service lock");
+            guard
+                .prepare_invocation(
+                    "start.long-running".to_owned(),
+                    program_instance_id.clone(),
+                    owner_claim.clone(),
+                    Value::Null,
+                )
+                .expect("invocation claim")
+        };
+        let invocation_id = prepared.invocation_id.clone();
+        let execution_service = Arc::clone(&shared);
+        let execution = std::thread::spawn(move || {
+            let output = prepared.execute();
+            execution_service
+                .lock()
+                .expect("service lock")
+                .finish_invocation(&prepared, output)
+        });
+
+        // This is the independent second-client request. It must acquire the
+        // service mutex while the first client remains inside the long-running
+        // invocation, then signal the exact claimed token.
+        let cancelled = shared
+            .lock()
+            .expect("service lock")
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "cancel.long-running".to_owned(),
+                    owner_claim,
+                    program_invocation_id: invocation_id.clone(),
+                },
+            )
+            .expect("cancel request");
+        assert!(matches!(cancelled, RuntimeResult::Cancelled { .. }));
+        gate.released.store(true, Ordering::Release);
+        let finished = execution.join().expect("execution thread");
+        assert!(
+            matches!(
+                finished,
+                RuntimeResult::Cancelled { .. } | RuntimeResult::Failed { .. }
+            ),
+            "cancellation may settle as committed cancellation or uncertainty: {finished:?}"
+        );
+
+        let guard = shared.lock().expect("service lock");
+        assert!(guard.cancelled.contains_key(&invocation_id));
+        assert!(!guard.active_cancellations.contains_key(&invocation_id));
+        let invocation = guard
+            .instances
+            .get(&program_instance_id)
+            .and_then(|instance| instance.invocation.as_ref())
+            .expect("claimed invocation");
+        assert!(matches!(
+            invocation.result,
+            Some(RuntimeResult::Cancelled { .. }) | Some(RuntimeResult::Failed { .. })
+        ));
+    }
+
+    #[test]
     fn disconnect_does_not_fabricate_stop() {
         let mut service = RuntimeService::default();
         let instance = create_started(&mut service, fixture_air_bytes());
@@ -1754,13 +4153,6 @@ mod tests {
             matches!(result, RuntimeResult::Failed { ref code, .. } if code == "disconnected"),
             "{result:?}"
         );
-        assert!(service.last_output().is_none());
-        if let Some(output) = service.last_output() {
-            assert_ne!(
-                output.get("finish_reason").and_then(Value::as_str),
-                Some("stop")
-            );
-        }
     }
 
     #[test]
@@ -1777,7 +4169,7 @@ mod tests {
             .try_admit_artifact(bytes.clone())
             .expect("first artifact");
         let second = service.try_admit_artifact(vec![b'x'; 2]).unwrap_err();
-        assert_eq!(second, "artifact_quota_exceeded");
+        assert_eq!(second, "invalid_artifact");
         assert!(service.artifact_bytes(&first).is_some());
         assert_eq!(service.artifact_meta.len(), 1);
     }

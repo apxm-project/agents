@@ -1,21 +1,29 @@
 //! In-memory owner-local ExecutionCommitPort.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use apxm_kernel::{
     CommittedContinuation, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ProgramInstanceRef,
+    PreparedSessionOutputRef, ProgramInstanceRef,
+};
+use apxm_runtime_protocol::{
+    ContentReadResult, ContentRef, ExecutionObservation, ExecutionReadRequest, ExecutionReadResult,
+    ReadContext,
 };
 use async_trait::async_trait;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::store::{
-    CommitLocalError, CommitLocalStore, PreparedOutputRef, SessionOutputPreparation,
+    CommitLocalError, CommitLocalStore, DenyReadAccess, PreparedOutputRef, ReadAccessHook,
+    SessionOutputPreparation,
 };
 
 /// Single-writer in-memory commit adapter for owner-local conformance.
 pub struct InMemoryExecutionCommit {
     store: Mutex<CommitLocalStore>,
+    auth_key: [u8; 32],
+    read_hook: Mutex<Arc<dyn ReadAccessHook>>,
 }
 
 impl InMemoryExecutionCommit {
@@ -23,7 +31,50 @@ impl InMemoryExecutionCommit {
     pub fn new() -> Self {
         Self {
             store: Mutex::new(CommitLocalStore::new()),
+            auth_key: Sha256::digest(b"apxm-commit-local-memory-v2").into(),
+            read_hook: Mutex::new(Arc::new(DenyReadAccess)),
         }
+    }
+
+    /// Construct an in-memory adapter with a composition-owned read hook.
+    #[must_use]
+    pub fn with_read_access_hook(hook: Arc<dyn ReadAccessHook>) -> Self {
+        Self {
+            store: Mutex::new(CommitLocalStore::new()),
+            auth_key: Sha256::digest(b"apxm-commit-local-memory-v2").into(),
+            read_hook: Mutex::new(hook),
+        }
+    }
+
+    /// Replace only the authorization binding; durable in-memory state is
+    /// intentionally preserved when a composition root is assembled late.
+    pub fn set_read_access_hook(&self, hook: Arc<dyn ReadAccessHook>) {
+        *self.read_hook.lock().expect("memory read hook lock") = hook;
+    }
+
+    /// Bind the composition-owned scope to outputs staged by this adapter.
+    pub fn set_default_access_scope_ref(&self, reference: String) {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .set_default_access_scope_ref(reference);
+    }
+
+    /// Read opaque composition metadata from the in-memory store.
+    #[must_use]
+    pub fn runtime_metadata(&self) -> Option<Value> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .runtime_metadata()
+    }
+
+    /// Replace opaque composition metadata in the in-memory store.
+    pub fn set_runtime_metadata(&self, metadata: Option<Value>) {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .set_runtime_metadata(metadata);
     }
 
     /// Failure-injection hook used by owner-local conformance suites.
@@ -44,11 +95,60 @@ impl InMemoryExecutionCommit {
             .prepare_output(preparation)
     }
 
-    pub fn read_output(&self, output_ref: &str) -> Option<Vec<u8>> {
+    /// Read observations, inspection, committed content, or evidence through
+    /// the typed scope-bound contract.
+    pub fn read_execution(
+        &self,
+        request: ExecutionReadRequest,
+    ) -> Result<ExecutionReadResult, CommitLocalError> {
+        self.read_execution_with_live(request, &[])
+    }
+
+    /// Read with a bounded process-local live observation overlay.
+    pub fn read_execution_with_live(
+        &self,
+        request: ExecutionReadRequest,
+        live_observations: &[ExecutionObservation],
+    ) -> Result<ExecutionReadResult, CommitLocalError> {
+        let hook = self.read_hook.lock().expect("memory read hook lock");
         self.store
             .lock()
             .expect("commit-local memory lock")
-            .read_output(output_ref)
+            .read_execution_with_live(request, &self.auth_key, hook.as_ref(), live_observations)
+    }
+
+    /// Read one committed output with a scope-bound typed context.
+    pub fn read_committed_output(
+        &self,
+        context: ReadContext,
+        content_ref: ContentRef,
+    ) -> Result<ContentReadResult, CommitLocalError> {
+        match self.read_execution(ExecutionReadRequest::ContentRead {
+            context,
+            content_ref,
+        })? {
+            ExecutionReadResult::Content { content } => Ok(content),
+            _ => Err(CommitLocalError::InvalidRead(
+                "content read returned the wrong result kind".into(),
+            )),
+        }
+    }
+
+    /// Read one committed output through the distinct output.read operation.
+    pub fn read_output(
+        &self,
+        context: ReadContext,
+        output_ref: apxm_runtime_protocol::OutputRef,
+    ) -> Result<ContentReadResult, CommitLocalError> {
+        match self.read_execution(ExecutionReadRequest::OutputRead {
+            context,
+            output_ref,
+        })? {
+            ExecutionReadResult::Output { output } => Ok(output),
+            _ => Err(CommitLocalError::InvalidRead(
+                "output read returned the wrong result kind".into(),
+            )),
+        }
     }
 
     pub fn reclaim_prepared_output(&self, output_ref: &str) -> Result<bool, CommitLocalError> {
@@ -67,6 +167,20 @@ impl Default for InMemoryExecutionCommit {
 
 #[async_trait]
 impl ExecutionCommitPort for InMemoryExecutionCommit {
+    async fn prepare_output(
+        &self,
+        preparation: apxm_kernel::SessionOutputPreparation,
+    ) -> Result<PreparedSessionOutputRef, String> {
+        let preparation = SessionOutputPreparation::from_kernel(preparation)
+            .map_err(|error| error.to_string())?;
+        let prepared = self
+            .prepare_output(preparation)
+            .map_err(|error| error.to_string())?
+            .to_kernel();
+        prepared.validate().map_err(str::to_owned)?;
+        Ok(prepared)
+    }
+
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
         match self
             .store

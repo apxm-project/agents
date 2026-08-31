@@ -80,17 +80,14 @@ impl Frontend {
             Self::Python => vec!["-I".to_string(), "-B".to_string(), "-c".to_string()],
             // Node's permission model is an OS-level read wall: the process can
             // read the declared frontend package and nothing else on the
-            // filesystem, and can write nowhere at all.
+            // filesystem, and can write nowhere at all. Synchronous loader
+            // hooks keep submitted code in this same confined process; worker
+            // threads are deliberately not granted.
             Self::Typescript => vec![
                 // `--experimental-permission` is supported across the Node
                 // versions used by the repository toolchain.
                 "--no-warnings".to_string(),
                 "--experimental-permission".to_string(),
-                // Node's ESM loader hooks run in a worker. Granting the
-                // loader worker explicitly keeps the permission wall active
-                // while allowing the closed module table in the harness to
-                // install its hooks.
-                "--allow-worker".to_string(),
                 format!("--allow-fs-read={}", frontend_root.display()),
                 "--input-type=module".to_string(),
                 "--eval".to_string(),
@@ -449,11 +446,12 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
             .expect("make sleeping driver executable");
 
+        let input = vec![b'x'; 128 * 1024];
         let diagnostic = spawn_with_timeout(
             Frontend::Python,
             std::path::Path::new("/tmp"),
             &path,
-            &[b'x'; 128 * 1024],
+            &input,
             Duration::from_millis(25),
         )
         .expect_err("a capture that exceeds its deadline is rejected");
@@ -477,11 +475,12 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
             .expect("make large-output driver executable");
 
+        let input = vec![b'x'; 512 * 1024];
         let output = spawn_with_timeout(
             Frontend::Python,
             std::path::Path::new("/tmp"),
             &path,
-            &[b'x'; 512 * 1024],
+            &input,
             Duration::from_secs(2),
         )
         .expect("large bidirectional output must not deadlock capture");

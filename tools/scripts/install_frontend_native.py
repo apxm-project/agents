@@ -14,9 +14,11 @@ not hard-code one host's library suffix.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,16 @@ TYPESCRIPT_CANDIDATES = (
     "apxm_frontend_typescript.so",
     "apxm_frontend_typescript.dylib",
 )
+MACHO_MAGICS = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+}
 
 
 def _target_release() -> Path:
@@ -55,10 +67,20 @@ def _first_existing(directory: Path, names: tuple[str, ...]) -> Path:
     )
 
 
-def _resign_macos(destination: Path) -> None:
-    """Re-sign a copied Mach-O bridge after its destination bytes are final."""
+def _is_macho(path: Path) -> bool:
+    """Return whether a native bridge has a Mach-O file header."""
 
-    if sys.platform != "darwin":
+    try:
+        with path.open("rb") as stream:
+            return stream.read(4) in MACHO_MAGICS
+    except OSError:
+        return False
+
+
+def _resign_macos(destination: Path) -> None:
+    """Re-sign a copied Mach-O bridge before it reaches its final path."""
+
+    if sys.platform != "darwin" or not _is_macho(destination):
         return
     try:
         subprocess.run(
@@ -69,9 +91,36 @@ def _resign_macos(destination: Path) -> None:
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as error:
+        detail = ""
+        if isinstance(error, subprocess.CalledProcessError):
+            detail = (error.stderr or error.stdout or "").strip()
+        if not detail:
+            detail = str(error)
         raise SystemExit(
-            f"error: unable to ad-hoc sign the installed native bridge {destination}: {error}"
+            f"error: unable to ad-hoc sign the native bridge {destination}: {detail}"
         ) from error
+
+
+def _install_bridge(source: Path, destination: Path) -> Path:
+    """Install a bridge without carrying source metadata into its load path."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output, source.open("rb") as input_stream:
+            shutil.copyfileobj(input_stream, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary, 0o755)
+        _resign_macos(temporary)
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+    return destination
 
 
 def install_python(release: Path) -> Path:
@@ -79,9 +128,7 @@ def install_python(release: Path) -> Path:
     destination = (
         REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "_native.so"
     )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    _resign_macos(destination)
+    _install_bridge(source, destination)
     print(f"installed {source.name} -> {destination.relative_to(REPO_ROOT)}")
     return destination
 
@@ -97,9 +144,7 @@ def install_typescript(release: Path) -> Path:
         / "dist"
         / "_native.node"
     )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    _resign_macos(destination)
+    _install_bridge(source, destination)
     print(f"installed {source.name} -> {destination.relative_to(REPO_ROOT)}")
     return destination
 

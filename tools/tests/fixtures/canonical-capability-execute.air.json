@@ -2,25 +2,6 @@
   "schema_version": "apxm.air",
   "value_assemblies": [
     {
-      "value_id": "fixture.model.request",
-      "expression": {
-        "kind": "object",
-        "fields": [
-          {
-            "name": "prompt",
-            "value": {
-              "kind": "string",
-              "value": "name the capability this program is about to invoke"
-            }
-          },
-          {
-            "name": "max_tokens",
-            "value": { "kind": "integer", "value": 64 }
-          }
-        ]
-      }
-    },
-    {
       "value_id": "fixture.read.arguments",
       "expression": {
         "kind": "object",
@@ -56,25 +37,29 @@
           }
         ]
       }
+    },
+    {
+      "value_id": "fixture.count.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "text",
+            "value": {
+              "kind": "string",
+              "value": "canonical typed output"
+            }
+          }
+        ]
+      }
     }
   ],
   "semantic_operations": [
     {
-      "node_id": "fixture.model.call",
-      "op": "model.call",
-      "parent_region_id": "fixture.root",
-      "execution_order": 0,
-      "operands": [
-        { "slot": "model_ref", "value_id": "apxm.canonical.fixture.model", "type_ref": "ModelTargetRef" },
-        { "slot": "request", "value_id": "fixture.model.request", "type_ref": "ModelRequest" }
-      ],
-      "result": { "value_id": "fixture.model.output", "type_ref": "ModelOutput" }
-    },
-    {
       "node_id": "fixture.capability.read",
       "op": "capability.invoke",
       "parent_region_id": "fixture.root",
-      "execution_order": 1,
+      "execution_order": 0,
       "operands": [
         { "slot": "capability_ref", "value_id": "read", "type_ref": "CapabilityRef" },
         { "slot": "arguments", "value_id": "fixture.read.arguments", "type_ref": "ArgumentValue" }
@@ -85,12 +70,23 @@
       "node_id": "fixture.capability.denied",
       "op": "capability.invoke",
       "parent_region_id": "fixture.root",
-      "execution_order": 2,
+      "execution_order": 1,
       "operands": [
         { "slot": "capability_ref", "value_id": "write", "type_ref": "CapabilityRef" },
         { "slot": "arguments", "value_id": "fixture.denied.arguments", "type_ref": "ArgumentValue" }
       ],
       "result": { "value_id": "fixture.denied.output", "type_ref": "ToolOutput" }
+    },
+    {
+      "node_id": "fixture.capability.count",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 2,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "count_tokens", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.count.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.count.output", "type_ref": "ToolOutput" }
     }
   ],
   "structural_ir": [

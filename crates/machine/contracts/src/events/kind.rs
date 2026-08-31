@@ -121,14 +121,6 @@ pub const PLAN_STEP_COMPLETED: EventKind =
     EventKind::new("plan_step_completed", EventCategory::Lifecycle, false);
 pub const PLAN_WORKFLOW_EMITTED: EventKind =
     EventKind::new("plan_workflow_emitted", EventCategory::Lifecycle, false);
-pub const WORKFLOW_STARTED: EventKind =
-    EventKind::new("workflow_started", EventCategory::Lifecycle, false);
-pub const WORKFLOW_STEP_STARTED: EventKind =
-    EventKind::new("workflow_step_started", EventCategory::Lifecycle, false);
-pub const WORKFLOW_STEP_COMPLETED: EventKind =
-    EventKind::new("workflow_step_completed", EventCategory::Lifecycle, false);
-pub const WORKFLOW_FINISHED: EventKind =
-    EventKind::new("workflow_finished", EventCategory::Lifecycle, false);
 pub const EXECUTION_STARTED: EventKind =
     EventKind::new("execution_started", EventCategory::Lifecycle, false);
 pub const EXECUTE_COMPLETE: EventKind =
@@ -166,7 +158,7 @@ pub const COMMUNICATE_DISPATCHED: EventKind =
     EventKind::new("communicate_dispatched", EventCategory::Agent, false);
 pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, false);
 
-// Session event kinds
+// Context and execution observability event kinds
 pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
 pub const MODEL_CONTEXT_METRICS: EventKind =
@@ -186,9 +178,6 @@ pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Erro
 pub const LOOP_DETECTED: EventKind = EventKind::new("loop_detected", EventCategory::Error, false);
 pub const CONTEXT_WINDOW_WARNING: EventKind =
     EventKind::new("context_window_warning", EventCategory::Error, false);
-pub const SESSION_START: EventKind =
-    EventKind::new("session_start", EventCategory::Lifecycle, false);
-pub const SESSION_END: EventKind = EventKind::new("session_end", EventCategory::Lifecycle, true);
 
 // ── Layer 2 — agent-layer event kinds ──────────────────────────────
 // These are emitted alongside the existing Layer 1 graph events
@@ -243,10 +232,6 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     PLAN_STEP_STARTED,
     PLAN_STEP_COMPLETED,
     PLAN_WORKFLOW_EMITTED,
-    WORKFLOW_STARTED,
-    WORKFLOW_STEP_STARTED,
-    WORKFLOW_STEP_COMPLETED,
-    WORKFLOW_FINISHED,
     EXECUTION_STARTED,
     EXECUTE_COMPLETE,
     MEMORY_READ,
@@ -269,8 +254,6 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     CANCELLED,
     LOOP_DETECTED,
     CONTEXT_WINDOW_WARNING,
-    SESSION_START,
-    SESSION_END,
     SUBAGENT_SPAWN_BEGIN,
     SUBAGENT_SPAWN_END,
     SUBAGENT_LLM_CALL_BEGIN,

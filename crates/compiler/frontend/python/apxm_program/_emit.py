@@ -111,6 +111,59 @@ def emit_frontend_graph(
         for control in program.controls
         if control.control_kind == CONTROL_KIND_LOOP and control.body_region_ids
     ]
+    region_spans = [
+        {
+            "region_id": (
+                control.body_region_ids[0]
+                if control.control_kind == CONTROL_KIND_LOOP and control.body_region_ids
+                else control.node_id
+            ),
+            "source_file": control.span.source_file,
+            "span": {
+                "start_line": control.span.start_line,
+                "start_column": control.span.start_column,
+                "end_line": control.span.end_line,
+                "end_column": control.span.end_column,
+            },
+            "structural_kind": _structural_region_kind(control.control_kind),
+        }
+        for control in program.controls
+        if control.span is not None
+    ]
+    span_by_node = {
+        node_id: span for node_id, span, _annotation in program.spans
+    }
+    edge_spans = []
+    for edge in data_edges:
+        span = span_by_node.get(edge["to_consumer"])
+        if span is not None:
+            edge_spans.append(
+                {
+                    "edge_id": f"edge.data.{edge['from_value']}.{edge['to_consumer']}.{edge['consumer_slot']}",
+                    "source_file": span.source_file,
+                    "span": {
+                        "start_line": span.start_line,
+                        "start_column": span.start_column,
+                        "end_line": span.end_line,
+                        "end_column": span.end_column,
+                    },
+                }
+            )
+    for edge in program.context_edges:
+        span = span_by_node.get(edge.to_node) or span_by_node.get(edge.from_node)
+        if span is not None:
+            edge_spans.append(
+                {
+                    "edge_id": f"edge.context.{edge.from_node}.{edge.to_node}.{edge.value_id}",
+                    "source_file": span.source_file,
+                    "span": {
+                        "start_line": span.start_line,
+                        "start_column": span.start_column,
+                        "end_line": span.end_line,
+                        "end_column": span.end_column,
+                    },
+                }
+            )
 
     return {
         "schema_version": FRONTEND_GRAPH_VERSION,
@@ -177,8 +230,24 @@ def emit_frontend_graph(
             "source_language": source_language,
             "node_spans": node_spans,
             "region_annotations": region_annotations,
+            "region_spans": region_spans,
+            "edge_spans": edge_spans,
         },
     }
+
+
+def _structural_region_kind(control_kind: str) -> str:
+    """Map source control vocabulary to source-map structural lineage."""
+    return {
+        "conditional": "branch",
+        "switch": "switch",
+        "loop": "loop",
+        "task_group": "join",
+        "try_catch": "try",
+        "throw": "throw",
+        "yield": "yield",
+        "return": "return",
+    }[control_kind]
 
 
 def _operand_values(operands: tuple[BoundOperand, ...]) -> Optional[tuple[str, ...]]:

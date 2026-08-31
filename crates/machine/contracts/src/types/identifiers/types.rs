@@ -108,11 +108,8 @@ define_id!(NodeIdType, u64, "Unique identifier for a DAG node");
 define_id!(TokenIdType, u64, "Unique identifier for a dataflow token");
 define_id!(OpIdType, u64, "Unique identifier for an operation");
 define_string_id!(ExecutionId, "Unique identifier for an execution context");
-define_string_id!(SessionId, "Unique identifier for a chat session");
 define_string_id!(TraceId, "Unique identifier for an execution trace");
 define_string_id!(CapabilityName, "Unique identifier for a capability");
-define_string_id!(MessageId, "Unique identifier for a chat message");
-define_string_id!(CheckpointId, "Unique identifier for a session checkpoint");
 define_string_id!(
     ProfileId,
     "ACP agent profile name (e.g., 'claude', 'codex')"

@@ -22,6 +22,10 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$"
     },
+    "StorageIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,255}$"
+    },
     "FileDigest": {
       "type": "string",
       "description": "Lowercase hex SHA-256 of the file's bytes, as recorded in the integrity chain.",
@@ -72,7 +76,7 @@
       ],
       "properties": {
         "id": {
-          "$ref": "#/$defs/Identifier"
+          "$ref": "#/$defs/StorageIdentifier"
         },
         "version": {
           "type": "string",

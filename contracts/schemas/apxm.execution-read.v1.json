@@ -1,0 +1,388 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.execution-read.v1",
+  "title": "ExecutionRead",
+  "description": "Product-neutral request, cursor, and page vocabulary for authorized observation, invocation inspection, content, output, and evidence reads.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/ObservationSubscribeRequest" },
+    { "$ref": "#/$defs/ProgramInvocationInspectRequest" },
+    { "$ref": "#/$defs/ContentReadRequest" },
+    { "$ref": "#/$defs/OutputReadRequest" },
+    { "$ref": "#/$defs/EvidenceReadRequest" },
+    { "$ref": "#/$defs/ReadResult" }
+  ],
+  "$defs": {
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Cursor": {
+      "type": "object",
+      "required": ["position", "token"],
+      "properties": {
+        "position": { "type": "integer", "minimum": 0 },
+        "token": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "ReadContext": {
+      "type": "object",
+      "required": ["request_id", "scope_ref", "principal_ref", "grant_ref", "purpose"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "scope_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "principal_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "grant_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "correlation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "purpose": {
+          "type": "string",
+          "enum": ["observation", "inspection", "content", "output", "evidence"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeHandshakeV2": {
+      "type": "object",
+      "required": ["protocol_version", "contract", "schema_digest", "supported_features"],
+      "properties": {
+        "protocol_version": { "const": "apxm.runtime.protocol/2" },
+        "contract": { "const": "apxm.execution-read.v1" },
+        "schema_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "supported_features": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "observation.subscribe",
+              "program_invocation.inspect",
+              "content.read",
+              "output.read",
+              "evidence.read"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObservationSubscribeRequest": {
+      "type": "object",
+      "required": ["method", "context", "program_invocation_id", "limit"],
+      "properties": {
+        "method": { "const": "observation.subscribe" },
+        "context": { "$ref": "#/$defs/ReadContext" },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "after_cursor": { "$ref": "#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "ProgramInvocationInspectRequest": {
+      "type": "object",
+      "required": ["method", "context", "program_invocation_id"],
+      "properties": {
+        "method": { "const": "program_invocation.inspect" },
+        "context": { "$ref": "#/$defs/ReadContext" },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "node_execution_id": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "ContentReadRequest": {
+      "type": "object",
+      "required": ["method", "context", "content_ref"],
+      "properties": {
+        "method": { "const": "content.read" },
+        "context": { "$ref": "#/$defs/ReadContext" },
+        "content_ref": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "OutputReadRequest": {
+      "type": "object",
+      "required": ["method", "context", "output_ref"],
+      "properties": {
+        "method": { "const": "output.read" },
+        "context": { "$ref": "#/$defs/ReadContext" },
+        "output_ref": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "EvidenceReadRequest": {
+      "type": "object",
+      "required": ["method", "context", "program_invocation_id", "limit"],
+      "properties": {
+        "method": { "const": "evidence.read" },
+        "context": { "$ref": "#/$defs/ReadContext" },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "after_cursor": { "$ref": "#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "PageMetadata": {
+      "type": "object",
+      "required": ["high_watermark", "retention_floor", "has_more"],
+      "properties": {
+        "next_cursor": { "$ref": "#/$defs/Cursor" },
+        "high_watermark": { "$ref": "#/$defs/Cursor" },
+        "retention_floor": { "$ref": "#/$defs/Cursor" },
+        "has_more": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionCursorPage": {
+      "type": "object",
+      "required": ["items", "item_cursors", "high_watermark", "retention_floor", "has_more"],
+      "properties": {
+        "items": { "type": "array" },
+        "item_cursors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Cursor" }
+        },
+        "next_cursor": { "$ref": "#/$defs/Cursor" },
+        "high_watermark": { "$ref": "#/$defs/Cursor" },
+        "retention_floor": { "$ref": "#/$defs/Cursor" },
+        "has_more": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ObservationPage": {
+      "allOf": [
+        { "$ref": "#/$defs/ExecutionCursorPage" },
+        {
+          "properties": {
+            "items": {
+              "items": { "$ref": "apxm.execution-observation.v1" }
+            }
+          }
+        }
+      ]
+    },
+    "EvidenceRecord": {
+      "type": "object",
+      "required": ["evidence_ref", "program_invocation_id", "sequence", "fact_kind", "evidence_digest"],
+      "properties": {
+        "evidence_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "fact_kind": { "type": "string", "minLength": 1 },
+        "evidence_digest": {
+          "$ref": "#/$defs/Digest",
+          "description": "SHA-256 over the canonical persisted evidence envelope with this field omitted."
+        },
+        "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "EvidencePage": {
+      "allOf": [
+        { "$ref": "#/$defs/ExecutionCursorPage" },
+        {
+          "properties": {
+            "items": {
+              "items": { "$ref": "#/$defs/EvidenceRecord" }
+            }
+          }
+        }
+      ]
+    },
+    "ProgramInvocationInspection": {
+      "type": "object",
+      "required": [
+        "program_invocation_id",
+        "status",
+        "node_execution_refs",
+        "output_refs",
+        "evidence_refs",
+        "cursor"
+      ],
+      "properties": {
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "status": {
+          "type": "string",
+          "enum": [
+            "admission_pending",
+            "running",
+            "waiting_event",
+            "committed_yield",
+            "committed_return",
+            "cancelling",
+            "cancelled",
+            "cancellation_unconfirmed",
+            "failed",
+            "outcome_unknown"
+          ]
+        },
+        "node_execution_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OpaqueRef" }
+        },
+        "output_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OpaqueRef" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OpaqueRef" }
+        },
+        "cursor": { "$ref": "#/$defs/Cursor" }
+      },
+      "additionalProperties": false
+    },
+    "ContentReadResult": {
+      "type": "object",
+      "required": ["content_ref", "program_instance_id", "program_invocation_id", "content_digest", "byte_length", "media_type", "commitment", "access_scope_ref", "bytes"],
+      "properties": {
+        "content_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "program_instance_id": { "$ref": "#/$defs/OpaqueRef" },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+        "output_ref": { "$ref": "#/$defs/CommittedSessionOutputRef" },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commitment": { "type": "string", "enum": ["provisional", "committed"] },
+        "access_scope_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "disclosure_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "bytes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObservationPageResult": {
+      "type": "object",
+      "required": ["kind", "request_id", "page"],
+      "properties": {
+        "kind": { "const": "observation_page" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "page": { "$ref": "#/$defs/ObservationPage" }
+      },
+      "additionalProperties": false
+    },
+    "ProgramInvocationInspectionResult": {
+      "type": "object",
+      "required": ["kind", "request_id", "inspection"],
+      "properties": {
+        "kind": { "const": "program_invocation_inspection" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "inspection": { "$ref": "#/$defs/ProgramInvocationInspection" }
+      },
+      "additionalProperties": false
+    },
+    "NodeExecutionInspectionResult": {
+      "type": "object",
+      "required": ["kind", "request_id", "inspection"],
+      "properties": {
+        "kind": { "const": "node_execution_inspection" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "inspection": { "$ref": "apxm.node-execution-inspection.v1" }
+      },
+      "additionalProperties": false
+    },
+    "ContentReadResultEnvelope": {
+      "type": "object",
+      "required": ["kind", "request_id", "content"],
+      "properties": {
+        "kind": { "const": "content" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "content": { "$ref": "#/$defs/ContentReadResult" }
+      },
+      "additionalProperties": false
+    },
+    "OutputReadResultEnvelope": {
+      "type": "object",
+      "required": ["kind", "request_id", "output"],
+      "properties": {
+        "kind": { "const": "output" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "output": { "$ref": "#/$defs/OutputReadResult" }
+      },
+      "additionalProperties": false
+    },
+    "OutputReadResult": {
+      "allOf": [
+        { "$ref": "#/$defs/ContentReadResult" },
+        {
+          "type": "object",
+          "required": ["output_ref"],
+          "properties": {
+            "output_ref": { "$ref": "#/$defs/CommittedSessionOutputRef" }
+          }
+        }
+      ]
+    },
+    "CommittedSessionOutputRef": {
+      "allOf": [
+        { "$ref": "apxm.session-output-ref.v1" },
+        {
+          "type": "object",
+          "properties": {
+            "commitment": { "const": "committed" }
+          }
+        }
+      ]
+    },
+    "EvidencePageResult": {
+      "type": "object",
+      "required": ["kind", "request_id", "page"],
+      "properties": {
+        "kind": { "const": "evidence_page" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "page": { "$ref": "#/$defs/EvidencePage" }
+      },
+      "additionalProperties": false
+    },
+    "ReadResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/ObservationPageResult" },
+        { "$ref": "#/$defs/ProgramInvocationInspectionResult" },
+        { "$ref": "#/$defs/NodeExecutionInspectionResult" },
+        { "$ref": "#/$defs/ContentReadResultEnvelope" },
+        { "$ref": "#/$defs/OutputReadResultEnvelope" },
+        { "$ref": "#/$defs/EvidencePageResult" },
+        { "$ref": "#/$defs/FailureResult" }
+      ]
+    },
+    "FailureResult": {
+      "type": "object",
+      "required": ["kind", "request_id", "code"],
+      "properties": {
+        "kind": { "const": "failed" },
+        "request_id": { "$ref": "#/$defs/OpaqueRef" },
+        "code": {
+          "type": "string",
+          "enum": [
+            "unavailable",
+            "invalid_request",
+            "unauthorized",
+            "not_found",
+            "retention_gap",
+            "unsupported_feature",
+            "protocol_skew",
+            "internal_error"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

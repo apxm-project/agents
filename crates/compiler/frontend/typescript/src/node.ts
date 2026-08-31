@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import {
   hasHostSuppliedSource,
   setAuthoredSource,
-  setHostSuppliedSource,
   type AuthoredSource,
 } from "./authored-source.js";
 import { canonicalAirJson, compileArtifact, verifyGraph } from "./bridge.js";
@@ -91,9 +90,4 @@ function decodeInlineSourceMap(reference: string): string {
   return reference.includes(";base64,")
     ? Buffer.from(payload, "base64").toString("utf8")
     : decodeURIComponent(payload);
-}
-
-/** Supply authored source a host already holds, ahead of any module's own. */
-export function submitAuthoredSource(source: AuthoredSource): void {
-  setHostSuppliedSource(source);
 }

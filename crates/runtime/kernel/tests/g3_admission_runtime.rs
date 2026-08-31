@@ -38,9 +38,12 @@ fn write_set(tag: char) -> AtomicWriteSet {
         next_program_state_digest: digest_char(tag),
         continuation_digest: digest_char('2'),
         checkpoint_effect_outcomes_digest: digest_char('3'),
-        runtime_evidence_batch_digest: digest_char('4'),
+        runtime_evidence_batch_digest: apxm_kernel::runtime_evidence_and_observation_digest(
+            &[],
+            &[],
+        ),
         usage_facts_digest: digest_char('5'),
-        session_output_refs_digest: digest_char('6'),
+        session_output_refs_digest: apxm_kernel::session_output_refs_digest(&[]),
     }
 }
 

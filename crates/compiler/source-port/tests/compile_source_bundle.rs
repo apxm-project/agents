@@ -255,6 +255,21 @@ fn accepted_source_compiles_to_a_graph_air_and_a_source_map() {
             "{} source map spans the authored nodes",
             frontend.wire()
         );
+        assert!(
+            !compiled.source_map.region_spans.is_empty(),
+            "{} source map carries structural region lineage",
+            frontend.wire()
+        );
+        assert!(
+            !compiled.source_map.edge_spans.is_empty(),
+            "{} source map carries typed edge lineage",
+            frontend.wire()
+        );
+        assert!(
+            compiled.execution_lineage_ref.starts_with("sha256:"),
+            "{} compile result carries an opaque execution lineage reference",
+            frontend.wire()
+        );
     }
 }
 

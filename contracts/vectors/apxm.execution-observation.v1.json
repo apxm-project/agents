@@ -1,0 +1,187 @@
+[
+  {
+    "name": "committed-invocation-failure-carries-evidence",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.failure.1",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "region_occurrence_id": "region-occurrence.1",
+      "sequence": 1,
+      "cursor": {"position": 1, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 1},
+      "observation_kind": "invocation_failed",
+      "commitment": "committed",
+      "evidence_ref": "evidence.invoke.commit.1"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "committed-node-observation",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.1",
+      "program_invocation_id": "invocation.1",
+      "sequence": 1,
+      "cursor": {"position": 1, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 1},
+      "observation_kind": "node_started",
+      "commitment": "committed"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "unknown-observation-kind-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.1",
+      "program_invocation_id": "invocation.1",
+      "sequence": 1,
+      "cursor": {"position": 1, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 1},
+      "observation_kind": "unknown_kind",
+      "commitment": "committed"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "event-waiting-carries-typed-event-occurrence",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.2",
+      "program_invocation_id": "invocation.1",
+      "sequence": 2,
+      "cursor": {"position": 2, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 2},
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "event.1",
+        "generation": 3,
+        "occurrence_id": "occurrence.2"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "event-resumed-carries-typed-event-reference",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.3",
+      "program_invocation_id": "invocation.1",
+      "sequence": 3,
+      "cursor": {"position": 3, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 3},
+      "observation_kind": "event_resumed",
+      "commitment": "provisional",
+      "event_ref": {"event_ref": "event.1"}
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "event-reference-at-opaque-ref-bound",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.boundary-event-ref",
+      "program_invocation_id": "invocation.1",
+      "sequence": 4,
+      "cursor": {"position": 4, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 4},
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "event-waiting-without-event-reference-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.4",
+      "program_invocation_id": "invocation.1",
+      "sequence": 4,
+      "cursor": {"position": 4, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 4},
+      "observation_kind": "event_waiting",
+      "commitment": "provisional"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "event-reference-over-opaque-ref-bound-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.long-event-ref",
+      "program_invocation_id": "invocation.1",
+      "sequence": 9,
+      "cursor": {"position": 9, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 9},
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "content-committed-without-readable-reference-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.5",
+      "program_invocation_id": "invocation.1",
+      "sequence": 5,
+      "cursor": {"position": 5, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 5},
+      "observation_kind": "content_committed",
+      "commitment": "committed"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "published-content-must-be-provisional-and-readable",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.6",
+      "program_invocation_id": "invocation.1",
+      "sequence": 6,
+      "cursor": {"position": 6, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 6},
+      "observation_kind": "content_published",
+      "commitment": "committed",
+      "content_ref": "content.1"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "terminal-without-output-or-evidence-reference-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.7",
+      "program_invocation_id": "invocation.1",
+      "sequence": 7,
+      "cursor": {"position": 7, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 7},
+      "observation_kind": "terminal_committed",
+      "commitment": "committed"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "evidence-without-evidence-reference-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.8",
+      "program_invocation_id": "invocation.1",
+      "sequence": 8,
+      "cursor": {"position": 8, "token": "scope.cursor"},
+      "timing": {"observed_at_unix_ms": 8},
+      "observation_kind": "evidence_committed",
+      "commitment": "committed"
+    },
+    "expected_valid": false
+  }
+]

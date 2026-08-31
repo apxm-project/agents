@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use apxm_core::types::{HandlerLanguage, HandlerManifest};
 use apxm_kernel::InvocationAdmission;
-use apxm_program::air::AirModule;
+use apxm_program::{ExecutableArtifact, air::AirModule};
 use serde_json::{Value, json};
 
 /// The exact package-handler implementation a composition root is supplied
@@ -110,7 +110,10 @@ fn execute_via_runtime_service(
     handlers: Option<AdmittedPackageHandlers>,
     package_root: Option<PathBuf>,
 ) -> Result<Value> {
-    let mut service = apxm_runtime_service::RuntimeService::default();
+    let mut service = apxm_runtime_service::RuntimeService::in_memory()
+        .with_single_shot_invocations()
+        .with_embedded_read_access()
+        .with_output_access_scope_ref("scope.execute-canonical".to_owned());
     let handlers = handlers.map(|handlers| apxm_runtime_service::AdmittedPackageHandlers {
         workers: handlers
             .workers
@@ -180,10 +183,68 @@ fn execute_via_runtime_service(
         )
         .map_err(|error| anyhow::anyhow!("Runtime Service refused the invocation: {error:?}"))?;
     match started {
-        apxm_runtime_protocol::RuntimeResult::ProgramInvocationStarted { .. } => service
-            .last_output()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Runtime Service produced no committed output")),
+        apxm_runtime_protocol::RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } => {
+            let invocation = apxm_runtime_protocol::ProgramInvocationId::new(program_invocation_id)
+                .map_err(|error| {
+                    anyhow::anyhow!("Runtime Service returned an invalid invocation: {error}")
+                })?;
+            let context = |purpose| apxm_runtime_protocol::ReadContext {
+                request_id: apxm_runtime_protocol::RequestId::new("execute-canonical-read")
+                    .expect("static request id"),
+                scope_ref: apxm_runtime_protocol::ScopeRef::new("scope.execute-canonical")
+                    .expect("static scope"),
+                principal_ref: apxm_runtime_protocol::PrincipalRef::new(
+                    "principal.execute-canonical",
+                )
+                .expect("static principal"),
+                grant_ref: apxm_runtime_protocol::GrantRef::new("grant.execute-canonical")
+                    .expect("static grant"),
+                correlation_id: None,
+                purpose,
+            };
+            let inspection = service
+                .handle_v2(
+                    &apxm_runtime_protocol::RuntimeHandshakeV2::server(),
+                    apxm_runtime_protocol::RuntimeRequestV2::ProgramInvocationInspect {
+                        context: context(apxm_runtime_protocol::ReadPurpose::Inspection),
+                        program_invocation_id: invocation.clone(),
+                        node_execution_id: None,
+                    },
+                )
+                .map_err(|error| {
+                    anyhow::anyhow!("failed to inspect committed invocation: {error:?}")
+                })?;
+            let apxm_runtime_protocol::RuntimeResultV2::ProgramInvocationInspection {
+                inspection,
+                ..
+            } = inspection
+            else {
+                anyhow::bail!("Runtime Service returned no committed invocation inspection");
+            };
+            let output_ref =
+                inspection.output_refs.first().cloned().ok_or_else(|| {
+                    anyhow::anyhow!("Runtime Service committed no output reference")
+                })?;
+            let content_ref = apxm_runtime_protocol::ContentRef::new(output_ref.as_str())
+                .map_err(|error| anyhow::anyhow!("invalid committed output reference: {error}"))?;
+            let content = service
+                .handle_v2(
+                    &apxm_runtime_protocol::RuntimeHandshakeV2::server(),
+                    apxm_runtime_protocol::RuntimeRequestV2::ContentRead {
+                        context: context(apxm_runtime_protocol::ReadPurpose::Content),
+                        content_ref,
+                    },
+                )
+                .map_err(|error| anyhow::anyhow!("failed to read committed output: {error:?}"))?;
+            let apxm_runtime_protocol::RuntimeResultV2::Content { content, .. } = content else {
+                anyhow::bail!("Runtime Service returned no committed output content");
+            };
+            serde_json::from_slice(&content.bytes)
+                .map_err(|error| anyhow::anyhow!("committed output is not JSON: {error}"))
+        }
         apxm_runtime_protocol::RuntimeResult::Failed { code, .. } => {
             anyhow::bail!("Runtime Service invocation failed: {code}")
         }
@@ -258,7 +319,13 @@ fn load_canonical_air(input: &Path) -> Result<(AirModule, Vec<u8>)> {
             serde_json::to_string(&diagnostics)?
         );
     }
-    Ok((air, bytes))
+    let artifact = ExecutableArtifact::from_air(&air).map_err(|error| {
+        anyhow::anyhow!("failed to seal canonical executable artifact: {error}")
+    })?;
+    let artifact_bytes = artifact.encode().map_err(|error| {
+        anyhow::anyhow!("failed to encode canonical executable artifact: {error}")
+    })?;
+    Ok((air, artifact_bytes))
 }
 
 #[cfg(test)]

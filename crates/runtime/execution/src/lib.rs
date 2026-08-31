@@ -6,12 +6,10 @@
 //! router or registry, and never falls back or picks a first-available target.
 //!
 //! Beyond the single-shot [`execute`], it provides durable park/resume
-//! ([`execute_resumable`]/[`resume`]) for conversational sessions that suspend
-//! at an `await.event` and continue on delivered input, plus the plane-correct
-//! session-family port surface (the [`resume::Continuation`] read back through
-//! the one Execution Commit port, the pure [`session_ledger::SessionLedger`],
-//! and the [`ports::ScopedMemoryPort`]) whose durable implementations are owned
-//! by the lifecycle/persistence plane.
+//! ([`execute_resumable`]/[`resume`]) for an invocation that suspends at an
+//! `await.event` and continues on delivered input. Durable state is read and
+//! written through the one Execution Commit port; lifecycle and persistence
+//! implementations remain outside the runtime driver.
 //!
 //! Dependency readiness for one leased activation lives in [`readiness`]. It is
 //! the single decision point that makes a node occurrence runnable; nothing else
@@ -25,23 +23,22 @@ pub mod ports;
 pub mod profile;
 pub mod readiness;
 pub mod resume;
-pub mod session_ledger;
 pub mod structural;
 
 pub use bundle::ExecutionPortBundle;
 pub use driver::{
-    CapabilityGrantOrigin, CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityNotGranted,
-    CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionPortsError, ExecutionRequest,
-    MAX_EXPRESSION_DEPTH, MAX_HOOK_BINDINGS, MAX_INITIAL_VALUES, MAX_SCHEDULE_STEPS,
-    MAX_SEMANTIC_OPERATIONS, MAX_STRUCTURAL_REGIONS, MAX_VALUE_ASSEMBLIES, NodeOutcome, RunReport,
-    StaticHookExecutionError, StaticHookHandlerPort, StaticHookInvocation, StaticHookResult,
-    execute, execute_resumable, execute_resumable_with_resource_ceilings,
-    execute_with_resource_ceilings, resume, resume_with_resource_ceilings,
-    wake_from_event_application,
+    CancellationToken, CapabilityGrantOrigin, CapabilityGrantSet, CapabilityInvocationAdmission,
+    CapabilityNotGranted, CapturedHookBodyHandler, ExecutionError, ExecutionPorts,
+    ExecutionPortsError, ExecutionRequest, MAX_EXPRESSION_DEPTH, MAX_HOOK_BINDINGS,
+    MAX_INITIAL_VALUES, MAX_SCHEDULE_STEPS, MAX_SEMANTIC_OPERATIONS, MAX_STRUCTURAL_REGIONS,
+    MAX_VALUE_ASSEMBLIES, NodeOutcome, RunReport, RunTerminalStatus, StaticHookExecutionError,
+    StaticHookHandlerPort, StaticHookInvocation, StaticHookResult, execute, execute_resumable,
+    execute_resumable_with_resource_ceilings, execute_with_resource_ceilings, resume,
+    resume_with_resource_ceilings, wake_from_event_application,
 };
 pub use observe::{
-    AllowBroker, ApprovalBroker, ApprovalDecision, DenyBroker, ExecutionObserver, Observation,
-    RecordingObserver, TimeoutBroker,
+    AllowBroker, ApprovalBroker, ApprovalDecision, DenyBroker, ObservationFailurePolicy,
+    ObservationRecorder, ObservationSink, ObservationSinkError, TimeoutBroker,
 };
 pub use operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
@@ -61,4 +58,3 @@ pub use readiness::{
 pub use resume::{
     Continuation, ContinuationError, DurableLoopFrame, HookTargetSnapshot, RunOutcome,
 };
-pub use session_ledger::{LedgerState, SessionLedger, SessionLedgerError, SessionLedgerStore};

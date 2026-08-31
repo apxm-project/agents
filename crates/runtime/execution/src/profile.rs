@@ -26,12 +26,14 @@ use apxm_program::artifact::SchemaDigestRef;
 
 use crate::bundle::ExecutionPortBundle;
 use crate::driver::{
-    CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionRequest, RunReport,
-    StaticHookHandlerPort, execute_resumable_with_resource_ceilings as drive_execute_resumable,
+    CancellationToken, CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionRequest,
+    RunReport, StaticHookHandlerPort,
+    execute_resumable_with_resource_ceilings as drive_execute_resumable,
     execute_with_resource_ceilings as drive_execute,
     resume_event_with_resource_ceilings as drive_resume_event,
     resume_with_resource_ceilings as drive_resume,
 };
+use crate::observe::{ObservationFailurePolicy, ObservationSink};
 use crate::ports::{CompositionPort, EventPort};
 use crate::resume::RunOutcome;
 
@@ -95,6 +97,7 @@ pub struct RuntimeProfile {
     _bundle: ExecutionPortBundle,
     ports: ExecutionPorts,
     accepting: AtomicBool,
+    cancellation: CancellationToken,
     resource_ceilings: ResourceCeilings,
 }
 
@@ -109,6 +112,30 @@ pub struct RuntimeDriverBindings {
 }
 
 impl RuntimeProfile {
+    /// Attach the cancellation signal owned by the active service invocation.
+    /// The signal is shared with the driver and with the wall-clock watchdog;
+    /// cancelling either side therefore follows the same commit path.
+    #[must_use]
+    pub fn with_cancellation_token(mut self, cancellation: CancellationToken) -> Self {
+        self.ports = self.ports.with_cancellation_token(cancellation.clone());
+        self.cancellation = cancellation;
+        self
+    }
+
+    /// Attach a bounded, non-authoritative observation sink to this admitted
+    /// profile. The sink can observe scheduler/effect boundaries but cannot
+    /// change execution or establish terminal truth.
+    #[must_use]
+    pub fn with_observation_sink(
+        mut self,
+        sink: Arc<dyn ObservationSink>,
+        policy: ObservationFailurePolicy,
+    ) -> Self {
+        self.ports = self.ports.with_observation_sink(sink);
+        self.ports = self.ports.with_observation_failure_policy(policy);
+        self
+    }
+
     /// Construct a profile from one already-admitted kernel runtime and two
     /// exact driver bindings. No implementation is selected here: the outer
     /// composition root supplies every adapter and the admission boundary has
@@ -156,6 +183,7 @@ impl RuntimeProfile {
             composition,
         )
         .map_err(RuntimeProfileError::Binding)?;
+        let cancellation = CancellationToken::new();
         let ports = ExecutionPorts::from_admitted_bundle(
             &bundle,
             model_call_request_metadata,
@@ -166,11 +194,13 @@ impl RuntimeProfile {
                 RuntimeProfileError::MissingDriverPort(slot)
             }
         })?
-        .with_resource_ceilings(resource_ceilings.clone());
+        .with_resource_ceilings(resource_ceilings.clone())
+        .with_cancellation_token(cancellation.clone());
         Ok(Self {
             _bundle: bundle,
             ports,
             accepting: AtomicBool::new(true),
+            cancellation,
             resource_ceilings,
         })
     }
@@ -186,6 +216,7 @@ impl RuntimeProfile {
         let resource_ceilings = admission.resource_ceilings().clone();
         let bundle = ExecutionPortBundle::from_admitted_kernel(Arc::new(admission.into_bundle()))
             .map_err(RuntimeProfileError::Binding)?;
+        let cancellation = CancellationToken::new();
         let ports = ExecutionPorts::from_admitted_bundle(
             &bundle,
             model_call_request_metadata,
@@ -196,11 +227,13 @@ impl RuntimeProfile {
                 RuntimeProfileError::MissingDriverPort(slot)
             }
         })?
-        .with_resource_ceilings(resource_ceilings.clone());
+        .with_resource_ceilings(resource_ceilings.clone())
+        .with_cancellation_token(cancellation.clone());
         Ok(Self {
             _bundle: bundle,
             ports,
             accepting: AtomicBool::new(true),
+            cancellation,
             resource_ceilings,
         })
     }
@@ -251,7 +284,7 @@ impl RuntimeProfile {
             return Err(RuntimeProfileError::Closed);
         }
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
-        enforce_wall_time(max_wall_ms, async {
+        enforce_wall_time_with_token(max_wall_ms, self.cancellation.clone(), async {
             drive_execute(
                 &self.ports,
                 request,
@@ -277,7 +310,7 @@ impl RuntimeProfile {
             return Err(RuntimeProfileError::Closed);
         }
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
-        enforce_wall_time(max_wall_ms, async {
+        enforce_wall_time_with_token(max_wall_ms, self.cancellation.clone(), async {
             drive_execute_resumable(
                 &self.ports,
                 request,
@@ -299,16 +332,20 @@ impl RuntimeProfile {
         delivered: Value,
     ) -> Result<RunOutcome, RuntimeProfileError> {
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
-        Box::pin(enforce_wall_time(max_wall_ms, async {
-            drive_resume(
-                &self.ports,
-                program_instance_ref,
-                delivered,
-                Some(&self.resource_ceilings),
-            )
-            .await
-            .map_err(RuntimeProfileError::Execution)
-        }))
+        Box::pin(enforce_wall_time_with_token(
+            max_wall_ms,
+            self.cancellation.clone(),
+            async {
+                drive_resume(
+                    &self.ports,
+                    program_instance_ref,
+                    delivered,
+                    Some(&self.resource_ceilings),
+                )
+                .await
+                .map_err(RuntimeProfileError::Execution)
+            },
+        ))
         .await
     }
 
@@ -321,17 +358,21 @@ impl RuntimeProfile {
         delivered: Value,
     ) -> Result<RunOutcome, RuntimeProfileError> {
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
-        Box::pin(enforce_wall_time(max_wall_ms, async {
-            drive_resume_event(
-                &self.ports,
-                program_instance_ref,
-                event_ref,
-                delivered,
-                Some(&self.resource_ceilings),
-            )
-            .await
-            .map_err(RuntimeProfileError::Execution)
-        }))
+        Box::pin(enforce_wall_time_with_token(
+            max_wall_ms,
+            self.cancellation.clone(),
+            async {
+                drive_resume_event(
+                    &self.ports,
+                    program_instance_ref,
+                    event_ref,
+                    delivered,
+                    Some(&self.resource_ceilings),
+                )
+                .await
+                .map_err(RuntimeProfileError::Execution)
+            },
+        ))
         .await
     }
 
@@ -339,6 +380,7 @@ impl RuntimeProfile {
     /// process-global effect.
     pub fn shutdown(&self) {
         self.accepting.store(false, Ordering::Release);
+        self.cancellation.cancel();
     }
 
     /// Whether this instance will accept another invocation.
@@ -361,6 +403,30 @@ impl RuntimeProfile {
 /// detached task after the profile reports the limit. A zero ceiling is
 /// rejected explicitly because the admission contract defines zero as
 /// refusing the resource class, rather than relying on timer edge behavior.
+async fn enforce_wall_time_with_token<T, F>(
+    max_wall_ms: u64,
+    cancellation: CancellationToken,
+    operation: F,
+) -> Result<T, RuntimeProfileError>
+where
+    F: Future<Output = Result<T, RuntimeProfileError>>,
+{
+    if max_wall_ms == 0 {
+        cancellation.cancel();
+        return Err(RuntimeProfileError::WallTimeExceeded { max_wall_ms });
+    }
+
+    let mut operation = Box::pin(operation);
+    tokio::select! {
+        result = &mut operation => result,
+        _ = tokio::time::sleep(Duration::from_millis(max_wall_ms)) => {
+            cancellation.cancel();
+            operation.await
+        }
+    }
+}
+
+#[cfg(test)]
 async fn enforce_wall_time<T, F>(max_wall_ms: u64, operation: F) -> Result<T, RuntimeProfileError>
 where
     F: Future<Output = Result<T, RuntimeProfileError>>,

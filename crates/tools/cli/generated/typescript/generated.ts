@@ -249,7 +249,6 @@ export const ATTR = {
   TASK_SPEC: "task_spec",
   TARGET_AGENT: "target_agent",
   ARGS: "args",
-  SESSION_ROOT: "session_root",
   HANDOFF: "handoff",
   HANDOFF_FROM: "handoff_from",
   HANDOFF_TO: "handoff_to",

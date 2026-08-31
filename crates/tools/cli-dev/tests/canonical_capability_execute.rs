@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
+use apxm_program::{ExecutableArtifact, air::AirModule};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
 
 #[path = "apxm_dev_bin.rs"]
@@ -52,7 +52,15 @@ fn execute_fixture(
     command.output().expect("execute canonical CLI")
 }
 
-fn execute_capability_fixture() -> std::process::Output {
+fn execute_output_fixture() -> std::process::Output {
+    execute_fixture(
+        &fixture("canonical-capability-output.air.json"),
+        &fixture("canonical-capability-output.invocation-admission.json"),
+        None,
+    )
+}
+
+fn execute_denied_capability_fixture() -> std::process::Output {
     execute_fixture(
         &fixture("canonical-capability-execute.air.json"),
         &fixture("canonical-capability-execute.invocation-admission.json"),
@@ -109,8 +117,11 @@ fn authored_ask_fixture() -> (TempDir, PathBuf, PathBuf) {
         .expect("read canonical admission fixture"),
     )
     .expect("parse canonical admission fixture");
-    admission["artifact_digest"] =
-        serde_json::json!(format!("sha256:{:x}", Sha256::digest(&air_bytes)));
+    let authored_air: AirModule =
+        serde_json::from_slice(&air_bytes).expect("parse authored-ask AIR");
+    let authored_artifact =
+        ExecutableArtifact::from_air(&authored_air).expect("seal authored-ask artifact");
+    admission["artifact_digest"] = serde_json::json!(authored_artifact.artifact_digest);
     std::fs::write(
         &admission_path,
         serde_json::to_vec_pretty(&admission).expect("serialize authored-ask admission"),
@@ -120,70 +131,51 @@ fn authored_ask_fixture() -> (TempDir, PathBuf, PathBuf) {
     (temp, air_path, admission_path)
 }
 
-fn node_outcome<'a>(result: &'a Value, node_id: &str) -> &'a Value {
-    result["results"]["node_outcomes"]
-        .as_array()
-        .expect("node outcomes array")
-        .iter()
-        .find(|outcome| outcome["node_id"] == node_id)
-        .unwrap_or_else(|| panic!("no node outcome for {node_id}: {result}"))
-}
-
 #[test]
 fn an_authored_capability_invoke_runs_a_real_tool() {
     let denied_write = repository_root().join(".apxm/canonical-capability-denied-write.txt");
     let _ = std::fs::remove_file(&denied_write);
 
-    let output = execute_capability_fixture();
+    let output = execute_output_fixture();
     assert!(
         output.status.success(),
-        "stderr: {}",
+        "status: {}; stdout: {}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).expect("canonical result JSON");
-    assert_eq!(result["status"], "completed");
-    assert_eq!(result["commit"]["status"], "committed");
-
-    let read = node_outcome(&result, "fixture.capability.read");
-    assert_eq!(read["kind"], "capability.invoke");
-    assert_eq!(
-        read["outcome"]["status"], "completed",
-        "an admitted Tool(\"read\") reaches ReadCapability: {result}"
-    );
-    assert!(
-        read["outcome"]["result"]
-            .as_str()
-            .expect("capability result text")
-            .contains("canonical capability fixture payload"),
-        "the capability returns the fixture file's contents: {result}"
-    );
-
-    let denied = node_outcome(&result, "fixture.capability.denied");
-    assert_eq!(
-        denied["outcome"]["status"], "failed",
-        "an unadmitted capability fails closed: {result}"
-    );
-    let message = denied["outcome"]["message"]
-        .as_str()
-        .expect("failure message");
-    assert!(
-        message.contains("is deny") && message.contains("by the package layer"),
-        "the refusal is the resolved permission decision and names the layer that gave it, so \
-         the shipped path is enforcing the lattice rather than only the port interceptor: \
-         {result}"
-    );
-    assert!(
-        message.contains("read-only capability surface"),
-        "the decision still carries the reason the local root refuses: {result}"
-    );
+    // The command returns only the bytes read through the committed V2
+    // output reference. It does not reconstruct a legacy execution wrapper
+    // containing node outcomes or copy a last-output sidecar.
+    assert_eq!(result, "5", "typed committed output content: {result}");
     assert!(
         !denied_write.exists(),
-        "the denial happens before the write implementation receives its arguments"
+        "the denied capability still fails before the write implementation receives its arguments"
     );
 }
 
 #[test]
-fn package_ask_policy_reaches_canonical_capability_admission() {
+fn unadmitted_capability_fails_closed_without_output() {
+    let denied_write = repository_root().join(".apxm/canonical-capability-denied-write.txt");
+    let _ = std::fs::remove_file(&denied_write);
+
+    let output = execute_denied_capability_fixture();
+    assert!(!output.status.success());
+    let diagnostic = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostic.contains("Runtime Service committed no output reference"),
+        "a terminal denied capability has no committed output to read: {diagnostic}"
+    );
+    assert!(!denied_write.exists());
+}
+
+#[test]
+fn package_ask_policy_fails_closed_without_output() {
     let package = build_policy_package(
         "{ decision = \"ask\", reason = \"Package policy requires approval before reading.\" }",
     );
@@ -192,24 +184,15 @@ fn package_ask_policy_reaches_canonical_capability_admission() {
         &fixture("canonical-capability-execute.invocation-admission.json"),
         Some(package.path()),
     );
-    assert!(
-        output.status.success(),
-        "stderr: {}",
+    assert!(!output.status.success());
+    let diagnostic = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let result: Value = serde_json::from_slice(&output.stdout).expect("canonical result JSON");
-    let read = node_outcome(&result, "fixture.capability.read");
-    assert_eq!(read["outcome"]["status"], "failed");
-    let message = read["outcome"]["message"]
-        .as_str()
-        .expect("package policy refusal message");
     assert!(
-        message.contains("is ask") && message.contains("by the package layer"),
-        "the live admission carries the package Ask decision: {result}"
-    );
-    assert!(
-        message.contains("Package policy requires approval before reading."),
-        "the package policy reason reaches the capability outcome: {result}"
+        diagnostic.contains("Runtime Service committed no output reference"),
+        "an Ask-denied terminal invocation has no committed output to read: {diagnostic}"
     );
 }
 

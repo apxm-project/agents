@@ -12,6 +12,7 @@ import json
 from typing import Any, Callable, Optional
 
 from . import _bridge
+from . import _native
 from ._capture import capture_program
 from ._emit import emit_frontend_graph
 from ._generated.diagnostics import (
@@ -20,9 +21,31 @@ from ._generated.diagnostics import (
 )
 from ._markers import ContextSchema
 
+class _FrozenDefinitionType(type):
+    """Prevent evaluated source from replacing Agent handle methods."""
 
-class AgentDefinition:
+    def __setattr__(cls, name: str, value: Any) -> None:
+        raise AttributeError("AgentDefinition methods are immutable after import")
+
+
+class AgentDefinition(metaclass=_FrozenDefinitionType):
     """A compiled typed Agent program and its composition surface."""
+
+    __slots__ = (
+        "_program_id",
+        "_input_type_ref",
+        "_output_type_ref",
+        "_context_type_ref",
+        "_artifact_digest",
+        "_sealed",
+        "__weakref__",
+    )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Keep the captured handle's methods and snapshot reference stable."""
+        if getattr(self, "_sealed", False):
+            raise AttributeError("AgentDefinition is immutable after capture")
+        object.__setattr__(self, name, value)
 
     def __init__(
         self,
@@ -33,13 +56,22 @@ class AgentDefinition:
         context_type_ref: Optional[str],
     ) -> None:
         self._program_id = program_id
-        self._graph = graph
+        # Keep the canonical snapshot in the native bridge. Python objects,
+        # function defaults, and module globals are reflective from evaluated
+        # source and therefore cannot serve as an integrity boundary.
+        graph_json = json.dumps(graph, sort_keys=True, separators=(",", ":"))
         self._input_type_ref = input_type_ref
         self._output_type_ref = output_type_ref
         self._context_type_ref = context_type_ref
         self._artifact_digest = "sha256:" + hashlib.sha256(
-            json.dumps(graph, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            graph_json.encode("utf-8")
         ).hexdigest()
+        _native.seal_frontend_graph(self, graph_json)
+        self._sealed = True
+
+    def _graph_value(self) -> dict[str, Any]:
+        """Decode an independent graph value from the immutable snapshot."""
+        return _native.frontend_graph(self)
 
     @property
     def program_id(self) -> str:
@@ -57,19 +89,19 @@ class AgentDefinition:
 
     def frontend_graph(self) -> dict[str, Any]:
         """The captured FrontendGraph for this program."""
-        return self._graph
+        return _native.frontend_graph(self)
 
     def diagnostics(self) -> Optional[str]:
         """Verification diagnostics for the captured graph, or ``None``."""
-        return _bridge.verify_graph(self._graph)
+        return _bridge.verify_graph(self._graph_value())
 
     def canonical_air(self) -> str:
         """Canonical AIR JSON lowered from the captured graph."""
-        return _bridge.canonical_air_json(self._graph)
+        return _bridge.canonical_air_json(self._graph_value())
 
     def artifact(self) -> dict[str, Any]:
         """One complete executable artifact compiled from the captured graph."""
-        return _bridge.compile_artifact(self._graph)
+        return _bridge.compile_artifact(self._graph_value())
 
     def new(self, *, context: Any = None) -> "ProgramInstance":
         """Create a stateful instance handle for later invocation."""

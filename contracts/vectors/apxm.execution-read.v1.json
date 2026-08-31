@@ -1,0 +1,349 @@
+[
+  {
+    "name": "observation-subscribe-request",
+    "input": {
+      "method": "observation.subscribe",
+      "context": {
+        "request_id": "request.1",
+        "scope_ref": "scope.1",
+        "principal_ref": "principal.1",
+        "grant_ref": "grant.1",
+        "purpose": "observation"
+      },
+      "program_invocation_id": "invocation.1",
+      "limit": 50
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "observation-page-result",
+    "input": {
+      "kind": "observation_page",
+      "request_id": "request.1",
+      "page": {
+        "items": [],
+        "item_cursors": [],
+        "high_watermark": {"position": 1, "token": "scope.cursor"},
+        "retention_floor": {"position": 1, "token": "scope.cursor"},
+        "has_more": false
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "invocation-inspection-request-without-node-selector",
+    "input": {
+      "method": "program_invocation.inspect",
+      "context": {
+        "request_id": "request.2",
+        "scope_ref": "scope.1",
+        "principal_ref": "principal.1",
+        "grant_ref": "grant.1",
+        "purpose": "inspection"
+      },
+      "program_invocation_id": "invocation.1"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "observation-page-resumes-from-last-delivered-cursor",
+    "input": {
+      "kind": "observation_page",
+      "request_id": "request.1",
+      "page": {
+        "items": [
+          {
+            "contract": "apxm.execution-observation.v1",
+            "observation_id": "observation.1",
+            "program_invocation_id": "invocation.1",
+            "sequence": 1,
+            "cursor": {"position": 1, "token": "scope.cursor"},
+            "timing": {"observed_at_unix_ms": 1},
+            "observation_kind": "node_started",
+            "commitment": "provisional"
+          }
+        ],
+        "item_cursors": [{"position": 1, "token": "scope.cursor"}],
+        "next_cursor": {"position": 1, "token": "scope.cursor"},
+        "high_watermark": {"position": 2, "token": "scope.cursor"},
+        "retention_floor": {"position": 1, "token": "scope.cursor"},
+        "has_more": true
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "node-inspection-request-with-node-selector",
+    "input": {
+      "method": "program_invocation.inspect",
+      "context": {
+        "request_id": "request.3",
+        "scope_ref": "scope.1",
+        "principal_ref": "principal.1",
+        "grant_ref": "grant.1",
+        "purpose": "inspection"
+      },
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node.1"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "invocation-inspection-result",
+    "input": {
+      "kind": "program_invocation_inspection",
+      "request_id": "request.2",
+      "inspection": {
+        "program_invocation_id": "invocation.1",
+        "status": "running",
+        "node_execution_refs": ["node.1"],
+        "output_refs": [],
+        "evidence_refs": [],
+        "cursor": {"position": 1, "token": "scope.cursor"}
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "node-inspection-result",
+    "input": {
+      "kind": "node_execution_inspection",
+      "request_id": "request.3",
+      "inspection": {
+        "contract": "apxm.node-execution-inspection.v1",
+        "program_invocation_id": "invocation.1",
+        "node_execution_id": "node.1",
+        "air_node_id": "node.model",
+        "status": "running",
+        "commitment": "provisional",
+        "attempt_refs": [],
+        "evidence_refs": [],
+        "child_program_refs": []
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "node-inspection-result-unknown-status-rejected",
+    "input": {
+      "kind": "node_execution_inspection",
+      "request_id": "request.3",
+      "inspection": {
+        "contract": "apxm.node-execution-inspection.v1",
+        "program_invocation_id": "invocation.1",
+        "node_execution_id": "node.1",
+        "air_node_id": "node.model",
+        "status": "outcome_unknown",
+        "commitment": "provisional",
+        "attempt_refs": [],
+        "evidence_refs": [],
+        "child_program_refs": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "content-read-result",
+    "input": {
+      "kind": "content",
+      "request_id": "request.5",
+      "content": {
+        "content_ref": "output.1",
+        "program_instance_id": "instance.1",
+        "program_invocation_id": "invocation.1",
+        "output_ref": {
+          "contract": "apxm.session-output-ref.v1",
+          "ref_type": "SessionOutputRef",
+          "ref": "output.1",
+          "program_instance_id": "instance.1",
+          "program_invocation_id": "invocation.1",
+          "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "byte_length": 2,
+          "media_type": "text/plain",
+          "commitment": "committed",
+          "access_scope_ref": "scope.1"
+        },
+        "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "byte_length": 2,
+        "media_type": "text/plain",
+        "commitment": "committed",
+        "access_scope_ref": "scope.1",
+        "bytes": [104, 105]
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "content-read-result-rejects-overlong-nested-output-scope",
+    "input": {
+      "kind": "content",
+      "request_id": "request.5",
+      "content": {
+        "content_ref": "output.1",
+        "program_instance_id": "instance.1",
+        "program_invocation_id": "invocation.1",
+        "output_ref": {
+          "contract": "apxm.session-output-ref.v1",
+          "ref_type": "SessionOutputRef",
+          "ref": "output.1",
+          "program_instance_id": "instance.1",
+          "program_invocation_id": "invocation.1",
+          "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "byte_length": 2,
+          "media_type": "text/plain",
+          "commitment": "committed",
+          "access_scope_ref": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+        },
+        "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "byte_length": 2,
+        "media_type": "text/plain",
+        "commitment": "committed",
+        "access_scope_ref": "scope.1",
+        "bytes": [104, 105]
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "content-read-result-rejects-provisional-nested-output",
+    "input": {
+      "kind": "content",
+      "request_id": "request.5",
+      "content": {
+        "content_ref": "output.1",
+        "program_instance_id": "instance.1",
+        "program_invocation_id": "invocation.1",
+        "output_ref": {
+          "contract": "apxm.session-output-ref.v1",
+          "ref_type": "SessionOutputRef",
+          "ref": "output.1",
+          "program_instance_id": "instance.1",
+          "program_invocation_id": "invocation.1",
+          "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "byte_length": 2,
+          "media_type": "text/plain",
+          "commitment": "provisional",
+          "access_scope_ref": "scope.1"
+        },
+        "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "byte_length": 2,
+        "media_type": "text/plain",
+        "commitment": "committed",
+        "access_scope_ref": "scope.1",
+        "bytes": [104, 105]
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "output-read-request",
+    "input": {
+      "method": "output.read",
+      "context": {
+        "request_id": "request.4",
+        "scope_ref": "scope.1",
+        "principal_ref": "principal.1",
+        "grant_ref": "grant.1",
+        "purpose": "output"
+      },
+      "output_ref": "output.1"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "output-read-result",
+    "input": {
+      "kind": "output",
+      "request_id": "request.4",
+      "output": {
+        "content_ref": "output.1",
+        "program_instance_id": "instance.1",
+        "program_invocation_id": "invocation.1",
+        "output_ref": {
+          "contract": "apxm.session-output-ref.v1",
+          "ref_type": "SessionOutputRef",
+          "ref": "output.1",
+          "program_instance_id": "instance.1",
+          "program_invocation_id": "invocation.1",
+          "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "byte_length": 2,
+          "media_type": "text/plain",
+          "commitment": "committed",
+          "access_scope_ref": "scope.1"
+        },
+        "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "byte_length": 2,
+        "media_type": "text/plain",
+        "commitment": "committed",
+        "access_scope_ref": "scope.1",
+        "bytes": [104, 105]
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "output-read-result-rejects-provisional-nested-output",
+    "input": {
+      "kind": "output",
+      "request_id": "request.4",
+      "output": {
+        "content_ref": "output.1",
+        "program_instance_id": "instance.1",
+        "program_invocation_id": "invocation.1",
+        "output_ref": {
+          "contract": "apxm.session-output-ref.v1",
+          "ref_type": "SessionOutputRef",
+          "ref": "output.1",
+          "program_instance_id": "instance.1",
+          "program_invocation_id": "invocation.1",
+          "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "byte_length": 2,
+          "media_type": "text/plain",
+          "commitment": "provisional",
+          "access_scope_ref": "scope.1"
+        },
+        "content_digest": "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "byte_length": 2,
+        "media_type": "text/plain",
+        "commitment": "committed",
+        "access_scope_ref": "scope.1",
+        "bytes": [104, 105]
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-read-method-rejected",
+    "input": {
+      "method": "observation.stream",
+      "context": {
+        "request_id": "request.1",
+        "scope_ref": "scope.1",
+        "principal_ref": "principal.1",
+        "grant_ref": "grant.1",
+        "purpose": "observation"
+      },
+      "program_invocation_id": "invocation.1",
+      "limit": 50
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "typed-unavailable-failure",
+    "input": {
+      "kind": "failed",
+      "request_id": "request.1",
+      "code": "unavailable"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "unknown-failure-code-rejected",
+    "input": {
+      "kind": "failed",
+      "request_id": "request.1",
+      "code": "made_up"
+    },
+    "expected_valid": false
+  }
+]

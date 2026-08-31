@@ -272,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "apxm-kernel",
  "apxm-program",
+ "apxm-runtime-protocol",
  "async-trait",
  "fs2",
  "serde",
@@ -290,9 +291,11 @@ dependencies = [
  "apxm-compilation-protocol",
  "apxm-compilation-service",
  "apxm-interaction-client",
+ "apxm-runtime-protocol",
  "apxm-runtime-service",
  "apxm-source-port",
  "libc",
+ "rustix",
  "serde",
  "serde_json",
  "toml",
@@ -302,6 +305,7 @@ dependencies = [
 name = "apxm-compilation-protocol"
 version = "0.1.0"
 dependencies = [
+ "apxm-program",
  "apxm-source-port",
  "serde",
  "serde_json",
@@ -386,6 +390,7 @@ dependencies = [
  "apxm-inference",
  "apxm-kernel",
  "apxm-program",
+ "apxm-runtime-protocol",
  "async-trait",
  "serde",
  "serde_json",
@@ -428,6 +433,7 @@ name = "apxm-interaction-client"
 version = "0.1.0"
 dependencies = [
  "apxm-kernel",
+ "apxm-program",
  "apxm-runtime-protocol",
  "apxm-runtime-service",
  "serde",
@@ -474,6 +480,7 @@ dependencies = [
 name = "apxm-openai-compat"
 version = "0.1.0"
 dependencies = [
+ "apxm-program",
  "apxm-runtime-protocol",
  "apxm-runtime-service",
  "serde",
@@ -497,9 +504,13 @@ dependencies = [
 name = "apxm-runtime-protocol"
 version = "0.1.0"
 dependencies = [
+ "apxm-core",
  "apxm-kernel",
+ "jsonschema",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -513,6 +524,7 @@ dependencies = [
  "apxm-backends",
  "apxm-capability",
  "apxm-capability-iface",
+ "apxm-commit-local",
  "apxm-core",
  "apxm-execution",
  "apxm-inference",

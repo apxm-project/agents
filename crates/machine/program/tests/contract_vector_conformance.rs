@@ -197,6 +197,22 @@ const VECTORS_READ_ELSEWHERE: &[(&str, &str)] = &[
     ),
     ("apxm.runtime-evidence.json", "tests/runtime_conformance.rs"),
     (
+        "apxm.execution-observation.v1.json",
+        "crates/runtime/service-protocol/tests/execution_contract_vectors.rs",
+    ),
+    (
+        "apxm.node-execution-inspection.v1.json",
+        "crates/runtime/service-protocol/tests/execution_contract_vectors.rs",
+    ),
+    (
+        "apxm.session-output-ref.v1.json",
+        "crates/runtime/service-protocol/tests/execution_contract_vectors.rs",
+    ),
+    (
+        "apxm.execution-read.v1.json",
+        "crates/runtime/service-protocol/tests/execution_contract_vectors.rs",
+    ),
+    (
         "apxm.skill-discovery-root.json",
         "tests/skill_conformance.rs",
     ),

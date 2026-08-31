@@ -31,7 +31,6 @@ pub mod metrics;
 // ── Domain ─────────────────────────────────────────────────
 pub mod compiler;
 pub mod models;
-pub mod session;
 pub mod source_format;
 
 pub use capability::{
@@ -80,8 +79,8 @@ pub use handler_manifest::{
     HandlerManifestError, HandlerSource,
 };
 pub use identifiers::{
-    BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
-    ProfileId, SessionId, TokenIdType, TraceId,
+    BackendId, CapabilityName, ExecutionId, ModelId, NodeIdType, OpIdType, ProfileId, TokenIdType,
+    TraceId,
 };
 pub use intents::{
     Entity, EntityType, ExportFormat, InspectTarget, Intent, MemoryQueryType, ProgramBuildStep,
@@ -98,7 +97,6 @@ pub use operations::metadata::{
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 
-pub use session::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus};
 pub use source_format::{ApxmPathFormat, ArtifactFormat, GraphSourceFormat};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 

@@ -331,7 +331,6 @@ pub const COUNT: &str = "count";
 pub const TASK_SPEC: &str = "task_spec";
 pub const TARGET_AGENT: &str = "target_agent";
 pub const ARGS: &str = "args";
-pub const SESSION_ROOT: &str = "session_root";
 /// Flow name on the structural flow-definition op.
 pub const NAME: &str = "name";
 /// Optional session id scoping a memory query (QMEM).
@@ -538,7 +537,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TASK_SPEC,
     TARGET_AGENT,
     ARGS,
-    SESSION_ROOT,
     HANDOFF,
     HANDOFF_FROM,
     HANDOFF_TO,

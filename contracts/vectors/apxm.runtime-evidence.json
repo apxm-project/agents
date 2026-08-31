@@ -936,5 +936,43 @@
       ]
     },
     "expected_valid": false
+  },
+  {
+    "name": "bare-attempt-fact-kind-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "attempt.1",
+          "event_sequence": 1,
+          "fact_kind": "attempt.recorded"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "bare-node-execution-fact-kind-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded"
+        }
+      ]
+    },
+    "expected_valid": false
   }
 ]

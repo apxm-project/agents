@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Semaphore};
 
 use apxm_runtime_protocol::{
-    RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeOwnerClaim, RuntimeRequest, RuntimeResult,
+    RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
 };
 use apxm_runtime_service::RuntimeService;
 
@@ -82,16 +82,49 @@ pub fn dispatch(
             },
         ));
     }
+    if method == "GET" && path == EventHttpMethod::List.path() {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            return (400, json!({"error": "owner_claim is required"}));
+        };
+        let Some(owner_claim) = value
+            .get("owner_claim")
+            .cloned()
+            .and_then(|claim| serde_json::from_value(claim).ok())
+        else {
+            return (400, json!({"error": "owner_claim is required"}));
+        };
+        return map_result(service.handle(
+            &handshake,
+            RuntimeRequest::EventList {
+                request_id: "http.list".to_owned(),
+                owner_claim,
+            },
+        ));
+    }
     if method == "GET" && path == EventHttpMethod::Inspect.path() {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            return (400, json!({"error": "invalid event inspection"}));
+        };
+        let Some(owner_claim) = value
+            .get("owner_claim")
+            .cloned()
+            .and_then(|claim| serde_json::from_value(claim).ok())
+        else {
+            return (400, json!({"error": "owner_claim is required"}));
+        };
+        let Some(event_ref) = value
+            .get("event_ref")
+            .cloned()
+            .and_then(|reference| serde_json::from_value(reference).ok())
+        else {
+            return (400, json!({"error": "event_ref is required"}));
+        };
         return map_result(service.handle(
             &handshake,
             RuntimeRequest::EventInspect {
                 request_id: "http.inspect".to_owned(),
-                owner_claim: RuntimeOwnerClaim::mint(),
-                event_ref: apxm_kernel::event_api::CanonicalEventRef {
-                    event_id: "unspecified".to_owned(),
-                    generation: 1,
-                },
+                owner_claim,
+                event_ref,
             },
         ));
     }
@@ -125,10 +158,37 @@ pub fn dispatch(
     if method == "POST"
         && (path == EventHttpMethod::Expire.path() || path == EventHttpMethod::Cancel.path())
     {
-        return (
-            501,
-            json!({"error": "expire/cancel are not HTTP-owned mutations"}),
-        );
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            return (400, json!({"error": "invalid event lifecycle mutation"}));
+        };
+        let Some(owner_claim) = value
+            .get("owner_claim")
+            .cloned()
+            .and_then(|claim| serde_json::from_value(claim).ok())
+        else {
+            return (400, json!({"error": "owner_claim is required"}));
+        };
+        let Some(event_ref) = value
+            .get("event_ref")
+            .cloned()
+            .and_then(|reference| serde_json::from_value(reference).ok())
+        else {
+            return (400, json!({"error": "event_ref is required"}));
+        };
+        let request = if path == EventHttpMethod::Expire.path() {
+            RuntimeRequest::EventExpire {
+                request_id: "http.expire".to_owned(),
+                owner_claim,
+                event_ref,
+            }
+        } else {
+            RuntimeRequest::EventCancel {
+                request_id: "http.cancel".to_owned(),
+                owner_claim,
+                event_ref,
+            }
+        };
+        return map_result(service.handle(&handshake, request));
     }
     (404, json!({"error": "unknown event route"}))
 }
@@ -280,9 +340,10 @@ fn map_result(result: Result<RuntimeResult, apxm_runtime_protocol::ProtocolError
             200,
             json!({"event_ref": event_ref, "owner_claim": owner_claim}),
         ),
-        Ok(RuntimeResult::EventApplied { result, .. }) => {
-            (200, json!({"result": format!("{result:?}")}))
-        }
+        Ok(RuntimeResult::EventApplied { result, .. }) => (200, json!({"result": result})),
+        Ok(RuntimeResult::EventInspected { inspection, .. }) => (200, json!(inspection)),
+        Ok(RuntimeResult::EventListed { events, .. }) => (200, json!({"events": events})),
+        Ok(RuntimeResult::EventLifecycleChanged { inspection, .. }) => (200, json!(inspection)),
         Ok(other) => (200, json!({"result": format!("{other:?}")})),
         Err(error) => (400, json!({"error": format!("{error:?}")})),
     }
@@ -371,6 +432,54 @@ mod tests {
         );
         assert_eq!(status, 200);
         assert!(body.get("event_ref").is_some());
+    }
+
+    #[test]
+    fn event_http_dispatches_authorized_inspect_list_and_cancel() {
+        let mut service = RuntimeService::default();
+        let (_, reserved) = dispatch(
+            &mut service,
+            "POST",
+            EventHttpMethod::Reserve.path(),
+            r#"{"type_id":"UserInput"}"#,
+        );
+        let event_ref = reserved.get("event_ref").cloned().expect("event ref");
+        let owner_claim = reserved.get("owner_claim").cloned().expect("claim");
+        let inspect_body = json!({
+            "event_ref": event_ref,
+            "owner_claim": owner_claim,
+        });
+        let (status, inspection) = dispatch(
+            &mut service,
+            "GET",
+            EventHttpMethod::Inspect.path(),
+            &inspect_body.to_string(),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(inspection["status"], "pending");
+
+        let list_body = json!({"owner_claim": owner_claim});
+        let (status, listed) = dispatch(
+            &mut service,
+            "GET",
+            EventHttpMethod::List.path(),
+            &list_body.to_string(),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(listed["events"].as_array().expect("events").len(), 1);
+
+        let cancel_body = json!({
+            "event_ref": inspect_body["event_ref"],
+            "owner_claim": inspect_body["owner_claim"],
+        });
+        let (status, cancelled) = dispatch(
+            &mut service,
+            "POST",
+            EventHttpMethod::Cancel.path(),
+            &cancel_body.to_string(),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(cancelled["status"], "cancelled");
     }
 
     #[test]

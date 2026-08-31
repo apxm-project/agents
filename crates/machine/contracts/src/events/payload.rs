@@ -172,14 +172,6 @@ fn boxed_core_payload_from_json(
         boxed!(PlanStepCompletedPayload)
     } else if kind_name == kind::PLAN_WORKFLOW_EMITTED.name() {
         boxed!(PlanWorkflowEmittedPayload)
-    } else if kind_name == kind::WORKFLOW_STARTED.name() {
-        boxed!(WorkflowStartedPayload)
-    } else if kind_name == kind::WORKFLOW_STEP_STARTED.name() {
-        boxed!(WorkflowStepStartedPayload)
-    } else if kind_name == kind::WORKFLOW_STEP_COMPLETED.name() {
-        boxed!(WorkflowStepCompletedPayload)
-    } else if kind_name == kind::WORKFLOW_FINISHED.name() {
-        boxed!(WorkflowFinishedPayload)
     } else if kind_name == kind::EXECUTION_STARTED.name() {
         boxed!(ExecutionStartedPayload)
     } else if kind_name == kind::EXECUTE_COMPLETE.name() {
@@ -226,10 +218,6 @@ fn boxed_core_payload_from_json(
         boxed!(LoopDetectedPayload)
     } else if kind_name == kind::CONTEXT_WINDOW_WARNING.name() {
         boxed!(ContextWindowWarningPayload)
-    } else if kind_name == kind::SESSION_START.name() {
-        boxed!(SessionStartPayload)
-    } else if kind_name == kind::SESSION_END.name() {
-        boxed!(SessionEndPayload)
     } else if kind_name == kind::AGENT_SPAWNED.name() {
         boxed!(AgentSpawnedPayload)
     } else if kind_name == kind::COMMUNICATE_DISPATCHED.name() {
@@ -877,78 +865,6 @@ pub struct PlanWorkflowEmittedPayload {
 }
 impl_event_payload!(PlanWorkflowEmittedPayload, kind::PLAN_WORKFLOW_EMITTED);
 
-/// A `.apxmw` workflow session started.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowStartedPayload {
-    /// Workflow name from the `.apxmw` file.
-    pub workflow_name: String,
-    /// Workflow-root session directory.
-    pub session_dir: String,
-    /// Number of declared workflow steps.
-    pub step_count: usize,
-}
-impl_event_payload!(WorkflowStartedPayload, kind::WORKFLOW_STARTED);
-
-/// A `.apxmw` workflow step started.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowStepStartedPayload {
-    /// Workflow name from the `.apxmw` file.
-    pub workflow_name: String,
-    /// Workflow-root session directory.
-    pub workflow_session_dir: String,
-    /// Step id from the `.apxmw` graph list.
-    pub step_id: String,
-    /// Zero-based index in workflow declaration order.
-    pub step_index: usize,
-    /// Number of declared workflow steps.
-    pub step_count: usize,
-}
-impl_event_payload!(WorkflowStepStartedPayload, kind::WORKFLOW_STEP_STARTED);
-
-/// A `.apxmw` workflow step completed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowStepCompletedPayload {
-    /// Workflow name from the `.apxmw` file.
-    pub workflow_name: String,
-    /// Workflow-root session directory.
-    pub workflow_session_dir: String,
-    /// Step id from the `.apxmw` graph list.
-    pub step_id: String,
-    /// Zero-based index in workflow declaration order.
-    pub step_index: usize,
-    /// Step status (`success`, `failed`, or `skipped`).
-    pub status: String,
-    /// Whether the step succeeded.
-    pub success: bool,
-    /// Step wall-clock duration in milliseconds.
-    pub duration_ms: u64,
-    /// Child graph/artifact/workflow session directory, when one was produced.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_dir: Option<String>,
-    /// Safe error string for failed steps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-impl_event_payload!(WorkflowStepCompletedPayload, kind::WORKFLOW_STEP_COMPLETED);
-
-/// A `.apxmw` workflow session finished.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowFinishedPayload {
-    /// Workflow name from the `.apxmw` file.
-    pub workflow_name: String,
-    /// Workflow-root session directory.
-    pub session_dir: String,
-    /// Workflow status (`success`, `partial_failure`, or `failed`).
-    pub status: String,
-    /// Whether the workflow succeeded.
-    pub success: bool,
-    /// Workflow wall-clock duration in milliseconds.
-    pub duration_ms: u64,
-    /// Number of recorded step results.
-    pub step_count: usize,
-}
-impl_event_payload!(WorkflowFinishedPayload, kind::WORKFLOW_FINISHED);
-
 /// A server-owned execution started and can now be followed by execution id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionStartedPayload {
@@ -1079,7 +995,7 @@ pub struct ErrorPayload {
 impl_event_payload!(ErrorPayload, kind::ERROR);
 
 // ===========================================================================
-// Session Layer payload structs
+// Context and execution observability payload structs
 // ===========================================================================
 
 /// The context window was compacted (messages summarized/dropped).
@@ -1407,24 +1323,6 @@ pub struct ContextWindowWarningPayload {
     pub utilization_pct: f64,
 }
 impl_event_payload!(ContextWindowWarningPayload, kind::CONTEXT_WINDOW_WARNING);
-
-/// A new session started.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionStartPayload {
-    /// Session identifier.
-    pub session_id: String,
-}
-impl_event_payload!(SessionStartPayload, kind::SESSION_START);
-
-/// A session ended.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionEndPayload {
-    /// Session identifier.
-    pub session_id: String,
-    /// Total number of Program Invocations executed in the session.
-    pub total_invocations: usize,
-}
-impl_event_payload!(SessionEndPayload, kind::SESSION_END);
 
 // ===========================================================================
 // Layer 2 — agent-layer payload structs

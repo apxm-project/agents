@@ -8,6 +8,25 @@ fn digest(byte: char) -> String {
     format!("sha256:{}", byte.to_string().repeat(64))
 }
 
+fn canonical_artifact() -> (String, Vec<u8>) {
+    let air: apxm_program::AirModule = serde_json::from_value(serde_json::json!({
+        "schema_version": "apxm.air",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "context_flow": [],
+        "source_map": {
+            "schema_version": "apxm.source-map",
+            "source_language": "python",
+            "node_spans": [],
+            "region_annotations": []
+        }
+    }))
+    .expect("probe AIR");
+    let artifact = apxm_program::ExecutableArtifact::from_air(&air).expect("probe artifact");
+    let digest = artifact.artifact_digest.clone();
+    (digest, artifact.encode().expect("artifact JSON"))
+}
+
 fn valid() -> InvocationAdmission {
     InvocationAdmission {
         schema_version: INVOCATION_ADMISSION_SCHEMA.into(),
@@ -39,8 +58,8 @@ fn invocation_admission_rejects_provenance_drift_before_runtime() {
         max_memory_bytes: 64 * 1024 * 1024,
         max_effect_bytes: 1024 * 1024,
     };
-    admission.artifact_digest =
-        "sha256:c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c".into();
+    let (artifact_digest, artifact_bytes) = canonical_artifact();
+    admission.artifact_digest = artifact_digest;
     admission.release_digest =
         "sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829".into();
     admission.port_bindings_digest = digest_serializable(&port_bindings).expect("port digest");
@@ -50,7 +69,7 @@ fn invocation_admission_rejects_provenance_drift_before_runtime() {
     let error = verify_invocation_admission(
         &admission,
         InvocationAdmissionClaim {
-            artifact_bytes: b"artifact",
+            artifact_bytes: &artifact_bytes,
             release_bytes: b"release",
             provenance_bytes: b"provenance",
             artifact_semantic_requirements: &[],

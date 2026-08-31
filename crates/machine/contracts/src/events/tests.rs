@@ -276,37 +276,6 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             task_ids: vec![1, 2, 3],
             parallel_fanout_max: 2,
         }),
-        Box::new(WorkflowStartedPayload {
-            workflow_name: "wf".to_string(),
-            session_dir: "/tmp/wf".to_string(),
-            step_count: 2,
-        }),
-        Box::new(WorkflowStepStartedPayload {
-            workflow_name: "wf".to_string(),
-            workflow_session_dir: "/tmp/wf".to_string(),
-            step_id: "s1".to_string(),
-            step_index: 0,
-            step_count: 2,
-        }),
-        Box::new(WorkflowStepCompletedPayload {
-            workflow_name: "wf".to_string(),
-            workflow_session_dir: "/tmp/wf".to_string(),
-            step_id: "s1".to_string(),
-            step_index: 0,
-            status: "success".to_string(),
-            success: true,
-            duration_ms: 10,
-            session_dir: Some("/tmp/wf/s1".to_string()),
-            error: None,
-        }),
-        Box::new(WorkflowFinishedPayload {
-            workflow_name: "wf".to_string(),
-            session_dir: "/tmp/wf".to_string(),
-            status: "success".to_string(),
-            success: true,
-            duration_ms: 20,
-            step_count: 2,
-        }),
         Box::new(ExecutionStartedPayload {
             execution_id: "exec-1".to_string(),
             args: vec!["a".to_string()],
@@ -438,13 +407,6 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             current_tokens: 900,
             max_tokens: 1000,
             utilization_pct: 90.0,
-        }),
-        Box::new(SessionStartPayload {
-            session_id: "sess-1".to_string(),
-        }),
-        Box::new(SessionEndPayload {
-            session_id: "sess-1".to_string(),
-            total_invocations: 5,
         }),
         Box::new(SubagentSpawnBeginPayload {
             agent_code: "agent-1".to_string(),
@@ -869,7 +831,6 @@ fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::LLM_STEP_COMPLETED.is_terminal());
     assert!(!kind::CANCELLED.is_terminal());
 
-    assert!(kind::SESSION_END.is_terminal());
     assert!(kind::EXECUTE_COMPLETE.is_terminal());
     assert!(kind::ERROR.is_terminal());
 }

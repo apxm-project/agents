@@ -46,8 +46,10 @@ pub use capability::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 pub use commit::{
     ATOMIC_WRITE_SET, AtomicWriteSet, CommitRequestError, CommittedContinuation,
     ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
-    ProgramInstanceRef, ProgramInvocationRef, canonical_json_bytes, canonical_json_value,
-    continuation_digest,
+    PrecommitEvidenceRef, PreparedSessionOutputRef, ProgramInstanceRef, ProgramInvocationRef,
+    SESSION_OUTPUT_REF_CONTRACT, SessionOutputPreparation, SessionOutputVisibility,
+    canonical_json_bytes, canonical_json_value, continuation_digest,
+    runtime_evidence_and_observation_digest, session_output_refs_digest,
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,

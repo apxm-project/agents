@@ -412,8 +412,12 @@ mod tests {
     }
 
     fn committed_demo(service: &mut RuntimeService) -> BTreeMap<String, String> {
-        let bytes = br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#
-            .to_vec();
+        let air: apxm_program::air::AirModule = serde_json::from_slice(br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#)
+            .expect("minimal canonical AIR");
+        let bytes = apxm_program::ExecutableArtifact::from_air(&air)
+            .expect("seal canonical executable artifact")
+            .encode()
+            .expect("canonical artifact encoding");
         let digest = service.admit_artifact(bytes.clone());
         service
             .bind_admission_for_artifact(
