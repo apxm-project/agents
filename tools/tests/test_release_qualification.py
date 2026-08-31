@@ -85,10 +85,17 @@ def make_clean_owner_checkout(root: Path) -> tuple[str, dict[str, Path]]:
     artifacts = {
         "compilation-service": root / "target" / "release" / "apxm-compilation-service",
         "runtime-service": root / "target" / "release" / "apxm-runtime-service",
+        "python-frontend-native": root / "target" / "release" / "lib_native.so",
     }
     for index, artifact in enumerate(artifacts.values()):
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_bytes(f"real service bytes {index}\n".encode())
+        if artifact.name == "lib_native.so":
+            native = bytearray(64)
+            native[:7] = b"\x7fELF\x02\x01\x01"
+            native[18:20] = (62).to_bytes(2, "little")
+            artifact.write_bytes(native)
+        else:
+            artifact.write_bytes(f"real service bytes {index}\n".encode())
         artifact.chmod(0o755)
     return revision, artifacts
 
@@ -149,12 +156,17 @@ class ReleaseQualificationTests(unittest.TestCase):
             expected = {
                 name: "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
                 for name, path in artifacts.items()
+                if name in {"compilation-service", "runtime-service"}
             }
             self.assertEqual(
                 {item["name"]: item["digest"] for item in payload["services"]}, expected
             )
             self.assertNotIn("placeholder", sidecar.read_text(encoding="utf-8").lower())
             self.assertEqual(payload["source_revision"], revision)
+            self.assertEqual(
+                payload["frontend_native"]["digest"],
+                "sha256:" + hashlib.sha256(artifacts["python-frontend-native"].read_bytes()).hexdigest(),
+            )
             self.assertTrue(source.is_file())
             self.assertTrue(owner.is_file())
 
@@ -502,6 +514,7 @@ class ReleaseQualificationTests(unittest.TestCase):
                     "runtime-protocol",
                     "compilation-service",
                     "runtime-service",
+                    "python-frontend-native",
                 },
             )
             package_manifest = Path(package["root"]) / package["manifest"]
@@ -613,7 +626,7 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertEqual(
             verified["package_manifest_digest"], packaged["package"]["manifest_digest"]
         )
-        self.assertEqual(len(verified["verified_files"]), 8)
+        self.assertEqual(len(verified["verified_files"]), 9)
 
     def test_consumer_verification_rejects_tampered_bytes_and_extra_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:

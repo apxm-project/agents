@@ -4,6 +4,7 @@ FROM ${APXM_BASE_IMAGE}
 ARG APXM_BASE_IMAGE
 ARG APXM_SOURCE_REVISION
 ARG APXM_COMPILATION_SERVICE_DIGEST
+ARG APXM_PYTHON_FRONTEND_NATIVE_DIGEST
 
 # A mutable tag is not an acceptable release input.  The check lives before
 # any package installation so an omitted/tag-only base fails closed at the
@@ -20,7 +21,8 @@ LABEL org.opencontainers.image.title="APXM Compilation Service" \
       org.opencontainers.image.revision="${APXM_SOURCE_REVISION}" \
       io.apxm.base-image="${APXM_BASE_IMAGE}" \
       io.apxm.service="compilation-service" \
-      io.apxm.service-digest="${APXM_COMPILATION_SERVICE_DIGEST}"
+      io.apxm.service-digest="${APXM_COMPILATION_SERVICE_DIGEST}" \
+      io.apxm.python-frontend-native-digest="${APXM_PYTHON_FRONTEND_NATIVE_DIGEST}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nodejs python3 \
@@ -60,6 +62,9 @@ RUN set -eu; \
     manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"compilation-service".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
     [ "$manifest_digest" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
     [ "sha256:$(sha256sum /workspace/target/release/apxm-compilation-service | cut -d' ' -f1)" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
+    native_digest="$(sed -n 's/.*"frontend_native":{[^}]*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    [ "$native_digest" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
+    [ "sha256:$(sha256sum /workspace/crates/compiler/frontend/python/apxm_program/_native.so | cut -d' ' -f1)" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
     test -s /workspace/crates/compiler/frontend/python/apxm_program/_native.so
 
 RUN chown -R 65532:65532 /workspace /var/lib/apxm

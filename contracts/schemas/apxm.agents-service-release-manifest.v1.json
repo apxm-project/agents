@@ -10,6 +10,7 @@
     "source_revision",
     "artifact_kind",
     "services",
+    "frontend_native",
     "owner_descriptor_digest",
     "integrity_algorithm"
   ],
@@ -33,6 +34,16 @@
         },
         "additionalProperties": false
       }
+    },
+    "frontend_native": {
+      "type": "object",
+      "required": ["name", "path", "digest"],
+      "properties": {
+        "name": {"const": "python-frontend-native"},
+        "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
     },
     "owner_descriptor_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "integrity_algorithm": {"const": "sha256"}

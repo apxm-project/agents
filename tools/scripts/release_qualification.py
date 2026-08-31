@@ -70,9 +70,11 @@ SERVICE_ARTIFACTS = (
     ("compilation-service", "apxm-compilation-service"),
     ("runtime-service", "apxm-runtime-service"),
 )
+FRONTEND_NATIVE_ARTIFACT = ("python-frontend-native", "lib_native.so")
 SERVICE_COORDINATE_ENV = {
     "compilation-service": "APXM_COMPILATION_SERVICE",
     "runtime-service": "APXM_RUNTIME_SERVICE",
+    "python-frontend-native": "APXM_PYTHON_FRONTEND_NATIVE",
 }
 LINUX_X86_64_ELF_CLASS = 2
 LINUX_X86_64_ELF_DATA = 1
@@ -543,6 +545,7 @@ def _validate_release_manifest(
             "source_revision",
             "artifact_kind",
             "services",
+            "frontend_native",
             "owner_descriptor_digest",
             "integrity_algorithm",
         ),
@@ -683,6 +686,84 @@ def _validate_release_manifest(
                     "publish the exact service bytes named by the manifest or regenerate the manifest",
                 )
             )
+    frontend = value.get("frontend_native")
+    if not isinstance(frontend, dict):
+        diagnostics.append(
+            Diagnostic(
+                "invalid-schema",
+                "release manifest.frontend_native must be an object",
+                "regenerate the manifest with the exact Python frontend native bridge entry",
+            )
+        )
+    else:
+        entry_valid = _require_exact_shape(
+            frontend,
+            label="release manifest.frontend_native",
+            required=("name", "path", "digest"),
+            optional=(),
+            diagnostics=diagnostics,
+        )
+        entry_valid &= _require_string(
+            frontend, "name", label="release manifest.frontend_native", diagnostics=diagnostics
+        )
+        entry_valid &= _require_string(
+            frontend,
+            "path",
+            label="release manifest.frontend_native",
+            diagnostics=diagnostics,
+            pattern=SAFE_RELATIVE_PATH,
+        )
+        entry_valid &= _require_string(
+            frontend,
+            "digest",
+            label="release manifest.frontend_native",
+            diagnostics=diagnostics,
+            pattern=DIGEST,
+        )
+        if entry_valid and frontend.get("name") != FRONTEND_NATIVE_ARTIFACT[0]:
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-schema",
+                    "release manifest.frontend_native.name is not the Python frontend native bridge",
+                    "publish exactly one python-frontend-native bridge entry",
+                )
+            )
+        selected = artifacts.get(FRONTEND_NATIVE_ARTIFACT[0])
+        external = _external_service_binding(FRONTEND_NATIVE_ARTIFACT[0])
+        selected_is_external = (
+            selected is not None
+            and external is not None
+            and selected.resolve() == external
+        )
+        digest_matches_selected = (
+            selected is not None
+            and _digest_file(selected) == str(frontend.get("digest", ""))
+        )
+        declared_path = _resolve_regular_file(root, root / str(frontend.get("path", "")))
+        if declared_path is None and not (selected_is_external and digest_matches_selected):
+            diagnostics.append(
+                Diagnostic(
+                    "missing-publishable-frontend-native",
+                    "release manifest frontend_native does not name a regular file inside the owner checkout",
+                    "publish the exact Python frontend native bridge at the manifest path or bind its immutable qualified coordinate",
+                )
+            )
+        elif selected is not None and declared_path != selected and not (selected_is_external and digest_matches_selected):
+            diagnostics.append(
+                Diagnostic(
+                    "frontend-native-path-mismatch",
+                    "release manifest frontend_native path does not select the qualified bridge",
+                    "qualify the exact native bridge named by the release manifest",
+                )
+            )
+        if FRONTEND_NATIVE_ARTIFACT[0] in artifact_digests and frontend.get("digest") != artifact_digests[FRONTEND_NATIVE_ARTIFACT[0]]:
+            diagnostics.append(
+                Diagnostic(
+                    "frontend-native-digest-mismatch",
+                    "release manifest frontend_native digest does not match the selected bridge bytes",
+                    "publish the exact native bridge bytes named by the manifest or regenerate the manifest",
+                )
+            )
     missing_names = sorted(expected_names - seen_names)
     if missing_names:
         diagnostics.append(
@@ -782,6 +863,33 @@ def _find_artifacts(
                 found[name] = resolved
                 break
     return found
+
+
+def _find_frontend_native(root: Path, explicit: str | None = None) -> Path | None:
+    """Find the exact Python native bridge for the compilation image."""
+
+    external = _external_service_binding("python-frontend-native")
+    candidates: list[Path] = []
+    if external is not None:
+        candidates.append(external)
+    if explicit:
+        candidates.append(_rooted_path(root, explicit))
+    env_value = os.environ.get(SERVICE_COORDINATE_ENV["python-frontend-native"], "").strip()
+    if env_value:
+        candidates.append(_rooted_path(root, env_value))
+    candidates.extend(
+        (
+            root / "target" / "release" / FRONTEND_NATIVE_ARTIFACT[1],
+            root / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "_native.so",
+        )
+    )
+    for candidate in candidates:
+        resolved = _resolve_regular_file(root, candidate)
+        if resolved is None and external is not None and candidate == external:
+            resolved = external
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _run_gates(
@@ -932,7 +1040,22 @@ def qualify(
                     f"publish the executable `{binary}` service with execute permission",
                 )
             )
-    if artifacts and len(artifacts) == len(SERVICE_ARTIFACTS) and manifest is None:
+    frontend_native = _find_frontend_native(root)
+    if frontend_native is None:
+        result.diagnostics.append(
+            Diagnostic(
+                "missing-publishable-frontend-native",
+                "no publishable Python frontend native bridge is present",
+                "build and publish the exact Linux or host frontend bridge, then set APXM_PYTHON_FRONTEND_NATIVE to its immutable path@sha256 digest when cross-platform",
+            )
+        )
+    else:
+        result.artifacts[FRONTEND_NATIVE_ARTIFACT[0]] = frontend_native
+        result.artifact_digests[FRONTEND_NATIVE_ARTIFACT[0]] = _digest_file(frontend_native)
+    service_artifacts = {
+        name: artifacts[name] for name, _ in SERVICE_ARTIFACTS if name in artifacts
+    }
+    if len(service_artifacts) == len(SERVICE_ARTIFACTS) and manifest is None:
         result.diagnostics.append(
             Diagnostic(
                 "unattested-service-artifacts",
@@ -972,6 +1095,7 @@ def generate_descriptors(
     *,
     compilation_service_path: str,
     runtime_service_path: str,
+    python_frontend_native_path: str | None = None,
     output_dir: Path,
     source_revision: str | None = None,
 ) -> tuple[Path, Path, Path, Path]:
@@ -1001,6 +1125,11 @@ def generate_descriptors(
         if not os.access(service, os.X_OK):
             raise ValueError(f"publishable {name} is not executable: {service}")
         services[name] = service
+    frontend_native = _find_frontend_native(root, python_frontend_native_path)
+    if frontend_native is None:
+        raise ValueError(
+            "publishable Python frontend native bridge is missing; supply the real bridge or an immutable APXM_PYTHON_FRONTEND_NATIVE coordinate"
+        )
     revision = source_revision or _git_revision(root)
     if revision is None or not HEX40.fullmatch(revision):
         raise ValueError("cannot generate descriptors without a full lowercase Git source revision")
@@ -1045,6 +1174,15 @@ def generate_descriptors(
             }
             for name, name_for_path in SERVICE_ARTIFACTS
         ],
+        "frontend_native": {
+            "name": FRONTEND_NATIVE_ARTIFACT[0],
+            "path": (
+                _git_relative(root, frontend_native)
+                if frontend_native.is_relative_to(root)
+                else f"target/release/{FRONTEND_NATIVE_ARTIFACT[1]}"
+            ),
+            "digest": _digest_file(frontend_native),
+        },
         "owner_descriptor_digest": owner_digest,
         "integrity_algorithm": "sha256",
     }
@@ -1121,6 +1259,7 @@ def _package_payload(result: Qualification, root: Path) -> dict[str, Any]:
         "release_manifest_digest": _digest_file(manifest_file) if manifest_file else None,
         "protocol_descriptors": result.protocol_descriptors,
         "manifest_services": manifest.get("services"),
+        "manifest_frontend_native": manifest.get("frontend_native"),
         "services": {name: str(path) for name, path in result.artifacts.items()},
         "service_digests": result.artifact_digests,
         "gates": result.gates,
@@ -1215,9 +1354,14 @@ def package_release(
         files.append({"name": name, "path": relative.as_posix(), "digest": _digest_bytes(payload_bytes)})
         _write_once(package_root / relative, payload_bytes)
 
-    for name, binary in SERVICE_ARTIFACTS:
+    package_artifacts = (*SERVICE_ARTIFACTS, FRONTEND_NATIVE_ARTIFACT)
+    for name, binary in package_artifacts:
         source = result.artifacts.get(name)
-        manifest_path = service_paths.get(name)
+        manifest_path = (
+            service_paths.get(name)
+            if name in service_paths
+            else Path(str((manifest.get("frontend_native") or {}).get("path", "")))
+        )
         if source is None or manifest_path is None:
             raise ValueError(f"qualified release has no local {name} service path")
         try:
@@ -1239,9 +1383,9 @@ def package_release(
             "name": name,
             "path": manifest_path.as_posix(),
             "digest": _digest_bytes(payload_bytes),
-            "executable": True,
-            "bytes": len(payload_bytes),
         }
+        if name in {service_name for service_name, _ in SERVICE_ARTIFACTS}:
+            entry.update({"executable": True, "bytes": len(payload_bytes)})
         files.append(entry)
         destination = package_root / manifest_path
         _write_once(destination, payload_bytes)
@@ -1519,6 +1663,7 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
         "runtime-protocol",
         "compilation-service",
         "runtime-service",
+        FRONTEND_NATIVE_ARTIFACT[0],
     }
     if set(by_name) != expected_names:
         diagnostics.append(
@@ -1707,10 +1852,16 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
             name: root / str(by_name.get(name, {}).get("path", ""))
             for name, _ in SERVICE_ARTIFACTS
         }
+        service_files[FRONTEND_NATIVE_ARTIFACT[0]] = root / str(
+            by_name.get(FRONTEND_NATIVE_ARTIFACT[0], {}).get("path", "")
+        )
         artifact_digests = {
             name: str(by_name.get(name, {}).get("digest", ""))
             for name, _ in SERVICE_ARTIFACTS
         }
+        artifact_digests[FRONTEND_NATIVE_ARTIFACT[0]] = str(
+            by_name.get(FRONTEND_NATIVE_ARTIFACT[0], {}).get("digest", "")
+        )
         _validate_release_manifest(
             root,
             release,
@@ -1784,9 +1935,10 @@ def verify_linux_package(
         entry.get("name"): entry.get("path")
         for entry in files
         if isinstance(entry, dict)
-        and entry.get("name") in {name for name, _ in SERVICE_ARTIFACTS}
+        and entry.get("name")
+        in {*{name for name, _ in SERVICE_ARTIFACTS}, FRONTEND_NATIVE_ARTIFACT[0]}
     } if isinstance(files, list) else {}
-    for name, _ in SERVICE_ARTIFACTS:
+    for name, _ in (*SERVICE_ARTIFACTS, FRONTEND_NATIVE_ARTIFACT):
         relative = service_files.get(name)
         if not isinstance(relative, str):
             continue
@@ -1804,9 +1956,13 @@ def verify_linux_package(
         ):
             diagnostics.append(
                 {
-                    "code": "non-linux-service-artifact",
-                    "message": f"consumer package {name!r} is not a Linux ELF executable: {relative}",
-                    "remediation": "obtain the exact APXM Linux x86_64 service package for the declared source revision; a host-native build is not sufficient",
+                    "code": (
+                        "non-linux-frontend-native"
+                        if name == FRONTEND_NATIVE_ARTIFACT[0]
+                        else "non-linux-service-artifact"
+                    ),
+                    "message": f"consumer package {name!r} is not a Linux ELF artifact: {relative}",
+                    "remediation": f"obtain the exact APXM Linux {normalized_architecture} release package for the declared source revision; a host-native build is not sufficient",
                 }
             )
             continue
@@ -1852,6 +2008,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_parser.add_argument("--root", type=Path, default=REPOSITORY_ROOT)
     generate_parser.add_argument("--compilation-service", required=True)
     generate_parser.add_argument("--runtime-service", required=True)
+    generate_parser.add_argument("--python-frontend-native")
     generate_parser.add_argument("--output-dir", type=Path, required=True)
     generate_parser.add_argument("--source-revision")
     package_parser = subparsers.add_parser(
@@ -1896,6 +2053,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.root,
                 compilation_service_path=args.compilation_service,
                 runtime_service_path=args.runtime_service,
+                python_frontend_native_path=args.python_frontend_native,
                 output_dir=args.output_dir,
                 source_revision=args.source_revision,
             )
