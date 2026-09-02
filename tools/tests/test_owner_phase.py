@@ -51,6 +51,7 @@ class OwnerPhaseTests(unittest.TestCase):
             "service_digests": {
                 "compilation-service": "sha256:" + "d" * 64,
                 "runtime-service": "sha256:" + "e" * 64,
+                "python-frontend-native": "sha256:" + "f" * 64,
             },
             "gates": [
                 {"command": command, "returncode": 0}
@@ -241,6 +242,17 @@ class OwnerPhaseTests(unittest.TestCase):
             "gates": [],
         }
         with self.assertRaisesRegex(ValueError, "exactly the two"):
+            _strict_qualification(qualification)
+
+        # The frontend bridge is a bound artifact, not a third manifest
+        # service: a qualification that reports its digest but no manifest
+        # binding for it must still be rejected.
+        qualification["service_digests"] = {
+            "compilation-service": "sha256:" + "d" * 64,
+            "runtime-service": "sha256:" + "e" * 64,
+            "python-frontend-native": "sha256:" + "f" * 64,
+        }
+        with self.assertRaisesRegex(ValueError, "frontend bridge binding"):
             _strict_qualification(qualification)
 
     def test_dekk_manifest_uses_the_owner_wrapper(self) -> None:

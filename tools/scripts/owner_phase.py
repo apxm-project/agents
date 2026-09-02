@@ -25,6 +25,12 @@ PHASES: dict[str, tuple[str, ...]] = {
     "owner-restart-reopen": ("release-qualification", "test-runtime-protocol", "test-runtime-service", "test-kernel", "test-execution"),
 }
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+# The release manifest binds the Python frontend bridge alongside the two
+# service executables, so the qualification result carries three artifact
+# digests and only two manifest services.
+SERVICE_NAMES = frozenset({"compilation-service", "runtime-service"})
+FRONTEND_NATIVE = "python-frontend-native"
+BOUND_ARTIFACTS = SERVICE_NAMES | {FRONTEND_NATIVE}
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 QUALIFICATION_SCHEMA = "apxm.agents.release-qualification.v1"
 COMMAND_EVIDENCE_SCHEMA = "apxm.agents.owner-command-evidence.v1"
@@ -58,10 +64,24 @@ def _strict_qualification(value: object) -> dict[str, Any]:
     if value.get("evidence_root") != str(ROOT.resolve()):
         raise ValueError("owner release qualification evidence root is not this owner checkout")
     services = value.get("service_digests")
-    if not isinstance(services, dict) or set(services) != {"compilation-service", "runtime-service"}:
-        raise ValueError("owner release qualification did not bind exactly the two APXM services")
+    if not isinstance(services, dict) or set(services) != BOUND_ARTIFACTS:
+        raise ValueError(
+            "owner release qualification did not bind exactly the two APXM services and the frontend bridge"
+        )
     if any(not isinstance(digest, str) or not SHA256.fullmatch(digest) for digest in services.values()):
         raise ValueError("owner release qualification contains an invalid service digest")
+    frontend_native = value.get("manifest_frontend_native")
+    if (
+        not isinstance(frontend_native, dict)
+        or set(frontend_native) != {"name", "path", "digest"}
+        or frontend_native["name"] != FRONTEND_NATIVE
+        or frontend_native["digest"] != services[FRONTEND_NATIVE]
+        or not isinstance(frontend_native["path"], str)
+        or not frontend_native["path"]
+        or Path(frontend_native["path"]).is_absolute()
+        or ".." in Path(frontend_native["path"]).parts
+    ):
+        raise ValueError("owner release qualification frontend bridge binding does not match the result digests")
     for field in ("source_descriptor_digest", "owner_descriptor_digest", "release_manifest_digest"):
         if not isinstance(value.get(field), str) or not SHA256.fullmatch(value[field]):
             raise ValueError(f"owner release qualification has no immutable {field}")
@@ -85,7 +105,7 @@ def _strict_qualification(value: object) -> dict[str, Any]:
             or ".." in Path(path).parts
         ):
             raise ValueError("owner release qualification service binding does not match the result digests")
-    if seen != set(services):
+    if seen != SERVICE_NAMES:
         raise ValueError("owner release qualification is missing a service binding")
     expected_files = {
         "source_descriptor_digest": ROOT / "deploy/services/source-revision.v1.json",
