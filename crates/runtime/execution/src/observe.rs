@@ -10,9 +10,9 @@
 use apxm_runtime_protocol::execution_contracts::OccurrenceId;
 use apxm_runtime_protocol::{
     AttemptId, Commitment, ContentRef, EXECUTION_OBSERVATION_CONTRACT, EventObservationRef,
-    EvidenceRef, ExecutionCursor, ExecutionObservation, HostCapabilityObservation,
-    NodeExecutionId, ObservationId,
-    ObservationKind, ObservationTiming, OutputRef, ProgramInvocationId, RegionOccurrenceId,
+    EvidenceRef, ExecutionCursor, ExecutionObservation, HostCapabilityObservation, NodeExecutionId,
+    ObservationId, ObservationKind, ObservationTiming, OutputRef, ProgramInvocationId,
+    RegionOccurrenceId,
 };
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};

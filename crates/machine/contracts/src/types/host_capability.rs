@@ -186,10 +186,7 @@ pub const HOST_CAPABILITY_REQUEST_PREFIX: &str = "capability-request.";
 /// than minting a second request for one effect. That is what makes a host's
 /// settlement idempotent without the host having to remember anything.
 #[must_use]
-pub fn host_capability_request_id(
-    program_invocation_ref: &str,
-    node_execution_id: &str,
-) -> String {
+pub fn host_capability_request_id(program_invocation_ref: &str, node_execution_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"apxm.host-capability-request\0");
     hasher.update(program_invocation_ref.as_bytes());
@@ -206,7 +203,10 @@ pub fn is_host_capability_request_id(value: &str) -> bool {
     value
         .strip_prefix(HOST_CAPABILITY_REQUEST_PREFIX)
         .is_some_and(|digest| {
-            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         })
 }
 
@@ -321,7 +321,10 @@ mod tests {
             declaration("notes.search").capability_ref(),
             "host:notes.search"
         );
-        assert_eq!(host_capability_id_of("host:notes.search"), Some("notes.search"));
+        assert_eq!(
+            host_capability_id_of("host:notes.search"),
+            Some("notes.search")
+        );
         assert_eq!(host_capability_id_of("read"), None);
     }
 

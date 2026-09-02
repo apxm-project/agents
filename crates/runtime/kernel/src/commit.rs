@@ -506,7 +506,9 @@ fn validate_host_capability_observation(value: &Value, kind: &str) -> Result<(),
         return Err("host_capability capability_ref is not host-fulfilled".to_owned());
     }
     if let Some(receipt_ref) = object.get("receipt_ref")
-        && receipt_ref.as_str().is_none_or(|value| !is_identifier(value))
+        && receipt_ref
+            .as_str()
+            .is_none_or(|value| !is_identifier(value))
     {
         return Err("host_capability receipt_ref is not a reference".to_owned());
     }

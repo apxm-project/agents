@@ -287,10 +287,8 @@ fn settle_host_capability_requests(
                 &apxm_runtime_protocol::RuntimeHandshakeV2::server(),
                 apxm_runtime_protocol::RuntimeRequestV2::ObservationSubscribe {
                     context: apxm_runtime_protocol::ReadContext {
-                        request_id: apxm_runtime_protocol::RequestId::new(
-                            "execute-canonical-host",
-                        )
-                        .expect("static request id"),
+                        request_id: apxm_runtime_protocol::RequestId::new("execute-canonical-host")
+                            .expect("static request id"),
                         scope_ref: apxm_runtime_protocol::ScopeRef::new("scope.execute-canonical")
                             .expect("static scope"),
                         principal_ref: apxm_runtime_protocol::PrincipalRef::new(

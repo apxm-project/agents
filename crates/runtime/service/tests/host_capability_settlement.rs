@@ -235,10 +235,7 @@ fn a_host_reference_publishes_a_request_and_parks_the_invocation() {
         Some(AuthoredPermission::Allow),
         "the authored request travels to the host verbatim"
     );
-    assert!(
-        host.outcome.is_none(),
-        "a request is not a settlement"
-    );
+    assert!(host.outcome.is_none(), "a request is not a settlement");
     assert!(
         of_kind(&stream, ObservationKind::CapabilitySettled).is_empty(),
         "nothing settled: no host has answered"
@@ -577,8 +574,14 @@ fn two_host_requests_settle_in_schedule_order() {
     );
     let invocation = parked.invocation.clone();
     let stream = observations(&mut parked.service, &invocation);
-    assert_eq!(of_kind(&stream, ObservationKind::CapabilityRequested).len(), 2);
-    assert_eq!(of_kind(&stream, ObservationKind::CapabilitySettled).len(), 2);
+    assert_eq!(
+        of_kind(&stream, ObservationKind::CapabilityRequested).len(),
+        2
+    );
+    assert_eq!(
+        of_kind(&stream, ObservationKind::CapabilitySettled).len(),
+        2
+    );
     assert!(
         !of_kind(&stream, ObservationKind::TerminalCommitted).is_empty(),
         "with both requests settled the invocation reaches a terminal commit"

@@ -51,11 +51,12 @@ fn the_admission_fixture_binds_the_fixture_it_names() {
         release,
         provenance,
     );
-    let expected =
-        serde_json::to_value(&materials.admission).expect("the admission serializes");
+    let expected = serde_json::to_value(&materials.admission).expect("the admission serializes");
     let published: Value = serde_json::from_slice(
-        &std::fs::read(fixture("canonical-host-capability-execute.invocation-admission.json"))
-            .expect("the published admission"),
+        &std::fs::read(fixture(
+            "canonical-host-capability-execute.invocation-admission.json",
+        ))
+        .expect("the published admission"),
     )
     .expect("the published admission is JSON");
     assert_eq!(
@@ -100,7 +101,9 @@ fn a_host_fulfilled_fixture_is_requested_settled_and_committed() {
         .unwrap_or_else(|error| panic!("committed output is not JSON ({error}): {stdout}"));
     assert_eq!(
         committed,
-        Value::String("{\"note\":\"the second request is issued only after the first settles\"}".to_owned()),
+        Value::String(
+            "{\"note\":\"the second request is issued only after the first settles\"}".to_owned()
+        ),
         "the committed Session Output is the settlement the host handed back"
     );
 }

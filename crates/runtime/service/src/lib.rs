@@ -34,13 +34,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use apxm_ais::permissions::PermissionDecision;
-use apxm_core::types::host_capability::{
-    HostCapabilityOutcomeKind, HostCapabilitySettlement, is_host_capability_ref,
-    is_host_capability_request_id,
-};
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_commit_local::{
     CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, ReadAccessHook,
+};
+use apxm_core::types::host_capability::{
+    HostCapabilityOutcomeKind, HostCapabilitySettlement, is_host_capability_ref,
+    is_host_capability_request_id,
 };
 use apxm_execution::{
     ApprovalBroker, ApprovalDecision, CancellationToken, Continuation, DenyBroker,
@@ -247,7 +247,9 @@ impl ApprovalPolicy {
             ));
         };
         let parsed: u64 = milliseconds.parse().map_err(|_| {
-            format!("{milliseconds:?} is not a whole number of milliseconds; expected \"timeout:<ms>\"")
+            format!(
+                "{milliseconds:?} is not a whole number of milliseconds; expected \"timeout:<ms>\""
+            )
         })?;
         if parsed == 0 {
             return Err(
@@ -2827,16 +2829,18 @@ impl RuntimeService {
 
     /// The instance whose parked continuation is waiting on this request.
     fn parked_host_capability_instance(&self, capability_request_id: &str) -> Option<String> {
-        self.instances.keys().find(|instance_id| {
-            self.execution_backend
-                .load_continuation(&ProgramInstanceRef::new((*instance_id).clone()))
-                .and_then(|committed| {
-                    serde_json::from_value::<Continuation>(committed.payload).ok()
-                })
-                .and_then(|continuation| continuation.event_ref)
-                .is_some_and(|reference| reference.as_str() == capability_request_id)
-        })
-        .cloned()
+        self.instances
+            .keys()
+            .find(|instance_id| {
+                self.execution_backend
+                    .load_continuation(&ProgramInstanceRef::new((*instance_id).clone()))
+                    .and_then(|committed| {
+                        serde_json::from_value::<Continuation>(committed.payload).ok()
+                    })
+                    .and_then(|continuation| continuation.event_ref)
+                    .is_some_and(|reference| reference.as_str() == capability_request_id)
+            })
+            .cloned()
     }
 
     /// Withdraw every host capability request this invocation left outstanding.
@@ -2857,8 +2861,7 @@ impl RuntimeService {
                 let committed = self
                     .execution_backend
                     .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))?;
-                let continuation: Continuation =
-                    serde_json::from_value(committed.payload).ok()?;
+                let continuation: Continuation = serde_json::from_value(committed.payload).ok()?;
                 let event_ref = continuation.event_ref?;
                 is_host_capability_request_id(event_ref.as_str())
                     .then(|| event_ref.as_str().to_owned())
@@ -2879,11 +2882,7 @@ impl RuntimeService {
         }
     }
 
-    fn resume_fulfilled_event(
-        &mut self,
-        event_id: &str,
-        delivered: Value,
-    ) -> Result<(), String> {
+    fn resume_fulfilled_event(&mut self, event_id: &str, delivered: Value) -> Result<(), String> {
         let mut candidate = None;
         for (instance_id, instance) in &self.instances {
             let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
@@ -2941,8 +2940,7 @@ impl RuntimeService {
             self.execution_backend.commit_port(),
             Some(self.observation_sink.clone()),
             ProgramInstanceRef::new(instance_id.clone()),
-            apxm_kernel::EventRef::new(event_id.to_owned())
-                .map_err(|error| error.to_string())?,
+            apxm_kernel::EventRef::new(event_id.to_owned()).map_err(|error| error.to_string())?,
             delivered,
         ))?;
         if output.get("status").and_then(Value::as_str) != Some("suspended") {
@@ -4290,7 +4288,14 @@ mod tests {
             ApprovalPolicy::parse(" timeout:250 ").unwrap(),
             ApprovalPolicy::Timeout(Duration::from_millis(250))
         );
-        for malformed in ["allow", "timeout", "timeout:", "timeout:-1", "timeout:2s", "timeout:0"] {
+        for malformed in [
+            "allow",
+            "timeout",
+            "timeout:",
+            "timeout:-1",
+            "timeout:2s",
+            "timeout:0",
+        ] {
             let error = ApprovalPolicy::parse(malformed)
                 .expect_err("a value that is not a policy must not be read as one");
             assert!(
