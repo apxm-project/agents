@@ -77,14 +77,31 @@ def _is_macho(path: Path) -> bool:
         return False
 
 
-def _resign_macos(destination: Path) -> None:
-    """Re-sign a copied Mach-O bridge before it reaches its final path."""
+def _resign_macos(destination: Path, identifier: str) -> None:
+    """Re-sign a copied Mach-O bridge before it reaches its final path.
+
+    ``codesign`` defaults the signing identifier to the basename of the file it
+    signs. The bridge is signed while it still carries a randomized temporary
+    name, so the default identifier — and therefore the signed bytes — differ on
+    every install. The release manifest pins the bridge by digest, so that alone
+    made a qualified cohort impossible: any gate that reinstalls the bridge
+    invalidates the digest it was generated from. Sign under the stable final
+    name instead, which makes identical input bytes produce identical output.
+    """
 
     if sys.platform != "darwin" or not _is_macho(destination):
         return
     try:
         subprocess.run(
-            ["codesign", "--force", "--sign", "-", str(destination)],
+            [
+                "codesign",
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                identifier,
+                str(destination),
+            ],
             cwd=REPO_ROOT,
             check=True,
             capture_output=True,
@@ -115,7 +132,7 @@ def _install_bridge(source: Path, destination: Path) -> Path:
             output.flush()
             os.fsync(output.fileno())
         os.chmod(temporary, 0o755)
-        _resign_macos(temporary)
+        _resign_macos(temporary, destination.name)
         os.replace(temporary, destination)
     finally:
         if temporary.exists() or temporary.is_symlink():
