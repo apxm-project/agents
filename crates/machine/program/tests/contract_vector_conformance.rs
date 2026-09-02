@@ -105,6 +105,11 @@ const SCHEMAS_UNDER_TEST: &[SchemaUnderTest] = &[
         siblings: &[],
     },
     SchemaUnderTest {
+        id: "apxm.host-capability.v1",
+        snapshots: &[CONTRACT_COMMON],
+        siblings: &[],
+    },
+    SchemaUnderTest {
         id: "apxm.inference-usage-lineage",
         snapshots: &[CONTRACT_COMMON],
         siblings: &[],

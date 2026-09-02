@@ -3,6 +3,7 @@ status: accepted
 date: 2026-07-24
 owner: APXM agents
 amends: ADR-0006, ADR-0007, ADR-0015
+amended_by: ADR-0022, ADR-0025
 ---
 
 # Tool authoring and handler execution are separate

@@ -10,7 +10,8 @@
 use apxm_runtime_protocol::execution_contracts::OccurrenceId;
 use apxm_runtime_protocol::{
     AttemptId, Commitment, ContentRef, EXECUTION_OBSERVATION_CONTRACT, EventObservationRef,
-    EvidenceRef, ExecutionCursor, ExecutionObservation, NodeExecutionId, ObservationId,
+    EvidenceRef, ExecutionCursor, ExecutionObservation, HostCapabilityObservation,
+    NodeExecutionId, ObservationId,
     ObservationKind, ObservationTiming, OutputRef, ProgramInvocationId, RegionOccurrenceId,
 };
 use async_trait::async_trait;
@@ -200,6 +201,7 @@ pub(crate) fn make_observation(
     output_ref: Option<&str>,
     evidence_ref: Option<&str>,
     event_ref: Option<&str>,
+    host_capability: Option<HostCapabilityObservation>,
 ) -> Result<ExecutionObservation, ObservationSinkError> {
     let invocation_id = ProgramInvocationId::new(invocation_id).map_err(|error| {
         ObservationSinkError::rejected(format!("invalid invocation ref: {error}"))
@@ -279,6 +281,7 @@ pub(crate) fn make_observation(
             .map_err(|error| {
                 ObservationSinkError::rejected(format!("invalid evidence ref: {error}"))
             })?,
+        host_capability,
     };
     typed
         .validate()
@@ -375,6 +378,7 @@ mod tests {
                         None,
                         None,
                         None,
+                        None,
                     )
                     .expect("observation"),
                 )
@@ -394,6 +398,7 @@ mod tests {
                         },
                         ObservationKind::NodeStarted,
                         Commitment::Provisional,
+                        None,
                         None,
                         None,
                         None,
@@ -428,6 +433,7 @@ mod tests {
                     },
                     ObservationKind::InvocationStarted,
                     Commitment::Provisional,
+                    None,
                     None,
                     None,
                     None,

@@ -4,10 +4,15 @@
 //! observations live here. Source, FrontendGraph, AIR text, and compiler
 //! options are not representable as executable truth.
 //!
-//! Protocol/1's request union is frozen. Admission binding is a separately
-//! negotiated execution-admission envelope; it is not smuggled through the
-//! read-only Runtime/2 handshake.
+//! Protocol/1's request union is closed: it grows only by an owner decision
+//! recorded as an ADR, never to smuggle a surface through. ADR-0025 added
+//! `capability_fulfill` and `capability_cancel` so the embedding host can
+//! settle a host-fulfilled Capability request on the channel it received the
+//! request on. Admission binding remains a separately negotiated
+//! execution-admission envelope; it is not smuggled through the read-only
+//! Runtime/2 handshake.
 
+use apxm_core::types::host_capability::is_host_capability_request_id;
 use apxm_kernel::event_api::{
     CanonicalEventRef, EventApplication, EventApplicationResult, InvocationBoundary,
 };
@@ -18,9 +23,11 @@ use uuid::Uuid;
 pub mod execution_contracts;
 
 pub use execution_contracts::{
-    AttemptId, Commitment, ContentReadResult, ContentRef, ContractValidationError, CorrelationId,
+    AttemptId, AuthoredPermission, Commitment, ContentReadResult, ContentRef,
+    ContractValidationError, CorrelationId,
     EXECUTION_OBSERVATION_CONTRACT, EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceFactKind,
     EvidenceRecord, EvidenceRef, ExecutionCursor, ExecutionObservation, ExecutionPage,
+    HostCapabilityObservation, HostCapabilityOutcomeKind,
     ExecutionReadRequest, ExecutionReadResult, GrantRef, NODE_EXECUTION_INSPECTION_CONTRACT,
     NodeExecutionId, NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
     ObservationTiming, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
@@ -287,6 +294,46 @@ pub enum RuntimeRequest {
         owner_claim: RuntimeOwnerClaim,
         event_ref: CanonicalEventRef,
     },
+    /// Settle one outstanding host-fulfilled Capability request.
+    ///
+    /// The runtime published the request as a `capability_requested`
+    /// observation and parked the node; this is the answer. `cancelled` is not
+    /// a settlement a host sends — `capability_cancel` withdraws a request —
+    /// and `output` is stated only for `ok`.
+    CapabilityFulfill {
+        /// Caller correlation id.
+        request_id: String,
+        /// Exact claim returned when the Program Instance was created.
+        owner_claim: RuntimeOwnerClaim,
+        /// The request identity the `capability_requested` observation carried.
+        capability_request_id: String,
+        /// How the host settled it.
+        outcome: HostCapabilityOutcomeKind,
+        /// The exact canonical JSON output bytes, for `ok` only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        /// The host's own durable record of the effect.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt_ref: Option<String>,
+        /// Why a settlement that is not `ok` decided what it decided.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// Withdraw one outstanding host-fulfilled Capability request.
+    ///
+    /// The node settles as an uncertain effect: a request the host withdrew
+    /// may or may not have reached the system behind it.
+    CapabilityCancel {
+        /// Caller correlation id.
+        request_id: String,
+        /// Exact claim returned when the Program Instance was created.
+        owner_claim: RuntimeOwnerClaim,
+        /// The request identity the `capability_requested` observation carried.
+        capability_request_id: String,
+        /// Why the host withdrew it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     /// Cancel a Program Invocation.
     ProgramInvocationCancel {
         /// Caller correlation id.
@@ -518,6 +565,15 @@ pub enum RuntimeResult {
     EventLifecycleChanged {
         request_id: String,
         inspection: EventInspection,
+    },
+    /// One host-fulfilled Capability request reached a terminal settlement.
+    CapabilitySettled {
+        /// Matching request id.
+        request_id: String,
+        /// The request that settled.
+        capability_request_id: String,
+        /// How it settled.
+        outcome: HostCapabilityOutcomeKind,
     },
     /// Invocation cancelled.
     Cancelled {
@@ -954,6 +1010,53 @@ impl InMemoryRuntimePeer {
                     return Err(ProtocolError::OwnerMismatch);
                 }
                 Ok(RuntimeResult::Cancelled { request_id })
+            }
+            // The vector peer states the shape of a settlement, not the park
+            // it settles: it runs no driver, so it has no parked continuation
+            // to wake. It admits a well-formed request and refuses one that is
+            // not, which is exactly what a protocol vector proves.
+            RuntimeRequest::CapabilityFulfill {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                outcome,
+                output,
+                ..
+            } => {
+                owner_claim.validate()?;
+                if !is_host_capability_request_id(&capability_request_id)
+                    || outcome == HostCapabilityOutcomeKind::Cancelled
+                    || (outcome == HostCapabilityOutcomeKind::Ok) != output.is_some()
+                {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_request".to_owned(),
+                    });
+                }
+                Ok(RuntimeResult::CapabilitySettled {
+                    request_id,
+                    capability_request_id,
+                    outcome,
+                })
+            }
+            RuntimeRequest::CapabilityCancel {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                ..
+            } => {
+                owner_claim.validate()?;
+                if !is_host_capability_request_id(&capability_request_id) {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_request".to_owned(),
+                    });
+                }
+                Ok(RuntimeResult::CapabilitySettled {
+                    request_id,
+                    capability_request_id,
+                    outcome: HostCapabilityOutcomeKind::Cancelled,
+                })
             }
         }
     }

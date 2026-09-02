@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow, bail};
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
+use apxm_core::types::host_capability::{ManifestCapabilities, minted_host_capability_refs};
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -102,12 +103,25 @@ pub struct AgentToml {
     /// Absorbed from the retired `hierarchy.toml`: one manifest, one place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hierarchy: Option<HierarchyToml>,
+    /// The capabilities this package declares rather than ships. Only
+    /// `[[capabilities.host]]` is a member: a capability the embedding host
+    /// fulfils and the runtime never executes (ADR-0025). A shipped handler is
+    /// still declared by shipping `capabilities/<id>/handler.{py,ts}`, so a
+    /// package cannot state one carrier and mean the other.
+    #[serde(default, skip_serializing_if = "manifest_capabilities_are_empty")]
+    pub capabilities: ManifestCapabilities,
     /// The package layer of the permission resolution stack: what this package
     /// decides about a capability it can actually supply. It may only tighten
     /// the unqualified request a capability reference is, and it may not decide
     /// for a capability nothing grants.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub permissions: BTreeMap<String, PermissionDecision>,
+}
+
+/// Keep a package that declares no host capability byte-identical after the
+/// round-trip `agent new` performs when it rewrites a scaffolded identity.
+fn manifest_capabilities_are_empty(capabilities: &ManifestCapabilities) -> bool {
+    capabilities.host.is_empty()
 }
 
 /// Projection of `agent.toml`'s `[hierarchy]` table.
@@ -750,17 +764,41 @@ fn write_tools_manifest(root: &Path, manifest: &HandlerManifest) -> Result<()> {
 
 /// Every Capability id an Agent Program compiled from this package may name.
 ///
-/// The union of the runtime's built-in allowlist and the ids the package itself
-/// ships a `capabilities/<id>/handler.{py,ts}` for — the two namespaces a
-/// Capability reference can be satisfied from, now that no file declares an
-/// inventory. The handler's existence *is* the declaration: a package that ships
-/// a handler can supply the capability, and one that does not cannot.
+/// The union of the runtime's built-in allowlist, the ids the package itself
+/// ships a `capabilities/<id>/handler.{py,ts}` for, and the `host:<id>`
+/// references its `[[capabilities.host]]` declarations mint — the three
+/// namespaces a Capability reference can be satisfied from. For a shipped
+/// handler the file's existence *is* the declaration; for a host capability the
+/// manifest entry is, because there is nothing in the package to ship.
 pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
     Ok(apxm_ais::capabilities::BUILTINS
         .iter()
         .map(|id| (*id).to_string())
         .chain(shipped_capability_handlers(root)?.into_keys())
+        .chain(declared_host_capability_refs(root)?)
         .collect())
+}
+
+/// The `host:` references this package's manifest mints.
+///
+/// A root with no readable manifest mints nothing rather than failing: the
+/// manifest's own admission reports why it could not be read, and this function
+/// would only restate it in a second voice.
+///
+/// # Errors
+///
+/// Returns an error when the manifest is readable but its declarations are not
+/// admissible — an id outside the published grammar, or one id declared twice.
+pub(crate) fn declared_host_capability_refs(root: &Path) -> Result<BTreeSet<String>> {
+    let manifest_path = root.join("agent.toml");
+    if !manifest_path.is_file() {
+        return Ok(BTreeSet::new());
+    }
+    let Ok(agent) = read_toml::<AgentToml>(&manifest_path) else {
+        return Ok(BTreeSet::new());
+    };
+    minted_host_capability_refs(&agent.capabilities.host)
+        .map_err(|error| anyhow!("{}: [[capabilities.host]] {error}", manifest_path.display()))
 }
 
 /// Resolve the package-handler implementations one package supplies.
@@ -1168,6 +1206,24 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         if !apxm_core::grammar::is_identifier(capability_ref) {
             errors.push(format!(
                 "agent.toml: [permissions] key '{capability_ref}' is not a contract identifier"
+            ));
+        }
+    }
+    if let Err(error) = minted_host_capability_refs(&pkg.agent.capabilities.host) {
+        errors.push(format!("agent.toml: [[capabilities.host]] {error}"));
+    }
+    // A host capability the runtime never executes and a builtin the runtime
+    // does execute are two different answers to one reference. The reserved
+    // prefix keeps them apart in source; this keeps them apart in the manifest,
+    // where an author could otherwise declare a host id that shadows a shipped
+    // handler of the same name.
+    let shipped = shipped_capability_handlers(&pkg.root).unwrap_or_default();
+    for declaration in &pkg.agent.capabilities.host {
+        if shipped.contains_key(&declaration.id) {
+            errors.push(format!(
+                "agent.toml: [[capabilities.host]] id '{}' is also shipped as \
+                 capabilities/{}/handler.*; one capability has one carrier",
+                declaration.id, declaration.id
             ));
         }
     }
@@ -1812,7 +1868,6 @@ mod tests {
     #[test]
     fn agent_toml_rejects_every_retired_key() {
         for retired in [
-            "capabilities = [\"read\"]",
             "allowed_agent_skills = []",
             "chat = { enabled = true }",
             "[[hooks]]\nevent = \"pre_turn\"\nmode = \"observe\"\nhandler = \"h\"",
@@ -1825,6 +1880,45 @@ mod tests {
                 "expected an unknown-field refusal for {retired:?}, got: {error}"
             );
         }
+    }
+
+    /// `[capabilities]` came back for exactly one thing: the host-fulfilled
+    /// declarations of ADR-0025. The inventory the collapse retired — a bare
+    /// list of ids a package claimed without supplying any of them — is still
+    /// refused, now because it is the wrong shape for a table whose only member
+    /// is `host`, and a second member is still an unknown field.
+    #[test]
+    fn the_capabilities_table_admits_host_declarations_and_nothing_else() {
+        let retired_inventory = toml::from_str::<AgentToml>(
+            "id = \"demo\"\nversion = \"0.1.0\"\ncapabilities = [\"read\"]\n",
+        )
+        .expect_err("a bare capability inventory is not a declaration table");
+        assert!(
+            retired_inventory.to_string().contains("capabilities"),
+            "expected the refusal to name the table, got: {retired_inventory}"
+        );
+
+        let undeclared_member = toml::from_str::<AgentToml>(
+            "id = \"demo\"\nversion = \"0.1.0\"\n[capabilities]\nshipped = []\n",
+        )
+        .expect_err("only `host` is a member of the capabilities table");
+        assert!(
+            undeclared_member.to_string().contains("unknown field"),
+            "expected an unknown-field refusal, got: {undeclared_member}"
+        );
+
+        let declared: AgentToml = toml::from_str(
+            "id = \"demo\"\nversion = \"0.1.0\"\n\n[[capabilities.host]]\n\
+             id = \"notes.search\"\neffect = \"read\"\n\
+             input_schema = { type = \"object\" }\n\
+             output_schema = { type = \"object\" }\n",
+        )
+        .expect("a host declaration decodes");
+        assert_eq!(declared.capabilities.host.len(), 1);
+        assert_eq!(
+            declared.capabilities.host[0].capability_ref(),
+            "host:notes.search"
+        );
     }
 
     #[test]

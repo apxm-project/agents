@@ -1,0 +1,310 @@
+[
+  {
+    "name": "a-package-declares-one-read-host-capability",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "notes.search",
+          "effect": "read",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-package-declares-a-read-and-a-write-capability",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "sale-orders.list",
+          "effect": "read",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        },
+        {
+          "id": "sale_order.confirm",
+          "effect": "write",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-package-declaring-no-host-capability-is-the-empty-set",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": []
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "an-effect-outside-read-and-write-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "notes.search",
+          "effect": "admin",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-declaration-without-an-output-schema-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "notes.search",
+          "effect": "read",
+          "input_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-declared-id-carrying-the-host-prefix-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "host:notes.search",
+          "effect": "read",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "an-uppercase-declared-id-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "Notes.Search",
+          "effect": "read",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "an-undeclared-key-in-a-declaration-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capabilities": [
+        {
+          "id": "notes.search",
+          "effect": "read",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "handler": "capabilities/notes/handler.py"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-parked-node-publishes-one-request",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:notes.search",
+      "input": "{\"query\":\"quarterly\"}",
+      "authored_permission": "allow"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-request-carries-the-authored-ask-verbatim",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:sale_order.confirm",
+      "input": "{\"order_id\":7}",
+      "authored_permission": "ask"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-request-referring-to-a-builtin-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "read",
+      "input": "{}",
+      "authored_permission": "allow"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-request-without-an-authored-permission-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:notes.search",
+      "input": "{}"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-request-id-that-is-not-the-derived-identity-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "req-1",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:notes.search",
+      "input": "{}",
+      "authored_permission": "allow"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "the-host-settles-a-request-with-an-output-and-a-receipt",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "ok",
+      "output": "{\"matches\":2}",
+      "receipt_ref": "receipt.9f2a"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "the-host-denies-a-request-and-says-why",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "denied",
+      "message": "policy refused the write effect"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "an-uncertain-effect-settles-as-unknown",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "unknown",
+      "message": "the adapter link closed before the effect was acknowledged",
+      "receipt_ref": "receipt.9f2a"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-cancelled-request-settles-with-no-output",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "cancelled",
+      "message": "the invocation was cancelled"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "an-ok-settlement-without-an-output-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "ok",
+      "receipt_ref": "receipt.9f2a"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-denied-settlement-carrying-an-output-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "denied",
+      "output": "{\"matches\":2}"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-settlement-outcome-outside-the-closed-set-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+      "outcome": "retry"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-document-that-is-neither-a-set-nor-a-request-nor-an-outcome-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-request-restating-the-effect-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:notes.search",
+      "effect": "read",
+      "input": "{}",
+      "authored_permission": "allow"
+    },
+    "expected_valid": false
+  }
+]

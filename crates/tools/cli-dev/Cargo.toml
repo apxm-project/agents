@@ -24,6 +24,9 @@ name = "canonical_execute"
 name = "canonical_capability_execute"
 
 [[test]]
+name = "canonical_host_capability_execute"
+
+[[test]]
 name = "canonical_skill_execute"
 
 [dependencies]

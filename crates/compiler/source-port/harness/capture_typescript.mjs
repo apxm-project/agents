@@ -1,7 +1,8 @@
 // Capture one submitted TypeScript source text into `apxm.frontend-graph`.
 //
 // The port embeds this harness and runs it as the program text of a Node
-// process. It reads `{"frontend_root", "entrypoint", "source"}` on stdin and
+// process. It reads `{"frontend_root", "entrypoint", "source",
+// "host_capabilities"}` on stdin and
 // writes `{"frontend_graph": ...}` on stdout. It emits typed source intent only:
 // AIR lowering belongs to Rust, so this harness never prints AIR. Every
 // rejection exits non-zero with one closed reason token on the first stderr line
@@ -131,7 +132,12 @@ try {
 if (request === null || typeof request !== "object" || Array.isArray(request)) {
   reject(REASON_REQUEST, "harness request is not a JSON object");
 }
-const { frontend_root: frontendPackage, entrypoint, source } = request;
+const {
+  frontend_root: frontendPackage,
+  entrypoint,
+  source,
+  host_capabilities: hostCapabilities = [],
+} = request;
 if (
   typeof frontendPackage !== "string" ||
   typeof entrypoint !== "string" ||
@@ -140,6 +146,15 @@ if (
   reject(
     REASON_REQUEST,
     "harness request requires string 'frontend_root', 'entrypoint', and 'source'",
+  );
+}
+if (
+  !Array.isArray(hostCapabilities) ||
+  hostCapabilities.some((id) => typeof id !== "string")
+) {
+  reject(
+    REASON_REQUEST,
+    "harness request 'host_capabilities' is an array of declared host capability ids",
   );
 }
 
@@ -280,6 +295,10 @@ registerHooks({
 try {
   const bridge = await import(frontendHostModule);
   bridge.submitAuthoredSource({ fileName: path.basename(ENTRY_FILE), text: source });
+  // The package manifest is not in this process. The trusted bridge is the one
+  // path by which the minted Capability set stops being only the catalogue, and
+  // it closes before any submitted code runs.
+  bridge.declareHostCapabilities(hostCapabilities);
 } catch (error) {
   reject(
     REASON_FRONTEND,

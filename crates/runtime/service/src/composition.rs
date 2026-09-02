@@ -11,6 +11,9 @@ use crate::ports::model::{LocalModelInferencePort, LocalModelRequestMetadata};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_capability_iface::sandbox::SandboxRegistry;
+use apxm_core::types::host_capability::{
+    ManifestCapabilities, is_host_capability_ref, minted_host_capability_refs,
+};
 use apxm_execution::{
     CancellationToken, CapabilityGrantSet, CapabilityInvocationAdmission, CapturedHookBodyHandler,
     CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
@@ -848,11 +851,20 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         }
         .map_err(|error| error.to_string())?,
     );
-    let capability_permissions =
-        local_capability_permissions(&air, &capability.admitted_names(), package_root)?;
+    // A host-fulfilled reference has no implementation here and never will:
+    // the runtime publishes a request and parks (ADR-0025). The compilation
+    // service already closed the set against the package manifest, so every
+    // `host:` reference the artifact invokes is admitted and resolvable, and
+    // the host — not APXM — decides whether the call happens.
+    let host_refs = invoked_host_capability_refs(&air);
+    let mut admitted = capability.admitted_names();
+    admitted.extend(host_refs.iter().cloned());
+    let mut registered = capability.registered_names();
+    registered.extend(host_refs);
+    let capability_permissions = local_capability_permissions(&air, &admitted, package_root)?;
     let capability_invocations = local_capability_invocation_admissions(
         &air,
-        &CapabilityGrantSet::from_registered_implementations(capability.registered_names()),
+        &CapabilityGrantSet::from_registered_implementations(registered),
         &capability_permissions,
     )?;
     let model_binding_digest = descriptor
@@ -1205,6 +1217,15 @@ pub fn validate_package_permission_resolution(
     canonical_package_permission_decisions(package_root, &requested).map(|_| ())
 }
 
+/// Every host-fulfilled reference this artifact invokes.
+fn invoked_host_capability_refs(air: &AirModule) -> BTreeSet<String> {
+    air.invoked_capability_refs()
+        .into_iter()
+        .filter(|capability_ref| is_host_capability_ref(capability_ref))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn denied_unadmitted_capabilities(air: &AirModule, admitted: &BTreeSet<String>) -> LayerDecisions {
     air.invoked_capability_refs()
         .into_iter()
@@ -1229,6 +1250,8 @@ fn denied_unadmitted_capabilities(air: &AirModule, admitted: &BTreeSet<String>) 
 #[derive(Debug, serde::Deserialize)]
 struct CanonicalPackageManifest {
     #[serde(default)]
+    capabilities: ManifestCapabilities,
+    #[serde(default)]
     permissions: LayerDecisions,
 }
 
@@ -1246,6 +1269,11 @@ fn canonical_package_permission_decisions(
         .iter()
         .map(|id| (*id).to_string())
         .collect::<BTreeSet<_>>();
+    grantable.extend(
+        minted_host_capability_refs(&manifest.capabilities.host).map_err(|error| {
+            format!("{}: [[capabilities.host]] {error}", manifest_path.display())
+        })?,
+    );
     let capabilities_dir = package_root.join("capabilities");
     if capabilities_dir.is_dir() {
         for entry in std::fs::read_dir(&capabilities_dir)

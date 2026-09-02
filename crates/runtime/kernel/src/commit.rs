@@ -468,6 +468,76 @@ impl std::fmt::Display for CommitRequestError {
 
 impl std::error::Error for CommitRequestError {}
 
+/// One host-fulfilled Capability request or settlement carried by an
+/// observation (ADR-0025). A `capability_requested` record is the whole request
+/// the host acts on; a `capability_settled` record is how it ended. The two are
+/// held apart here so a settlement cannot restate a request it did not make.
+fn validate_host_capability_observation(value: &Value, kind: &str) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "host_capability must be an object".to_owned())?;
+    const FIELDS: &[&str] = &[
+        "capability_request_id",
+        "capability_ref",
+        "input",
+        "authored_permission",
+        "outcome",
+        "receipt_ref",
+    ];
+    if let Some(field) = object
+        .keys()
+        .find(|field| !FIELDS.contains(&field.as_str()))
+    {
+        return Err(format!("unknown host_capability field {field}"));
+    }
+    for field in ["capability_request_id", "capability_ref"] {
+        let Some(reference) = object.get(field).and_then(Value::as_str) else {
+            return Err(format!("host_capability {field} must be a reference"));
+        };
+        if !is_identifier(reference) {
+            return Err(format!("host_capability {field} is not a reference"));
+        }
+    }
+    if object
+        .get("capability_ref")
+        .and_then(Value::as_str)
+        .is_none_or(|reference| !reference.starts_with("host:"))
+    {
+        return Err("host_capability capability_ref is not host-fulfilled".to_owned());
+    }
+    if let Some(receipt_ref) = object.get("receipt_ref") {
+        if receipt_ref.as_str().is_none_or(|value| !is_identifier(value)) {
+            return Err("host_capability receipt_ref is not a reference".to_owned());
+        }
+    }
+    let requested = kind == "capability_requested";
+    if requested {
+        if object.get("input").and_then(Value::as_str).is_none() {
+            return Err("a published request carries its input".to_owned());
+        }
+        if !matches!(
+            object.get("authored_permission").and_then(Value::as_str),
+            Some("allow" | "ask" | "deny")
+        ) {
+            return Err("a published request carries the authored permission".to_owned());
+        }
+        if object.contains_key("outcome") {
+            return Err("a published request has not settled".to_owned());
+        }
+    } else {
+        if !matches!(
+            object.get("outcome").and_then(Value::as_str),
+            Some("ok" | "denied" | "failed" | "unknown" | "cancelled")
+        ) {
+            return Err("a settlement states how the request ended".to_owned());
+        }
+        if object.contains_key("input") || object.contains_key("authored_permission") {
+            return Err("a settlement does not restate the request".to_owned());
+        }
+    }
+    Ok(())
+}
+
 fn validate_execution_observation(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
@@ -489,6 +559,7 @@ fn validate_execution_observation(value: &Value) -> Result<(), String> {
         "content_ref",
         "output_ref",
         "evidence_ref",
+        "host_capability",
     ];
     if let Some(field) = object
         .keys()
@@ -568,6 +639,8 @@ fn validate_execution_observation(value: &Value) -> Result<(), String> {
         "loop_transition",
         "model_attempt",
         "capability_attempt",
+        "capability_requested",
+        "capability_settled",
         "program_attempt",
         "approval_requested",
         "approval_resolved",
@@ -594,6 +667,13 @@ fn validate_execution_observation(value: &Value) -> Result<(), String> {
     let event_kind = matches!(kind, "event_waiting" | "event_resumed");
     if event_kind != object.contains_key("event_ref") {
         return Err("event_ref does not match observation kind".to_owned());
+    }
+    let host_capability_kind = matches!(kind, "capability_requested" | "capability_settled");
+    if host_capability_kind != object.contains_key("host_capability") {
+        return Err("host_capability does not match observation kind".to_owned());
+    }
+    if let Some(host_capability) = object.get("host_capability") {
+        validate_host_capability_observation(host_capability, kind)?;
     }
     for field in [
         "node_execution_id",

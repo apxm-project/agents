@@ -1,7 +1,8 @@
 """Capture one submitted Python source text into `apxm.frontend-graph`.
 
 The port embeds this harness and runs it as the program text of an isolated
-interpreter. It reads `{"frontend_root", "entrypoint", "source"}` on stdin and
+interpreter. It reads `{"frontend_root", "entrypoint", "source",
+"host_capabilities"}` on stdin and
 writes `{"frontend_graph": ...}` on stdout. It emits typed source intent only:
 AIR lowering belongs to Rust, so this harness never prints AIR. Every rejection
 exits non-zero with one closed reason token on the first stderr line and its
@@ -141,7 +142,7 @@ class Rejected(Exception):
         self.detail = detail
 
 
-def _read_request() -> tuple[str, str, str]:
+def _read_request() -> tuple[str, str, str, list[str]]:
     try:
         request = json.loads(sys.stdin.read())
     except ValueError as error:
@@ -151,6 +152,7 @@ def _read_request() -> tuple[str, str, str]:
     frontend_root = request.get("frontend_root")
     entrypoint = request.get("entrypoint")
     source = request.get("source")
+    host_capabilities = request.get("host_capabilities", [])
     if (
         not isinstance(frontend_root, str)
         or not isinstance(entrypoint, str)
@@ -160,7 +162,15 @@ def _read_request() -> tuple[str, str, str]:
             REASON_REQUEST,
             "harness request requires string 'frontend_root', 'entrypoint', and 'source'",
         )
-    return frontend_root, entrypoint, source
+    if not isinstance(host_capabilities, list) or not all(
+        isinstance(identifier, str) for identifier in host_capabilities
+    ):
+        raise Rejected(
+            REASON_REQUEST,
+            "harness request 'host_capabilities' is an array of declared host "
+            "capability ids",
+        )
+    return frontend_root, entrypoint, source, host_capabilities
 
 
 def _source_contract(
@@ -340,6 +350,7 @@ _INTEGRITY_MODULES = (
     "apxm_program._bridge",
     "apxm_program._capture",
     "apxm_program._emit",
+    "apxm_program._host_capabilities",
     "apxm_program._markers",
     "apxm_program._native",
     "ast",
@@ -406,8 +417,15 @@ def _frontend_integrity_guard() -> object:
 
 def _load_frontend(
     frontend_root: str,
+    host_capabilities: list[str],
 ) -> tuple[object | None, object | None, object | None]:
-    """Resolve the declared authoring frontend before the lockdown closes."""
+    """Resolve the declared authoring frontend before the lockdown closes.
+
+    The manifest's host capability declarations are handed over here, before the
+    integrity snapshot is taken: the declared set is frontend state the trusted
+    host supplies, so it must be in place when the snapshot that submitted code
+    is held against is made.
+    """
     interpreter_roots = (
         sysconfig.get_path("stdlib"),
         sysconfig.get_path("platstdlib"),
@@ -440,6 +458,7 @@ def _load_frontend(
         # The source-port contract tests include a deliberately tiny stand-in
         # frontend. Production APXM packages ship the native bridge below;
         # stand-ins retain the old public method path solely for those tests.
+        _declare_host_capabilities(host_capabilities)
         return None, None, None
     setter = getattr(_native, "set_authored_source", None)
     native_graph = getattr(_native, "frontend_graph", None)
@@ -449,7 +468,29 @@ def _load_frontend(
             "the Python authoring frontend native bridge does not provide the "
             "sealed source and graph capture hooks",
         )
+    _declare_host_capabilities(host_capabilities)
     return native_graph, setter, _frontend_integrity_guard()
+
+
+def _declare_host_capabilities(ids: list[str]) -> None:
+    """Hand the manifest's host capability declarations to the frontend.
+
+    A declared root that is a test stand-in publishes only the package itself
+    and has no private module to declare into; a package that declares no host
+    capability has nothing to hand over either, so both are silent no-ops and
+    every `host:` reference then rejects inside the frontend.
+    """
+    if not ids:
+        return
+    try:
+        from apxm_program import _host_capabilities
+    except ImportError:
+        raise Rejected(
+            REASON_FRONTEND,
+            "the Python authoring frontend does not accept host capability "
+            "declarations at the declared package root",
+        ) from None
+    _host_capabilities.set_declared_host_capabilities(ids)
 
 
 def _lock_down() -> None:
@@ -591,9 +632,11 @@ def main() -> int:
     trusted_stdout = sys.stdout
     trusted_stderr = sys.stderr
     try:
-        frontend_root, entrypoint, source = _read_request()
+        frontend_root, entrypoint, source, host_capabilities = _read_request()
         source_contract = _source_contract(source)
-        native_graph, set_authored_source, integrity_guard = _load_frontend(frontend_root)
+        native_graph, set_authored_source, integrity_guard = _load_frontend(
+            frontend_root, host_capabilities
+        )
         if set_authored_source is not None:
             # Seal the exact caller-supplied source before any submitted code
             # runs. The native bridge accepts this only once and keeps it out

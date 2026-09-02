@@ -102,6 +102,10 @@ struct HarnessRequest<'a> {
     frontend_root: &'a Path,
     entrypoint: &'a str,
     source: &'a str,
+    /// The host capability ids the package declares. The harness hands them to
+    /// the frontend before evaluating the source, so the minted Capability set
+    /// inside the interpreter is the builtin catalogue united with these.
+    host_capabilities: &'a [String],
 }
 
 /// The single-field document a capture harness writes on success.
@@ -124,11 +128,13 @@ pub(crate) fn capture(
     driver: &Path,
     entrypoint: &str,
     source: &str,
+    host_capabilities: &[String],
 ) -> Result<serde_json::Value, SourceDiagnostic> {
     let request = serde_json::to_vec(&HarnessRequest {
         frontend_root,
         entrypoint,
         source,
+        host_capabilities,
     })
     .map_err(|error| {
         SourceDiagnostic::new(

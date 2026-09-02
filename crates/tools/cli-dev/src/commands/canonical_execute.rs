@@ -1,9 +1,10 @@
 //! Execute canonical `apxm.air` through the Runtime Service.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use apxm_core::types::host_capability::{HostCapabilityOutcomeKind, is_host_capability_ref};
 use apxm_core::types::{HandlerLanguage, HandlerManifest};
 use apxm_kernel::InvocationAdmission;
 use apxm_program::{ExecutableArtifact, air::AirModule};
@@ -103,6 +104,7 @@ fn handler_worker_entry(language: HandlerLanguage) -> &'static str {
 }
 
 fn execute_via_runtime_service(
+    air: &AirModule,
     artifact_bytes: &[u8],
     admission: InvocationAdmission,
     release_bytes: Vec<u8>,
@@ -110,10 +112,20 @@ fn execute_via_runtime_service(
     handlers: Option<AdmittedPackageHandlers>,
     package_root: Option<PathBuf>,
 ) -> Result<Value> {
+    // A program that invokes a host-fulfilled Capability parks rather than
+    // running it: APXM publishes a request and waits for the embedding host
+    // (ADR-0025). This command *is* that host for the fixture, so it drives the
+    // resumable path and answers each request as it is published.
+    let host_fulfilled = air
+        .invoked_capability_refs()
+        .into_iter()
+        .any(is_host_capability_ref);
     let mut service = apxm_runtime_service::RuntimeService::in_memory()
-        .with_single_shot_invocations()
         .with_embedded_read_access()
         .with_output_access_scope_ref("scope.execute-canonical".to_owned());
+    if !host_fulfilled {
+        service = service.with_single_shot_invocations();
+    }
     let handlers = handlers.map(|handlers| apxm_runtime_service::AdmittedPackageHandlers {
         workers: handlers
             .workers
@@ -177,7 +189,7 @@ fn execute_via_runtime_service(
             apxm_runtime_protocol::RuntimeRequest::ProgramInvocationStart {
                 request_id: "execute-canonical".to_owned(),
                 program_instance_id,
-                owner_claim,
+                owner_claim: owner_claim.clone(),
                 input: json!({}),
             },
         )
@@ -191,6 +203,9 @@ fn execute_via_runtime_service(
                 .map_err(|error| {
                     anyhow::anyhow!("Runtime Service returned an invalid invocation: {error}")
                 })?;
+            if host_fulfilled {
+                settle_host_capability_requests(&mut service, &invocation, &owner_claim)?;
+            }
             let context = |purpose| apxm_runtime_protocol::ReadContext {
                 request_id: apxm_runtime_protocol::RequestId::new("execute-canonical-read")
                     .expect("static request id"),
@@ -252,6 +267,96 @@ fn execute_via_runtime_service(
     }
 }
 
+/// Answer every host-fulfilled Capability request this invocation publishes.
+///
+/// The fixture's host is this command. It reads the published requests off the
+/// observation stream — the same surface an embedding control plane reads —
+/// and settles each with `capability_fulfill`, handing back the request's own
+/// arguments as the output so the settlement is checkable without inventing a
+/// system behind it. It stops when the invocation publishes no request it has
+/// not already answered.
+fn settle_host_capability_requests(
+    service: &mut apxm_runtime_service::RuntimeService,
+    invocation: &apxm_runtime_protocol::ProgramInvocationId,
+    owner_claim: &apxm_runtime_protocol::RuntimeOwnerClaim,
+) -> Result<()> {
+    let mut settled = BTreeSet::new();
+    loop {
+        let page = service
+            .handle_v2(
+                &apxm_runtime_protocol::RuntimeHandshakeV2::server(),
+                apxm_runtime_protocol::RuntimeRequestV2::ObservationSubscribe {
+                    context: apxm_runtime_protocol::ReadContext {
+                        request_id: apxm_runtime_protocol::RequestId::new(
+                            "execute-canonical-host",
+                        )
+                        .expect("static request id"),
+                        scope_ref: apxm_runtime_protocol::ScopeRef::new("scope.execute-canonical")
+                            .expect("static scope"),
+                        principal_ref: apxm_runtime_protocol::PrincipalRef::new(
+                            "principal.execute-canonical",
+                        )
+                        .expect("static principal"),
+                        grant_ref: apxm_runtime_protocol::GrantRef::new("grant.execute-canonical")
+                            .expect("static grant"),
+                        correlation_id: None,
+                        purpose: apxm_runtime_protocol::ReadPurpose::Observation,
+                    },
+                    program_invocation_id: invocation.clone(),
+                    after_cursor: None,
+                    limit: 1000,
+                },
+            )
+            .map_err(|error| anyhow::anyhow!("failed to read the observation stream: {error:?}"))?;
+        let apxm_runtime_protocol::RuntimeResultV2::ObservationPage { page, .. } = page else {
+            anyhow::bail!("Runtime Service returned no observation page");
+        };
+        let Some(request) = page
+            .items
+            .iter()
+            .filter_map(|observation| {
+                (observation.observation_kind
+                    == apxm_runtime_protocol::ObservationKind::CapabilityRequested)
+                    .then(|| observation.host_capability.as_ref())
+                    .flatten()
+            })
+            .find(|request| !settled.contains(&request.capability_request_id))
+            .cloned()
+        else {
+            return Ok(());
+        };
+        settled.insert(request.capability_request_id.clone());
+        let settlement = service
+            .handle(
+                &apxm_runtime_protocol::RuntimeHandshake {
+                    protocol_version: apxm_runtime_protocol::RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                apxm_runtime_protocol::RuntimeRequest::CapabilityFulfill {
+                    request_id: format!("execute-canonical.{}", settled.len()),
+                    owner_claim: owner_claim.clone(),
+                    capability_request_id: request.capability_request_id.clone(),
+                    outcome: HostCapabilityOutcomeKind::Ok,
+                    output: Some(request.input.clone().unwrap_or_else(|| "{}".to_owned())),
+                    receipt_ref: Some("receipt.execute-canonical".to_owned()),
+                    message: None,
+                },
+            )
+            .map_err(|error| {
+                anyhow::anyhow!("Runtime Service refused the settlement: {error:?}")
+            })?;
+        match settlement {
+            apxm_runtime_protocol::RuntimeResult::CapabilitySettled { .. } => {}
+            apxm_runtime_protocol::RuntimeResult::Failed { code, .. } => {
+                anyhow::bail!(
+                    "Runtime Service refused to settle {}: {code}",
+                    request.capability_ref
+                )
+            }
+            other => anyhow::bail!("Runtime Service returned {other:?}"),
+        }
+    }
+}
+
 /// Admit fixture bytes and invoke them through the Runtime Service.
 pub fn execute_canonical_command(
     input: PathBuf,
@@ -275,6 +380,7 @@ pub fn execute_canonical_command(
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
     let output = execute_via_runtime_service(
+        &_air,
         &artifact_bytes,
         admission,
         release_bytes,

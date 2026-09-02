@@ -39,6 +39,7 @@ pub mod package_snapshot;
 
 use std::path::{Path, PathBuf};
 
+use apxm_core::types::host_capability;
 use apxm_program::air::AirModule;
 use apxm_program::frontend_graph::FrontendGraph;
 use apxm_program::source_map::SourceMap;
@@ -65,6 +66,14 @@ pub struct SourceBundleRequest {
     pub entrypoint: String,
     /// The submitted authoring source text.
     pub source: String,
+    /// The host capability ids the package declares, without the reserved
+    /// `host:` prefix. The minted Capability set the frontend compiles against
+    /// is the builtin catalogue united with these; a `host:` reference to
+    /// anything else is a compile error naming the line and column of the
+    /// reference. A caller that compiles source outside a package declares
+    /// none, and every `host:` reference then rejects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_capabilities: Vec<String>,
 }
 
 impl SourceBundleRequest {
@@ -77,7 +86,18 @@ impl SourceBundleRequest {
             frontend,
             entrypoint: entrypoint.into(),
             source: source.into(),
+            host_capabilities: Vec::new(),
         }
+    }
+
+    /// Declare the host capability ids this package mints.
+    #[must_use]
+    pub fn with_host_capabilities(
+        mut self,
+        ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.host_capabilities = ids.into_iter().map(Into::into).collect();
+        self
     }
 
     fn validate(&self) -> Result<(), SourceDiagnostic> {
@@ -255,17 +275,88 @@ pub fn compile_source_bundle(
         .validate(request.frontend)
         .map_err(|diagnostic| vec![diagnostic])?;
 
+    reject_undeclared_host_references(request)?;
+
     let captured = frontend::capture(
         request.frontend,
         roots.root(request.frontend),
         drivers.driver(request.frontend),
         &request.entrypoint,
         &request.source,
+        &request.host_capabilities,
     )
     .map_err(|diagnostic| vec![diagnostic])?;
 
     let source_digest = content_digest(request.source.as_bytes());
     compile_captured_graph(request.frontend, captured, &source_digest)
+}
+
+/// Refuse a `host:` reference the package's manifest does not declare, naming
+/// where in the submitted source it is written.
+///
+/// The frontends close the same set inside the interpreter and refuse the same
+/// reference, but an interpreter cannot say *where*: its markers run at module
+/// evaluation, with no source node to point at. This runs first and over the
+/// exact submitted text, so an author gets the line and column of the reference
+/// rather than only its spelling. A capability reference is always a literal —
+/// both frontends refuse a computed one — so scanning quoted occurrences of the
+/// reserved prefix finds every reference a program can make.
+fn reject_undeclared_host_references(
+    request: &SourceBundleRequest,
+) -> Result<(), Vec<SourceDiagnostic>> {
+    let declared = request
+        .host_capabilities
+        .iter()
+        .map(|id| host_capability::host_capability_ref(id))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for (line, column, reference) in quoted_host_references(&request.source) {
+        if declared.contains(&reference) || !seen.insert(reference.clone()) {
+            continue;
+        }
+        diagnostics.push(SourceDiagnostic::new(
+            SourceDiagnosticCode::GraphRejected,
+            format!(
+                "{line}:{column}: the Capability reference '{reference}' names the \
+                 host-fulfilled namespace, and the package manifest declares no \
+                 matching [[capabilities.host]] entry"
+            ),
+        ));
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
+/// Every quoted `host:` reference in `source`, with its 1-based line and column.
+///
+/// Only an occurrence immediately behind a quote is a reference: the prefix in
+/// prose or in a comment is text about the namespace, not a use of it. Columns
+/// count characters rather than bytes, so a reference after a non-ASCII
+/// character lands where an editor puts it.
+fn quoted_host_references(source: &str) -> Vec<(usize, usize, String)> {
+    let mut found = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let bytes = line.as_bytes();
+        for (offset, _) in line.match_indices(host_capability::HOST_CAPABILITY_REF_PREFIX) {
+            if offset == 0 || !matches!(bytes[offset - 1], b'"' | b'\'' | b'`') {
+                continue;
+            }
+            let tail = &line[offset..];
+            let end = tail
+                .find(|character: char| {
+                    !(character.is_ascii_alphanumeric()
+                        || matches!(character, '.' | '_' | '-' | ':'))
+                })
+                .unwrap_or(tail.len());
+            let column = line[..offset].chars().count() + 1;
+            found.push((index + 1, column, tail[..end].to_owned()));
+        }
+    }
+    found
 }
 
 fn compile_captured_graph(

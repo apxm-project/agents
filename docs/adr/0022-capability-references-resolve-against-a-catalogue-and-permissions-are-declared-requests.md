@@ -4,6 +4,7 @@ date: 2026-08-14
 owner: APXM agents
 requires: accepted Agents ADR-0006, ADR-0009, ADR-0013
 amends: ADR-0015, ADR-0016
+amended_by: ADR-0025
 ---
 
 # Capability references resolve against a catalogue, and permissions are declared requests
