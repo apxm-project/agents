@@ -305,6 +305,7 @@ version = "0.1.0"
 dependencies = [
  "apxm-ais",
  "apxm-compilation-protocol",
+ "apxm-core",
  "apxm-program",
  "apxm-source-port",
  "serde",
@@ -527,6 +528,7 @@ dependencies = [
 name = "apxm-source-port"
 version = "0.1.0"
 dependencies = [
+ "apxm-core",
  "apxm-program",
  "serde",
  "serde_json",

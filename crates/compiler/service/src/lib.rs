@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_ais::{SLOT_CAPABILITY_REF, SemanticOpKind};
+use apxm_core::types::host_capability::{
+    ManifestCapabilities, host_capability_ref, minted_host_capability_refs,
+};
 use apxm_compilation_protocol::{
     CompilationHandshake, CompilationRequest, CompilationResult, ProtocolError,
 };
@@ -295,7 +298,8 @@ fn compile_snapshot(
         String::from_utf8(entry.bytes.clone()).map_err(|_| "entrypoint_not_utf8".to_owned())?;
     let program = authored_program_name(snapshot.frontend, &source)?;
     let compiled = compile_source_bundle(
-        &SourceBundleRequest::new(snapshot.frontend, program, source),
+        &SourceBundleRequest::new(snapshot.frontend, program, source)
+            .with_host_capabilities(manifest.host_capabilities.clone()),
         roots,
         drivers,
     )
@@ -311,7 +315,7 @@ fn compile_snapshot(
             },
         )
     })?;
-    check_capability_references(snapshot, &compiled.air)?;
+    check_capability_references(snapshot, &manifest, &compiled.air)?;
     check_package_permissions(snapshot, &compiled.air, &manifest)?;
     let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
         .map_err(|error| error.to_string())?;
@@ -322,6 +326,8 @@ fn compile_snapshot(
 struct AgentManifest {
     #[serde(default)]
     compile: Option<CompileManifest>,
+    #[serde(default)]
+    capabilities: ManifestCapabilities,
     #[serde(default)]
     permissions: BTreeMap<String, PermissionDecision>,
 }
@@ -335,6 +341,11 @@ struct CompileManifest {
 struct DeclaredManifest {
     frontend: Frontend,
     entry: String,
+    /// The host capability ids `[[capabilities.host]]` declares, without the
+    /// reserved prefix. Passed into capture so the frontend's minted set is the
+    /// catalogue united with these, and united into the granted set so the
+    /// admission below admits the references they mint.
+    host_capabilities: Vec<String>,
     permissions: BTreeMap<String, PermissionDecision>,
 }
 
@@ -353,9 +364,18 @@ fn declared_manifest(snapshot: &PackageSnapshot) -> Result<DeclaredManifest, Str
     let entry = compile
         .entry
         .ok_or_else(|| "missing_entrypoint".to_owned())?;
+    let host_capabilities = parsed
+        .capabilities
+        .host
+        .iter()
+        .map(|declaration| declaration.id.clone())
+        .collect::<Vec<_>>();
+    minted_host_capability_refs(&parsed.capabilities.host)
+        .map_err(|_| "invalid_manifest".to_owned())?;
     Ok(DeclaredManifest {
         frontend,
         entry,
+        host_capabilities,
         permissions: parsed.permissions,
     })
 }
@@ -626,11 +646,20 @@ fn compute_integrity(files: &BTreeMap<String, String>) -> IntegrityToml {
     }
 }
 
-fn granted_capability_ids(snapshot: &PackageSnapshot) -> BTreeSet<String> {
+fn granted_capability_ids(
+    snapshot: &PackageSnapshot,
+    manifest: &DeclaredManifest,
+) -> BTreeSet<String> {
     let mut granted = apxm_ais::capabilities::BUILTINS
         .iter()
         .map(|id| (*id).to_owned())
         .collect::<BTreeSet<_>>();
+    granted.extend(
+        manifest
+            .host_capabilities
+            .iter()
+            .map(|id| host_capability_ref(id)),
+    );
     for content in &snapshot.contents {
         let Some((id, file)) = content.path.strip_prefix("capabilities/").and_then(|rest| {
             let (id, file) = rest.split_once('/')?;
@@ -647,9 +676,10 @@ fn granted_capability_ids(snapshot: &PackageSnapshot) -> BTreeSet<String> {
 
 fn check_capability_references(
     snapshot: &PackageSnapshot,
+    manifest: &DeclaredManifest,
     module: &AirModule,
 ) -> Result<(), String> {
-    let granted = granted_capability_ids(snapshot);
+    let granted = granted_capability_ids(snapshot, manifest);
     let mut ungranted: Vec<&str> = module
         .semantic_operations
         .iter()
@@ -677,7 +707,7 @@ fn check_package_permissions(
     module: &AirModule,
     manifest: &DeclaredManifest,
 ) -> Result<(), String> {
-    let grantable = granted_capability_ids(snapshot);
+    let grantable = granted_capability_ids(snapshot, manifest);
     let requested: LayerDecisions = grantable
         .iter()
         .map(|id| {

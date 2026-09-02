@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 apxm-ais.workspace = true
 apxm-compilation-protocol.workspace = true
+apxm-core.workspace = true
 apxm-program.workspace = true
 apxm-source-port.workspace = true
 serde.workspace = true

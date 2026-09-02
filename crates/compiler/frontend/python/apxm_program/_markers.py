@@ -11,6 +11,11 @@ from __future__ import annotations
 from typing import Any, NamedTuple, Optional, TypeVar
 
 from ._generated.capabilities import BUILTIN_CAPABILITIES
+from ._host_capabilities import (
+    HOST_CAPABILITY_REF_PREFIX,
+    declared_host_capabilities,
+    is_declared_host_capability,
+)
 from ._generated.diagnostics import (
     CAPABILITY_DISPLAY_NAME_REJECTED,
     CAPABILITY_REF_NOT_EXACT,
@@ -319,7 +324,10 @@ def _require_capability_reference(
     places a Capability can come from:
 
     * a builtin id the generated catalogue mints, which the compiler's builtin
-      allowlist admits without any registration; and
+      allowlist admits without any registration;
+    * a ``host:<id>`` reference the package's ``agent.toml`` declares as
+      ``[[capabilities.host]]``, which the runtime never executes and the
+      embedding host answers; and
     * the :class:`CapabilityId` a ``capability(...)`` declaration returns, which
       carries the implementation it names.
 
@@ -330,9 +338,24 @@ def _require_capability_reference(
     """
     if isinstance(value, CapabilityId) or value in BUILTIN_CAPABILITIES:
         return
+    if isinstance(value, str) and value.startswith(HOST_CAPABILITY_REF_PREFIX):
+        if is_declared_host_capability(value):
+            return
+        declared = declared_host_capabilities()
+        raise ValueError(
+            f"{code}: {marker} names the host-fulfilled Capability '{value}', "
+            "which the package manifest does not declare as "
+            "[[capabilities.host]]. "
+            + (
+                "This package declares none"
+                if not declared
+                else "It declares " + ", ".join(declared)
+            )
+        )
     raise ValueError(
-        f"{code}: {marker} accepts a builtin catalogue id or the handler "
-        f"declaration that implements one, not '{value}'"
+        f"{code}: {marker} accepts a builtin catalogue id, a host-fulfilled "
+        f"'host:' reference the manifest declares, or the handler declaration "
+        f"that implements one, not '{value}'"
     )
 
 
