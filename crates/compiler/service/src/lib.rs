@@ -28,6 +28,11 @@ use apxm_source_port::{
     compile_source_bundle, content_digest,
 };
 
+pub use apxm_source_port::{
+    CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE, ConfinementMode, ConfinementReadiness,
+    ConfinementStatus, capture_confinement_readiness,
+};
+
 /// In-memory artifact store used to prove commit versus crash reconciliation.
 #[derive(Default)]
 pub struct ArtifactStore {

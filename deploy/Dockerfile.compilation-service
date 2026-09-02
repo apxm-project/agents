@@ -13,6 +13,13 @@
 # CMake or Ninja. The Compilation Service compiles submitted source through the
 # source port and the two authoring frontends, which is what this image ships.
 #
+# Capture evaluates submitted source inside an authoring frontend, so the
+# capture child runs inside a Landlock ruleset, a seccomp filter and resource
+# ceilings (ADR-0027). The service prints that boundary's readiness to standard
+# error before its first request. A kernel without Landlock or seccomp refuses
+# every compile unless the operator sets
+# `APXM_CAPTURE_CONFINEMENT=permissive`, which is a development setting.
+#
 # The builder and release stages are byte-identical to the Runtime Service
 # image's, so BuildKit compiles the workspace once and both images share it.
 

@@ -17,3 +17,8 @@ apxm-program.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+# The capture boundary is a kernel boundary: a Landlock ruleset, a seccomp
+# filter and resource ceilings applied to the capture child before it execs.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
