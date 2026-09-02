@@ -22,6 +22,158 @@ concurrency:
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:
+  # The MLIR-free half of the gates, on a toolchain that carries Rust, Python
+  # and Node and nothing else. `apxm-compiler` is the only crate that links the
+  # native AIS dialect, it links it only behind its `mlir` Cargo feature, and no
+  # crate depends on it — so both services, both service protocols, the source
+  # port, both authoring frontends and the qualification tooling build and test
+  # with none of MLIR, LLVM, libclang, CMake or Ninja installed. This job is
+  # what tells a service change whether it broke, in minutes rather than in the
+  # two hours the job below is allowed; the MLIR job stays the authority for the
+  # dialect and keeps `test-all`, `test-compiler` and the release CLI build.
+  service:
+    name: Service gates without MLIR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash -el {0}
+        working-directory: workspace/agents
+    env:
+      APXM_CARGO_TARGET_DIR: ${{ github.workspace }}/.apxm-cargo-target
+      CONDA_PKGS_DIRS: ${{ github.workspace }}/.conda-pkgs
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          path: workspace/agents
+          persist-credentials: false
+          # The gate's last step lints every commit the pull request adds, which
+          # a depth-1 checkout cannot reach.
+          fetch-depth: 0
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal --no-self-update
+          rustup default 1.91.1
+          rustup component add clippy rustfmt
+          cargo --version
+          rustc --version
+
+      # Same shim as the MLIR job: `.dekk.toml [env]` pins RUSTUP_HOME and
+      # CARGO_HOME, so Dekk must resolve the same rustup context.
+      - name: Shim the Rust toolchain for the dekk env contract
+        run: |
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          mkdir -p "$HOME/.local/bin"
+          for tool in cargo rustc rustdoc; do
+            [ -x "$toolchain_bin/$tool" ] || continue
+            cat > "$HOME/.local/bin/$tool" <<SHIM
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export RUSTUP_HOME="$HOME/.rustup"
+          export CARGO_HOME="$HOME/.cargo"
+          exec "$toolchain_bin/$tool" "\$@"
+          SHIM
+            chmod +x "$HOME/.local/bin/$tool"
+          done
+          "$HOME/.local/bin/cargo" --version
+
+      - name: Create the Dekk runner Conda env
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        with:
+          activate-environment: dekk-runner
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          miniforge-version: "25.3.1-0"
+          python-version: "3.11"
+
+      # Keyed separately from the MLIR job: this environment is a strict subset
+      # and must never restore an archive that carries the dialect packages.
+      - name: Cache Conda packages
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ github.workspace }}/.conda-pkgs
+          key: conda-service-${{ runner.os }}-${{ hashFiles('workspace/agents/.dekk.toml') }}
+          restore-keys: |
+            conda-service-${{ runner.os }}-
+
+      - name: Cache Cargo registry
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-v2-rust-1.91.1-${{ runner.os }}-${{ hashFiles('workspace/agents/Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-v2-rust-1.91.1-${{ runner.os }}-
+
+      # The MLIR job deliberately does not cache its target directory, because a
+      # floating toolchain can restore .rmeta produced by another rustc and fail
+      # with E0514. This job pins 1.91.1 in the cache key itself, so a restored
+      # artifact can only have come from that exact compiler — which is what
+      # keeps a fifteen-minute budget honest across a cold clippy plus two
+      # release frontend builds.
+      - name: Cache the service target directory
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ github.workspace }}/.apxm-cargo-target
+          key: cargo-target-service-rust-1.91.1-${{ runner.os }}-${{ hashFiles('workspace/agents/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-target-service-rust-1.91.1-${{ runner.os }}-${{ hashFiles('workspace/agents/Cargo.lock') }}-
+            cargo-target-service-rust-1.91.1-${{ runner.os }}-
+
+      - name: Install the pinned public Dekk runner
+        run: >-
+          python -m pip install --disable-pip-version-check --only-binary=:all:
+          --index-url https://pypi.org/simple "dekk==1.11.5"
+
+      # `[environment.packages]` minus the dialect half: python, pytest,
+      # pytest-asyncio, uv, nodejs and git. No mlir, libclang13, clang,
+      # gxx_linux-64, cmake or ninja is installed anywhere in this job.
+      - name: Provision the service-only toolchain
+        run: dekk agents install-service
+
+      # The runner image ships its own cmake, so the claim this job makes is
+      # about the project environment: nothing under `.dekk/env` provides MLIR,
+      # LLVM or libclang, and no MLIR binary is reachable. If a future change
+      # made a service crate need the dialect, the gate below would fail here
+      # rather than quietly linking against a stray host install.
+      - name: Prove the dialect toolchain is absent
+        run: |
+          for path in .dekk/env/lib/cmake/mlir .dekk/env/lib/cmake/llvm; do
+            if [ -e "$path" ]; then
+              echo "$path exists; this job must not provision the dialect toolchain" >&2
+              exit 1
+            fi
+          done
+          if compgen -G '.dekk/env/lib/libMLIR*' > /dev/null \
+            || compgen -G '.dekk/env/lib/libclang*' > /dev/null; then
+            echo "the service environment carries MLIR or libclang libraries" >&2
+            exit 1
+          fi
+          if command -v mlir-opt >/dev/null 2>&1; then
+            echo "mlir-opt is on PATH; this job must not have an MLIR toolchain" >&2
+            exit 1
+          fi
+          echo "no MLIR, LLVM or libclang in the service environment"
+
+      # fmt-check, clippy, both service protocols, the source port, both
+      # services, both authoring frontends, the release and owner qualification
+      # unit tests, and the commit lint — each one the `.dekk.toml` command
+      # verbatim, with the MLIR toolchain variables unset.
+      - name: Run the service gates
+        env:
+          APXM_COMMIT_LINT_RANGE: >-
+            ${{ github.event_name == 'pull_request'
+                && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha)
+                || '' }}
+        run: dekk agents check-service
+
+      - name: Validate the service gate definition
+        run: dekk agents test-service-gate
+
   deterministic:
     name: Portable product gates
     runs-on: ubuntu-24.04
