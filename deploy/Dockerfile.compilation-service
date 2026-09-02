@@ -1,15 +1,83 @@
-ARG APXM_BASE_IMAGE
-FROM ${APXM_BASE_IMAGE}
+# APXM Compilation Service image, built from the checkout.
+#
+# The build context is the source tree, not a tree of prebuilt binaries: the
+# builder stage compiles the Linux service executables and both authoring
+# frontends, and the release stage regenerates the cohort's release descriptors
+# from those exact bytes. The image therefore carries a release manifest that
+# describes itself, and its labels are stamped from that manifest, so a
+# consumer verifies the image against its pin with `docker image inspect` and
+# no owner checkout.
+#
+# `apxm-compiler` is the only crate that links the native AIS dialect and no
+# crate depends on it, so neither service image needs MLIR, LLVM, libclang,
+# CMake or Ninja. The Compilation Service compiles submitted source through the
+# source port and the two authoring frontends, which is what this image ships.
+#
+# The builder and release stages are byte-identical to the Runtime Service
+# image's, so BuildKit compiles the workspace once and both images share it.
 
+ARG APXM_BUILDER_IMAGE=rust@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65
+ARG APXM_NODE_IMAGE=node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+ARG APXM_BASE_IMAGE=debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+
+FROM ${APXM_NODE_IMAGE} AS node
+
+FROM ${APXM_BUILDER_IMAGE} AS builder
+ARG APXM_BUILDER_IMAGE
+ARG APXM_NODE_IMAGE
+
+# A mutable tag is not an acceptable release input. This runs before anything
+# is installed so a tag-only builder or Node base fails closed at the start.
+RUN set -eu; \
+    for reference in "$APXM_BUILDER_IMAGE" "$APXM_NODE_IMAGE"; do \
+        case "$reference" in *@sha256:*) ;; *) echo "base images must be immutable digest references" >&2; exit 1;; esac; \
+        digest="${reference##*@sha256:}"; \
+        case "$digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+        [ "${#digest}" -eq 64 ]; \
+    done
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The workspace pins Node 22; Debian bookworm ships 18. Take the interpreter and
+# npm from the pinned Node base rather than loosening the frontend's toolchain.
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+
+WORKDIR /workspace
+COPY . /workspace
+
+RUN cargo build --release --locked \
+        -p apxm-compilation-service \
+        -p apxm-runtime-service \
+        -p apxm-frontend-python \
+        -p apxm-frontend-typescript
+
+# Both authoring frontends load their bridge under a stable package name, which
+# is what the Compilation Service probes for. The Python bridge is the artifact
+# the release manifest pins.
+RUN set -eu; \
+    cp target/release/lib_native.so crates/compiler/frontend/python/apxm_program/_native.so; \
+    npm --prefix crates/compiler/frontend/typescript ci --no-audit --no-fund; \
+    npm --prefix crates/compiler/frontend/typescript run build; \
+    cp target/release/libapxm_frontend_typescript.so crates/compiler/frontend/typescript/dist/_native.node
+
+FROM builder AS release
+ARG APXM_SOURCE_REVISION
+RUN set -eu; \
+    mkdir -p /out; \
+    sh deploy/release-inside-image.sh /workspace /out "$APXM_SOURCE_REVISION" > /out/apxm-image-release.v1.json; \
+    cat /out/apxm-image-release.v1.json
+
+FROM ${APXM_BASE_IMAGE}
 ARG APXM_BASE_IMAGE
 ARG APXM_SOURCE_REVISION
+ARG APXM_RELEASE_MANIFEST_DIGEST
 ARG APXM_COMPILATION_SERVICE_DIGEST
 ARG APXM_PYTHON_FRONTEND_NATIVE_DIGEST
 
-# A mutable tag is not an acceptable release input.  The check lives before
-# any package installation so an omitted/tag-only base fails closed at the
-# start of the stage.  The release builder supplies the reviewed
-# `repository@sha256:<manifest>` coordinate.
 RUN set -eu; \
     case "$APXM_BASE_IMAGE" in *@sha256:*) ;; *) echo "APXM_BASE_IMAGE must be an immutable digest reference" >&2; exit 1;; esac; \
     base_digest="${APXM_BASE_IMAGE##*@sha256:}"; \
@@ -22,52 +90,56 @@ LABEL org.opencontainers.image.title="APXM Compilation Service" \
       io.apxm.base-image="${APXM_BASE_IMAGE}" \
       io.apxm.service="compilation-service" \
       io.apxm.service-digest="${APXM_COMPILATION_SERVICE_DIGEST}" \
+      io.apxm.release-manifest-digest="${APXM_RELEASE_MANIFEST_DIGEST}" \
       io.apxm.python-frontend-native-digest="${APXM_PYTHON_FRONTEND_NATIVE_DIGEST}"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nodejs python3 \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 python3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 65532 apxm \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
     && mkdir -p /workspace/.dekk/env/bin /run/apxm /var/lib/apxm/artifacts \
-    && ln -s /usr/bin/python3 /workspace/.dekk/env/bin/python \
-    && test -x /usr/bin/node \
-    && ln -s /usr/bin/node /workspace/.dekk/env/bin/node \
-    && chown -R 65532:65532 /run/apxm /var/lib/apxm
+    && ln -s /usr/bin/python3 /workspace/.dekk/env/bin/python
 
-COPY target/release/apxm-compilation-service /workspace/target/release/apxm-compilation-service
-COPY crates/compiler/frontend/python /workspace/crates/compiler/frontend/python
-COPY crates/compiler/frontend/typescript /workspace/crates/compiler/frontend/typescript
-# The release builder must provide the Linux PyO3 artifact produced by
-# `apxm-frontend-python`; the service's Python frontend probe loads this exact
-# stable package path.  Keep this as a separate COPY so an omitted artifact
-# fails the image build instead of producing a frontend-unavailable image.
-COPY target/release/lib_native.so /workspace/crates/compiler/frontend/python/apxm_program/_native.so
-COPY deploy/services/source-revision.v1.json /tmp/apxm-source-revision.json
-COPY contracts/services/manifests/apxm.agents-service-release-manifest.v1.json /tmp/apxm-service-release-manifest.json
+COPY --from=node /usr/local/bin/node /workspace/.dekk/env/bin/node
+COPY --from=release /workspace/target/release/apxm-compilation-service /workspace/target/release/apxm-compilation-service
+COPY --from=release /workspace/crates/compiler/frontend/python /workspace/crates/compiler/frontend/python
+COPY --from=release /workspace/crates/compiler/frontend/typescript /workspace/crates/compiler/frontend/typescript
+COPY --from=release /workspace/contracts/schemas /workspace/contracts/schemas
+COPY --from=release /out/deploy/services/source-revision.v1.json /workspace/deploy/services/source-revision.v1.json
+COPY --from=release /out/contracts/descriptors /workspace/contracts/descriptors
+COPY --from=release /out/contracts/services/manifests /workspace/contracts/services/manifests
 
-# A service image is publishable only when it is bound to the immutable source
-# cohort and the exact executable qualified by the release manifest.  Docker
-# build args are intentionally required; an omitted or malformed digest must
-# fail the build instead of producing an image with unverifiable metadata.
+# The image is publishable only when its labels state what it actually carries.
+# The manifest was regenerated from these bytes one stage ago; this proves the
+# bytes survived the copy and that every label repeats the manifest rather than
+# making an independent claim. Malformed or omitted build arguments fail the
+# build instead of producing an image with unverifiable metadata.
 RUN set -eu; \
+    manifest=/workspace/contracts/services/manifests/apxm.agents-service-release-manifest.v1.json; \
     case "$APXM_SOURCE_REVISION" in *[!0123456789abcdef]*|"") exit 1;; esac; \
     [ "${#APXM_SOURCE_REVISION}" -eq 40 ]; \
-    case "$APXM_COMPILATION_SERVICE_DIGEST" in sha256:*) ;; *) exit 1;; esac; \
-    digest="${APXM_COMPILATION_SERVICE_DIGEST#sha256:}"; \
-    case "$digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
-    [ "${#digest}" -eq 64 ]; \
-    source_revision="$(sed -n 's/.*"source_revision":"\([0-9a-f]\{40\}\)".*/\1/p' /tmp/apxm-source-revision.json)"; \
+    for value in "$APXM_RELEASE_MANIFEST_DIGEST" "$APXM_COMPILATION_SERVICE_DIGEST" "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST"; do \
+        case "$value" in sha256:*) ;; *) exit 1;; esac; \
+        digest="${value#sha256:}"; \
+        case "$digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+        [ "${#digest}" -eq 64 ]; \
+    done; \
+    [ "sha256:$(sha256sum "$manifest" | cut -d' ' -f1)" = "$APXM_RELEASE_MANIFEST_DIGEST" ]; \
+    source_revision="$(sed -n 's/.*"source_revision":"\([0-9a-f]\{40\}\)".*/\1/p' /workspace/deploy/services/source-revision.v1.json)"; \
     [ "$source_revision" = "$APXM_SOURCE_REVISION" ]; \
-    manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"compilation-service".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    manifest_revision="$(sed -n 's/.*"source_revision":"\([0-9a-f]\{40\}\)".*/\1/p' "$manifest")"; \
+    [ "$manifest_revision" = "$APXM_SOURCE_REVISION" ]; \
+    manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"compilation-service".*/\1/p' "$manifest")"; \
     [ "$manifest_digest" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
     [ "sha256:$(sha256sum /workspace/target/release/apxm-compilation-service | cut -d' ' -f1)" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
-    native_digest="$(sed -n 's/.*"frontend_native":{[^}]*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    native_digest="$(sed -n 's/.*"frontend_native":{"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$manifest")"; \
     [ "$native_digest" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
     [ "sha256:$(sha256sum /workspace/crates/compiler/frontend/python/apxm_program/_native.so | cut -d' ' -f1)" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
-    test -s /workspace/crates/compiler/frontend/python/apxm_program/_native.so
+    test -s /workspace/crates/compiler/frontend/typescript/dist/_native.node; \
+    test -s /workspace/crates/compiler/frontend/typescript/dist/node.js
 
-RUN chown -R 65532:65532 /workspace /var/lib/apxm
+RUN chown -R 65532:65532 /workspace /run/apxm /var/lib/apxm
 
 ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
 USER 65532:65532

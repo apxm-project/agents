@@ -226,44 +226,6 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any(item.code == "dirty-checkout" for item in result.diagnostics))
 
-    def test_qualification_accepts_exact_cross_platform_service_coordinates(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as external:
-            root = Path(temporary)
-            external_root = Path(external)
-            revision, artifacts = make_clean_owner_checkout(root)
-            self.qualification.generate_descriptors(
-                root,
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                output_dir=root,
-                source_revision=revision,
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "add", "deploy", "contracts"],
-                check=True,
-                env=git_environment(),
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
-                check=True,
-                env=git_environment(),
-            )
-            bound: dict[str, str] = {}
-            for name, artifact in artifacts.items():
-                target = external_root / artifact.name
-                target.write_bytes(artifact.read_bytes())
-                target.chmod(0o755)
-                bound[self.qualification.SERVICE_COORDINATE_ENV[name]] = (
-                    f"{target}@{self.qualification._digest_file(target)}"
-                )
-            # The host-native checkout no longer contains the published bytes;
-            # only the exact external coordinates satisfy the manifest.
-            artifacts["compilation-service"].write_bytes(b"host-native rebuild")
-            artifacts["runtime-service"].write_bytes(b"host-native rebuild")
-            with patch.dict(os.environ, bound, clear=False):
-                result = self.qualification.qualify(root, run_gates=False)
-        self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
-
     def test_generation_refuses_to_overwrite_different_release_input(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as output_dir:
             root = Path(temporary)
@@ -490,118 +452,6 @@ class ReleaseQualificationTests(unittest.TestCase):
             )
         self.assertFalse(result.ok)
         self.assertTrue(any(item.code == "invalid-schema" for item in result.diagnostics))
-
-    def test_linux_package_verification_rejects_host_native_service_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
-            root = Path(temporary)
-            revision, artifacts = make_clean_owner_checkout(root)
-            self.qualification.generate_descriptors(
-                root,
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                output_dir=root,
-                source_revision=revision,
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "add", "deploy", "contracts"],
-                check=True,
-                env=git_environment(),
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
-                check=True,
-                env=git_environment(),
-            )
-            self.qualification.package_release(
-                root,
-                output_dir=Path(package_dir),
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                run_gates=False,
-            )
-            verified = self.qualification.verify_linux_package(Path(package_dir))
-        self.assertFalse(verified["qualified"])
-        self.assertEqual(verified["qualification_scope"], "consumer-linux-x86_64")
-        self.assertEqual(
-            {item["code"] for item in verified["diagnostics"]},
-            {"non-linux-service-artifact"},
-        )
-
-    def test_linux_package_verification_accepts_linux_x86_64_elf_headers(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
-            root = Path(temporary)
-            revision, artifacts = make_clean_owner_checkout(root)
-            for artifact in artifacts.values():
-                header = bytearray(64)
-                header[:7] = b"\x7fELF\x02\x01\x01"
-                header[18:20] = self.qualification.LINUX_X86_64_MACHINE.to_bytes(2, "little")
-                artifact.write_bytes(header)
-            self.qualification.generate_descriptors(
-                root,
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                output_dir=root,
-                source_revision=revision,
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "add", "deploy", "contracts"],
-                check=True,
-                env=git_environment(),
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
-                check=True,
-                env=git_environment(),
-            )
-            self.qualification.package_release(
-                root,
-                output_dir=Path(package_dir),
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                run_gates=False,
-            )
-            verified = self.qualification.verify_linux_package(Path(package_dir))
-        self.assertTrue(verified["qualified"], verified["diagnostics"])
-        self.assertEqual(verified["qualification_scope"], "consumer-linux-x86_64")
-
-    def test_linux_package_verification_accepts_linux_arm64_elf_headers(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
-            root = Path(temporary)
-            revision, artifacts = make_clean_owner_checkout(root)
-            for artifact in artifacts.values():
-                header = bytearray(64)
-                header[:7] = b"\x7fELF\x02\x01\x01"
-                header[18:20] = self.qualification.LINUX_AARCH64_MACHINE.to_bytes(2, "little")
-                artifact.write_bytes(header)
-            self.qualification.generate_descriptors(
-                root,
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                output_dir=root,
-                source_revision=revision,
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "add", "deploy", "contracts"],
-                check=True,
-                env=git_environment(),
-            )
-            subprocess.run(
-                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
-                check=True,
-                env=git_environment(),
-            )
-            self.qualification.package_release(
-                root,
-                output_dir=Path(package_dir),
-                compilation_service_path=str(artifacts["compilation-service"]),
-                runtime_service_path=str(artifacts["runtime-service"]),
-                run_gates=False,
-            )
-            verified = self.qualification.verify_linux_package(
-                Path(package_dir), architecture="arm64"
-            )
-        self.assertTrue(verified["qualified"], verified["diagnostics"])
-        self.assertEqual(verified["qualification_scope"], "consumer-linux-arm64")
 
     def test_protocol_descriptor_drift_is_rejected_against_source_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -880,12 +730,143 @@ class ReleaseQualificationTests(unittest.TestCase):
             "python tools/scripts/release_qualification.py verify-package --json",
         )
         self.assertIn("consumer boundary", command["description"])
-        linux_command = manifest["commands"]["verify-linux-package"]
-        self.assertEqual(
-            linux_command["run"],
-            "python tools/scripts/release_qualification.py verify-linux-package --json",
-        )
-        self.assertIn("Linux x86_64", linux_command["description"])
+
+    def test_in_place_regeneration_moves_the_checkout_to_a_new_cohort(self) -> None:
+        # A cohort is re-cut by regenerating the descriptors the checkout ships.
+        # Write-once is right for a package tree, but in the checkout it only
+        # forced the owner to launder the same bytes through a temporary
+        # directory: Git already holds the documents being replaced.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish cohort"],
+                check=True,
+                env=git_environment(),
+            )
+            superseded = (root / self.qualification.RELEASE_MANIFEST_REL).read_bytes()
+            artifacts["compilation-service"].write_bytes(b"rebuilt service bytes\n")
+            artifacts["compilation-service"].chmod(0o755)
+            next_revision = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=git_environment(),
+            ).stdout.strip()
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=next_revision,
+            )
+            manifest = json.loads(
+                (root / self.qualification.RELEASE_MANIFEST_REL).read_text(encoding="utf-8")
+            )
+            self.assertNotEqual(
+                (root / self.qualification.RELEASE_MANIFEST_REL).read_bytes(), superseded
+            )
+            self.assertEqual(manifest["source_revision"], next_revision)
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "re-cut cohort"],
+                check=True,
+                env=git_environment(),
+            )
+            result = self.qualification.qualify(root, run_gates=False)
+        self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+
+    def test_image_descriptors_reproduce_the_cohort_or_refuse_to_emit(self) -> None:
+        # An image has no checkout to ask which revision it is, so it proves the
+        # one it was handed: the source and owner descriptors must regenerate
+        # byte-identically and the schema digests must match the cohort. Only
+        # the service bytes it just built may differ.
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as out:
+            root = Path(temporary)
+            output = Path(out)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            artifacts["compilation-service"].write_bytes(b"linux service bytes\n")
+            artifacts["compilation-service"].chmod(0o755)
+            payload = self.qualification.generate_image_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=output,
+                source_revision=revision,
+            )
+            self.assertEqual(payload["source_revision"], revision)
+            self.assertEqual(payload["schema_count"], 2)
+            emitted = (output / self.qualification.RELEASE_MANIFEST_REL).read_bytes()
+            self.assertEqual(
+                payload["release_manifest_digest"],
+                self.qualification._digest_bytes(emitted),
+            )
+            self.assertEqual(
+                (output / self.qualification.SOURCE_DESCRIPTOR_REL).read_bytes(),
+                (root / self.qualification.SOURCE_DESCRIPTOR_REL).read_bytes(),
+            )
+            compilation = next(
+                item for item in payload["services"] if item["name"] == "compilation-service"
+            )
+            self.assertEqual(
+                compilation["digest"],
+                self.qualification._digest_file(artifacts["compilation-service"]),
+            )
+
+            schema = root / "contracts" / "schemas" / "apxm.host-capability.v1.json"
+            schema.write_text('{"$id":"tampered"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "schema digests"):
+                self.qualification.generate_image_descriptors(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    output_dir=output,
+                    source_revision=revision,
+                )
+
+    def test_image_descriptors_refuse_a_revision_the_checkout_does_not_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as out:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            with self.assertRaisesRegex(ValueError, "does not match the checked-in cohort"):
+                self.qualification.generate_image_descriptors(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    output_dir=Path(out),
+                    source_revision="0" * 40,
+                )
 
     def test_dekk_manifest_exposes_owner_qualification_commands(self) -> None:
         import tomllib

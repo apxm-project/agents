@@ -94,20 +94,6 @@ SERVICE_ARTIFACTS = (
     ("runtime-service", "apxm-runtime-service"),
 )
 FRONTEND_NATIVE_ARTIFACT = ("python-frontend-native", "lib_native.so")
-SERVICE_COORDINATE_ENV = {
-    "compilation-service": "APXM_COMPILATION_SERVICE",
-    "runtime-service": "APXM_RUNTIME_SERVICE",
-    "python-frontend-native": "APXM_PYTHON_FRONTEND_NATIVE",
-}
-LINUX_X86_64_ELF_CLASS = 2
-LINUX_X86_64_ELF_DATA = 1
-LINUX_X86_64_MACHINE = 62
-LINUX_AARCH64_MACHINE = 183
-LINUX_SERVICE_ARCHITECTURES = {
-    "x86_64": LINUX_X86_64_MACHINE,
-    "arm64": LINUX_AARCH64_MACHINE,
-    "aarch64": LINUX_AARCH64_MACHINE,
-}
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -362,25 +348,6 @@ def _discover_shipped_schemas(root: Path) -> list[tuple[str, Path]]:
             continue
         discovered.append((candidate.stem, SCHEMA_DIRECTORY_REL / candidate.name))
     return discovered
-
-
-def _external_service_binding(name: str) -> Path | None:
-    """Return an exact externally materialized service artifact, if bound."""
-
-    environment_name = SERVICE_COORDINATE_ENV[name]
-    value = os.environ.get(environment_name, "").strip()
-    match = re.fullmatch(r"(.+)@(sha256:[0-9a-f]{64})", value)
-    if match is None:
-        return None
-    artifact = Path(match.group(1)).expanduser()
-    if artifact.is_symlink() or not artifact.is_file() or not os.access(artifact, os.X_OK):
-        return None
-    try:
-        if _digest_file(artifact) != match.group(2):
-            return None
-    except OSError:
-        return None
-    return artifact.resolve()
 
 
 def _validate_source_descriptor(
@@ -833,25 +800,15 @@ def _validate_release_manifest(
             continue
         declared_path = _resolve_regular_file(root, root / str(service["path"]))
         selected = artifacts.get(name)
-        external = _external_service_binding(name)
-        selected_is_external = (
-            selected is not None
-            and external is not None
-            and selected.resolve() == external
-        )
-        digest_matches_selected = (
-            selected is not None
-            and _digest_file(selected) == str(service.get("digest", ""))
-        )
-        if declared_path is None and not (selected_is_external and digest_matches_selected):
+        if declared_path is None:
             diagnostics.append(
                 Diagnostic(
                     "missing-publishable-service-artifact",
                     f"release manifest service {name!r} does not name a regular file inside the owner checkout: {service['path']}",
-                    "publish the exact APXM service executable at the manifest path, or bind an immutable qualified service coordinate for a cross-platform release",
+                    "publish the exact APXM service executable at the manifest path",
                 )
             )
-        elif selected is not None and declared_path != selected and not (selected_is_external and digest_matches_selected):
+        elif selected is not None and declared_path != selected:
             diagnostics.append(
                 Diagnostic(
                     "service-artifact-path-mismatch",
@@ -910,26 +867,16 @@ def _validate_release_manifest(
                 )
             )
         selected = artifacts.get(FRONTEND_NATIVE_ARTIFACT[0])
-        external = _external_service_binding(FRONTEND_NATIVE_ARTIFACT[0])
-        selected_is_external = (
-            selected is not None
-            and external is not None
-            and selected.resolve() == external
-        )
-        digest_matches_selected = (
-            selected is not None
-            and _digest_file(selected) == str(frontend.get("digest", ""))
-        )
         declared_path = _resolve_regular_file(root, root / str(frontend.get("path", "")))
-        if declared_path is None and not (selected_is_external and digest_matches_selected):
+        if declared_path is None:
             diagnostics.append(
                 Diagnostic(
                     "missing-publishable-frontend-native",
                     "release manifest frontend_native does not name a regular file inside the owner checkout",
-                    "publish the exact Python frontend native bridge at the manifest path or bind its immutable qualified coordinate",
+                    "publish the exact Python frontend native bridge at the manifest path",
                 )
             )
-        elif selected is not None and declared_path != selected and not (selected_is_external and digest_matches_selected):
+        elif selected is not None and declared_path != selected:
             diagnostics.append(
                 Diagnostic(
                     "frontend-native-path-mismatch",
@@ -1015,12 +962,6 @@ def _find_artifacts(
     } if isinstance(manifest_services, list) else {}
     for name, binary in SERVICE_ARTIFACTS:
         candidates: list[Path] = []
-        external = _external_service_binding(name)
-        if external is not None:
-            # A release may be qualified on Linux and consumed from a
-            # macOS/Windows owner checkout. The immutable coordinate carries
-            # the exact bytes; manifest validation still binds its digest.
-            candidates.append(external)
         if explicit.get(name):
             candidates.append(_rooted_path(root, explicit[name] or ""))
         env_name = (
@@ -1038,8 +979,6 @@ def _find_artifacts(
         candidates.append(root / "deploy" / "services" / binary)
         for candidate in candidates:
             resolved = _resolve_regular_file(root, candidate)
-            if resolved is None and external is not None and candidate == external:
-                resolved = external
             if resolved is not None:
                 found[name] = resolved
                 break
@@ -1049,15 +988,9 @@ def _find_artifacts(
 def _find_frontend_native(root: Path, explicit: str | None = None) -> Path | None:
     """Find the exact Python native bridge for the compilation image."""
 
-    external = _external_service_binding("python-frontend-native")
     candidates: list[Path] = []
-    if external is not None:
-        candidates.append(external)
     if explicit:
         candidates.append(_rooted_path(root, explicit))
-    env_value = os.environ.get(SERVICE_COORDINATE_ENV["python-frontend-native"], "").strip()
-    if env_value:
-        candidates.append(_rooted_path(root, env_value))
     candidates.extend(
         (
             root / "target" / "release" / FRONTEND_NATIVE_ARTIFACT[1],
@@ -1066,8 +999,6 @@ def _find_frontend_native(root: Path, explicit: str | None = None) -> Path | Non
     )
     for candidate in candidates:
         resolved = _resolve_regular_file(root, candidate)
-        if resolved is None and external is not None and candidate == external:
-            resolved = external
         if resolved is not None:
             return resolved
     return None
@@ -1230,7 +1161,7 @@ def qualify(
             Diagnostic(
                 "missing-publishable-frontend-native",
                 "no publishable Python frontend native bridge is present",
-                "build and publish the exact Linux or host frontend bridge, then set APXM_PYTHON_FRONTEND_NATIVE to its immutable path@sha256 digest when cross-platform",
+                "build the exact frontend bridge with `dekk agents build-frontend-native` before qualifying a release",
             )
         )
     else:
@@ -1276,20 +1207,25 @@ def _git_relative(root: Path, path: Path) -> str:
         return path.name
 
 
-def generate_descriptors(
+def build_release_documents(
     root: Path,
     *,
     compilation_service_path: str,
     runtime_service_path: str,
     python_frontend_native_path: str | None = None,
-    output_dir: Path,
-    source_revision: str | None = None,
-) -> tuple[Path, Path, Path, Path]:
+    source_revision: str,
+) -> dict[Path, bytes]:
+    """Return the four release documents for one revision and one artifact set.
+
+    This is the whole content of a release cohort's descriptors: it hashes the
+    exact service executables, the exact Python frontend bridge and every
+    shipped contract schema, and it reads nothing else.  The owner path
+    (:func:`generate_descriptors`) wraps it with the Git checks that decide
+    *which* revision may be published; a service image build reuses it with the
+    revision it was handed, because an image carries no Git checkout.
+    """
+
     root = root.resolve()
-    if not _is_clean(root):
-        raise ValueError(
-            "cannot generate immutable release descriptors from a dirty owner checkout; existing local edits were not changed"
-        )
     services: dict[str, Path] = {}
     for name, binary in SERVICE_ARTIFACTS:
         raw_path = (
@@ -1298,12 +1234,6 @@ def generate_descriptors(
             else runtime_service_path
         )
         service = _resolve_regular_file(root, _rooted_path(root, raw_path))
-        if service is None:
-            # Cross-platform release builders may supply an immutable
-            # artifact coordinate outside this checkout.  Qualification
-            # already verifies that coordinate against the release manifest;
-            # descriptor generation must be able to bind the same bytes.
-            service = _external_service_binding(name)
         if service is None:
             raise ValueError(
                 f"publishable {name} must be a regular file: {raw_path}; supply the real {binary} binary"
@@ -1314,20 +1244,16 @@ def generate_descriptors(
     frontend_native = _find_frontend_native(root, python_frontend_native_path)
     if frontend_native is None:
         raise ValueError(
-            "publishable Python frontend native bridge is missing; supply the real bridge or an immutable APXM_PYTHON_FRONTEND_NATIVE coordinate"
+            "publishable Python frontend native bridge is missing; build the real bridge before generating descriptors"
         )
     shipped_schemas = _discover_shipped_schemas(root)
     if not shipped_schemas:
         raise ValueError(
             f"publishable contract schemas are missing under {SCHEMA_DIRECTORY_REL}; a release cannot pin contracts it does not ship"
         )
-    revision = source_revision or _git_revision(root)
-    if revision is None or not HEX40.fullmatch(revision):
-        raise ValueError("cannot generate descriptors without a full lowercase Git source revision")
-    if _git_text(root, "rev-parse", f"{revision}^{{commit}}") != revision:
-        raise ValueError(f"source revision is not present in the owner checkout: {revision}")
-    if not _git_is_ancestor(root, revision, "HEAD"):
-        raise ValueError(f"source revision is not an ancestor of the owner checkout HEAD: {revision}")
+    revision = source_revision
+    if not HEX40.fullmatch(revision):
+        raise ValueError("cannot generate descriptors without a full lowercase source revision")
 
     source = {
         "schema_version": SOURCE_DESCRIPTOR_SCHEMA,
@@ -1385,28 +1311,129 @@ def generate_descriptors(
         "owner_descriptor_digest": owner_digest,
         "integrity_algorithm": "sha256",
     }
-    manifest_bytes = _canonical_json(manifest)
+    return {
+        SOURCE_DESCRIPTOR_REL: source_bytes,
+        OWNER_DESCRIPTOR_REL: owner_bytes,
+        OWNER_DESCRIPTOR_SIDECAR_REL: f"{owner_digest}  {OWNER_DESCRIPTOR_REL.as_posix()}\n".encode("utf-8"),
+        RELEASE_MANIFEST_REL: _canonical_json(manifest),
+    }
 
-    source_out = output_dir / SOURCE_DESCRIPTOR_REL
-    owner_out = output_dir / OWNER_DESCRIPTOR_REL
-    sidecar_out = output_dir / OWNER_DESCRIPTOR_SIDECAR_REL
-    manifest_out = output_dir / RELEASE_MANIFEST_REL
-    outputs = (
-        (source_out, source_bytes),
-        (owner_out, owner_bytes),
-        (sidecar_out, f"{owner_digest}  {OWNER_DESCRIPTOR_REL.as_posix()}\n".encode("utf-8")),
-        (manifest_out, manifest_bytes),
+
+def generate_descriptors(
+    root: Path,
+    *,
+    compilation_service_path: str,
+    runtime_service_path: str,
+    python_frontend_native_path: str | None = None,
+    output_dir: Path,
+    source_revision: str | None = None,
+) -> tuple[Path, ...]:
+    """Publish one cohort's descriptors from a clean owner checkout.
+
+    Regenerating in place (``--output-dir .``) replaces the checked-in
+    descriptors, because that is the only way to move the checkout to a new
+    cohort and Git already holds the bytes being replaced.  Every other output
+    directory stays write-once: a package or evidence tree must never have a
+    published document rewritten underneath it.
+    """
+
+    root = root.resolve()
+    if not _is_clean(root):
+        raise ValueError(
+            "cannot generate immutable release descriptors from a dirty owner checkout; existing local edits were not changed"
+        )
+    revision = source_revision or _git_revision(root)
+    if revision is None or not HEX40.fullmatch(revision):
+        raise ValueError("cannot generate descriptors without a full lowercase Git source revision")
+    if _git_text(root, "rev-parse", f"{revision}^{{commit}}") != revision:
+        raise ValueError(f"source revision is not present in the owner checkout: {revision}")
+    if not _git_is_ancestor(root, revision, "HEAD"):
+        raise ValueError(f"source revision is not an ancestor of the owner checkout HEAD: {revision}")
+    documents = build_release_documents(
+        root,
+        compilation_service_path=compilation_service_path,
+        runtime_service_path=runtime_service_path,
+        python_frontend_native_path=python_frontend_native_path,
+        source_revision=revision,
     )
+    in_place = output_dir.resolve() == root
+    outputs = tuple((output_dir / relative, payload) for relative, payload in documents.items())
+    if not in_place:
+        for path, payload in outputs:
+            if path.is_symlink() or (path.exists() and (not path.is_file() or path.read_bytes() != payload)):
+                raise ValueError(
+                    f"refusing to overwrite existing release input with different bytes: {path}"
+                )
     for path, payload in outputs:
-        if path.is_symlink() or (path.exists() and (not path.is_file() or path.read_bytes() != payload)):
-            raise ValueError(
-                f"refusing to overwrite existing release input with different bytes: {path}"
-            )
-    for path, payload in outputs:
+        if path.is_symlink():
+            raise ValueError(f"release input is not a regular file: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
+        if not path.exists() or path.read_bytes() != payload:
             path.write_bytes(payload)
-    return source_out, owner_out, sidecar_out, manifest_out
+    return tuple(path for path, _ in outputs)
+
+
+def generate_image_descriptors(
+    root: Path,
+    *,
+    compilation_service_path: str,
+    runtime_service_path: str,
+    python_frontend_native_path: str | None = None,
+    output_dir: Path,
+    source_revision: str,
+) -> dict[str, Any]:
+    """Regenerate one cohort's descriptors inside a service image build.
+
+    An image has no Git checkout, so the revision is handed in and the build
+    proves it instead: the regenerated source and owner descriptors must be
+    byte-identical to the ones the checkout ships, and the regenerated manifest
+    must publish exactly the schema digests the checked-in manifest publishes.
+    Only the service and frontend digests are allowed to differ, because those
+    are the bytes this image just built.  A build that cannot reproduce the
+    cohort's identity fails instead of stamping an unverifiable label.
+    """
+
+    root = root.resolve()
+    documents = build_release_documents(
+        root,
+        compilation_service_path=compilation_service_path,
+        runtime_service_path=runtime_service_path,
+        python_frontend_native_path=python_frontend_native_path,
+        source_revision=source_revision,
+    )
+    for relative in (SOURCE_DESCRIPTOR_REL, OWNER_DESCRIPTOR_REL, OWNER_DESCRIPTOR_SIDECAR_REL):
+        checked_in = _resolve_regular_file(root, root / relative)
+        if checked_in is None:
+            raise ValueError(f"the checkout in this image ships no {relative.as_posix()}")
+        if checked_in.read_bytes() != documents[relative]:
+            raise ValueError(
+                f"regenerated {relative.as_posix()} does not match the checked-in cohort at revision {source_revision}"
+            )
+    checked_in_manifest = _load_json(root, root / RELEASE_MANIFEST_REL, [], "release manifest")
+    if not isinstance(checked_in_manifest, dict):
+        raise ValueError("the checkout in this image ships no readable release manifest")
+    regenerated = json.loads(documents[RELEASE_MANIFEST_REL].decode("utf-8"))
+    if regenerated.get("schemas") != checked_in_manifest.get("schemas"):
+        raise ValueError(
+            "regenerated schema digests do not match the checked-in release manifest; the image ships different contracts than the cohort"
+        )
+    output_dir = output_dir.resolve()
+    for relative, payload in documents.items():
+        destination = output_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+    manifest = regenerated
+    return {
+        "schema": "apxm.agents.image-release-descriptors.v1",
+        "semantic_owner": "agents",
+        "source_revision": source_revision,
+        "output_dir": str(output_dir),
+        "owner_descriptor_digest": manifest["owner_descriptor_digest"],
+        "release_manifest_digest": _digest_bytes(documents[RELEASE_MANIFEST_REL]),
+        "services": manifest["services"],
+        "frontend_native": manifest["frontend_native"],
+        "schema_count": len(manifest["schemas"]),
+    }
 
 
 def _write_once(path: Path, payload: bytes) -> None:
@@ -2117,93 +2144,6 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
     return payload
 
 
-def verify_linux_package(
-    package_dir: Path, *, architecture: str = "x86_64"
-) -> dict[str, Any]:
-    """Verify that a consumer package contains Linux service bytes.
-
-    The package manifest binds the exact service bytes, while this explicit
-    consumer check binds the deployment architecture.  Keeping architecture
-    outside the owner manifest lets one immutable source cohort publish
-    independently qualified Linux x86_64 and arm64 service packages.
-    """
-
-    normalized_architecture = architecture.casefold()
-    if normalized_architecture == "aarch64":
-        normalized_architecture = "arm64"
-    expected_machine = LINUX_SERVICE_ARCHITECTURES.get(normalized_architecture)
-    if expected_machine is None:
-        raise ValueError(
-            "unsupported Linux service architecture: "
-            f"{architecture!r}; expected one of x86_64 or arm64"
-        )
-
-    payload = verify_package(package_dir)
-    if payload.get("qualified") is not True:
-        payload["qualification_scope"] = f"consumer-linux-{normalized_architecture}"
-        return payload
-
-    root = package_dir.expanduser().resolve()
-    manifest_path = root / LOCAL_ARTIFACT_MANIFEST_REL
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        # The base verifier already reports the authoritative manifest error.
-        return payload
-
-    diagnostics: list[dict[str, str]] = list(payload.get("diagnostics", []))
-    files = manifest.get("files") if isinstance(manifest, dict) else None
-    service_files = {
-        entry.get("name"): entry.get("path")
-        for entry in files
-        if isinstance(entry, dict)
-        and entry.get("name")
-        in {*{name for name, _ in SERVICE_ARTIFACTS}, FRONTEND_NATIVE_ARTIFACT[0]}
-    } if isinstance(files, list) else {}
-    for name, _ in (*SERVICE_ARTIFACTS, FRONTEND_NATIVE_ARTIFACT):
-        relative = service_files.get(name)
-        if not isinstance(relative, str):
-            continue
-        artifact = root / relative
-        try:
-            header = artifact.read_bytes()[:20]
-        except OSError:
-            continue
-        if (
-            len(header) < 20
-            or header[:4] != b"\x7fELF"
-            or header[4] != LINUX_X86_64_ELF_CLASS
-            or header[5] != LINUX_X86_64_ELF_DATA
-            or header[6] != 1
-        ):
-            diagnostics.append(
-                {
-                    "code": (
-                        "non-linux-frontend-native"
-                        if name == FRONTEND_NATIVE_ARTIFACT[0]
-                        else "non-linux-service-artifact"
-                    ),
-                    "message": f"consumer package {name!r} is not a Linux ELF artifact: {relative}",
-                    "remediation": f"obtain the exact APXM Linux {normalized_architecture} release package for the declared source revision; a host-native build is not sufficient",
-                }
-            )
-            continue
-        machine = int.from_bytes(header[18:20], byteorder="little")
-        if machine != expected_machine:
-            diagnostics.append(
-                {
-                    "code": "unsupported-linux-service-architecture",
-                    "message": f"consumer package {name!r} is Linux ELF but not {normalized_architecture} (e_machine={machine}): {relative}",
-                    "remediation": f"obtain the exact APXM Linux {normalized_architecture} service package required by the runtime owner",
-                }
-            )
-
-    payload["qualification_scope"] = f"consumer-linux-{normalized_architecture}"
-    payload["qualified"] = not diagnostics
-    payload["diagnostics"] = diagnostics
-    return payload
-
-
 def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
     root = root.resolve()
     payload = _package_payload(result, root)
@@ -2233,6 +2173,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_parser.add_argument("--python-frontend-native")
     generate_parser.add_argument("--output-dir", type=Path, required=True)
     generate_parser.add_argument("--source-revision")
+    image_parser = subparsers.add_parser(
+        "image-descriptors",
+        help="regenerate one cohort's descriptors inside a service image build",
+    )
+    image_parser.add_argument("--root", type=Path, default=REPOSITORY_ROOT)
+    image_parser.add_argument("--compilation-service", required=True)
+    image_parser.add_argument("--runtime-service", required=True)
+    image_parser.add_argument("--python-frontend-native")
+    image_parser.add_argument("--output-dir", type=Path, required=True)
+    image_parser.add_argument("--source-revision", required=True)
     package_parser = subparsers.add_parser(
         "package", help="package and qualify one immutable local service release artifact"
     )
@@ -2251,18 +2201,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     verify_parser.add_argument("--package-dir", type=Path, default=None)
     verify_parser.add_argument("--json", action="store_true", dest="as_json")
-    verify_linux_parser = subparsers.add_parser(
-        "verify-linux-package",
-        help="verify one immutable package contains Linux x86_64 service executables",
-    )
-    verify_linux_parser.add_argument("--package-dir", type=Path, default=None)
-    verify_linux_parser.add_argument(
-        "--architecture",
-        choices=("x86_64", "arm64"),
-        default="x86_64",
-        help="Linux service architecture to verify (default: x86_64)",
-    )
-    verify_linux_parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
     mode = args.mode or "qualify"
     if mode == "generate":
@@ -2280,6 +2218,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         for path in outputs:
             print(path)
+        return 0
+    if mode == "image-descriptors":
+        try:
+            payload = generate_image_descriptors(
+                args.root,
+                compilation_service_path=args.compilation_service,
+                runtime_service_path=args.runtime_service,
+                python_frontend_native_path=args.python_frontend_native,
+                output_dir=args.output_dir,
+                source_revision=args.source_revision,
+            )
+        except (OSError, ValueError) as exc:
+            print(f"image descriptor regeneration failed: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if mode == "package":
         try:
@@ -2318,7 +2271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
         return 0 if payload.get("qualified") else 1
-    if mode in {"verify-package", "verify-linux-package"} and args.package_dir is None:
+    if mode == "verify-package" and args.package_dir is None:
         try:
             args.package_dir = declared_release_package_dir(REPOSITORY_ROOT)
         except (OSError, ValueError) as exc:
@@ -2331,21 +2284,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(
                 "APXM consumer release package verification: "
-                + ("PASS" if payload.get("qualified") else "FAIL")
-            )
-            for diagnostic in payload.get("diagnostics", []):
-                print(
-                    f"[{diagnostic.get('code')}] {diagnostic.get('message')}",
-                    file=sys.stderr,
-                )
-        return 0 if payload.get("qualified") else 1
-    if mode == "verify-linux-package":
-        payload = verify_linux_package(args.package_dir, architecture=args.architecture)
-        if args.as_json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print(
-                f"APXM Linux {args.architecture} release package verification: "
                 + ("PASS" if payload.get("qualified") else "FAIL")
             )
             for diagnostic in payload.get("diagnostics", []):
