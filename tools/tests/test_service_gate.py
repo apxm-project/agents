@@ -94,6 +94,16 @@ class ServiceGateTests(unittest.TestCase):
             ranged[self.gate.COMMIT_LINT_COMMAND],
         )
 
+    def test_skip_omits_a_step_and_rejects_a_name_the_gate_does_not_run(self) -> None:
+        commands = self.gate.load_commands()
+        kept = dict(
+            self.gate.resolve_steps(commands, skip=(self.gate.COMMIT_LINT_COMMAND,))
+        )
+        self.assertNotIn(self.gate.COMMIT_LINT_COMMAND, kept)
+        self.assertEqual(len(kept), len(self.gate.SERVICE_GATE_COMMANDS) - 1)
+        with self.assertRaises(KeyError):
+            self.gate.resolve_steps(commands, skip=("test-all",))
+
     def test_service_environment_drops_every_mlir_toolchain_variable(self) -> None:
         base = {key: "set" for key in self.gate.MLIR_ENVIRONMENT_KEYS}
         base["PATH"] = "/usr/bin"

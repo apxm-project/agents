@@ -163,13 +163,21 @@ jobs:
       # services, both authoring frontends, the release and owner qualification
       # unit tests, and the commit lint — each one the `.dekk.toml` command
       # verbatim, with the MLIR toolchain variables unset.
+      # On a pull request the last step lints every commit the branch adds,
+      # while a rewrite is still cheap. On a push the history is already
+      # published and a red lint could only be cleared by a force-push the repo
+      # boundaries forbid, so the step is skipped exactly as it is in the job
+      # below.
       - name: Run the service gates
+        if: github.event_name == 'pull_request'
         env:
           APXM_COMMIT_LINT_RANGE: >-
-            ${{ github.event_name == 'pull_request'
-                && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha)
-                || '' }}
+            ${{ format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) }}
         run: dekk agents check-service
+
+      - name: Run the service gates
+        if: github.event_name != 'pull_request'
+        run: dekk agents check-service --skip commit-lint
 
       - name: Validate the service gate definition
         run: dekk agents test-service-gate

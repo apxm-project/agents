@@ -91,10 +91,16 @@ def resolve_steps(
     commands: dict[str, str],
     *,
     commit_lint_range: str | None = None,
+    skip: tuple[str, ...] = (),
 ) -> list[tuple[str, str]]:
     """Resolve the gate's command names to `(name, shell command)` pairs."""
+    unknown = [name for name in skip if name not in SERVICE_GATE_COMMANDS]
+    if unknown:
+        raise KeyError(f"{unknown} are not steps of this gate")
     steps: list[tuple[str, str]] = []
     for name in SERVICE_GATE_COMMANDS:
+        if name in skip:
+            continue
         if name not in commands:
             raise KeyError(f"{name!r} is not a command in {DEKK_MANIFEST_PATH.name}")
         run = commands[name]
@@ -158,13 +164,27 @@ def main(argv: list[str] | None = None) -> int:
         help="commit range REV1..REV2 for the commit-lint step (default: HEAD)",
     )
     parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        metavar="STEP",
+        help=(
+            "omit one step; the push half of CI omits commit-lint, whose only "
+            "remedy on a published branch would be a rewrite"
+        ),
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="print the resolved steps without running them",
     )
     args = parser.parse_args(argv)
 
-    steps = resolve_steps(load_commands(), commit_lint_range=args.commit_lint_range)
+    steps = resolve_steps(
+        load_commands(),
+        commit_lint_range=args.commit_lint_range,
+        skip=tuple(args.skip),
+    )
     if args.list:
         for name, run in steps:
             print(f"{name}: {run}")
