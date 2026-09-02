@@ -317,7 +317,7 @@ fn settle_host_capability_requests(
             .filter_map(|observation| {
                 (observation.observation_kind
                     == apxm_runtime_protocol::ObservationKind::CapabilityRequested)
-                    .then(|| observation.host_capability.as_ref())
+                    .then_some(observation.host_capability.as_ref())
                     .flatten()
             })
             .find(|request| !settled.contains(&request.capability_request_id))
@@ -367,7 +367,7 @@ pub fn execute_canonical_command(
     package_root: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
-    let (_air, artifact_bytes) = load_canonical_air(&input)?;
+    let (air, artifact_bytes) = load_canonical_air(&input)?;
     let admission_bytes = read_exact_bytes(&invocation_admission, "Invocation Admission")?;
     let admission: InvocationAdmission =
         serde_json::from_slice(&admission_bytes).with_context(|| {
@@ -380,7 +380,7 @@ pub fn execute_canonical_command(
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
     let output = execute_via_runtime_service(
-        &_air,
+        &air,
         &artifact_bytes,
         admission,
         release_bytes,
