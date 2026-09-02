@@ -104,6 +104,11 @@ pub mod env {
 
     /// Max seconds the runtime waits for host consent on `requires_approval` capabilities.
     pub const APXM_PERMISSION_TIMEOUT_SECS: &str = "APXM_PERMISSION_TIMEOUT_SECS";
+    /// How Runtime Service resolves an authored `Ask` on a builtin capability:
+    /// `deny` (the default when unset) refuses immediately, `timeout:<ms>`
+    /// waits that long for a broker answer and then refuses. A host-fulfilled
+    /// reference is never brokered here; its permission is the host's.
+    pub const APXM_APPROVAL_POLICY: &str = "APXM_APPROVAL_POLICY";
     /// Maximum scheduler concurrency for server-owned runtime work.
     pub const APXM_RUNTIME_MAX_CONCURRENCY: &str = "APXM_RUNTIME_MAX_CONCURRENCY";
     /// Maximum scheduler in-flight work for server-owned runtime work.

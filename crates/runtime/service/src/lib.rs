@@ -159,6 +159,8 @@ pub struct RuntimeService {
     /// reconnect/read APIs use the commit adapter's typed records.
     observation_sink: Arc<ObservationRecorder>,
     broker: Arc<dyn ApprovalBroker>,
+    /// Declared posture for an authored `Ask` on a builtin capability.
+    approval_policy: ApprovalPolicy,
     cancelled: BTreeMap<String, StateEntry>,
     /// Cooperative cancellation signals for invocations currently inside the
     /// driver. Durable cancellation markers remain separate service state;
@@ -208,6 +210,70 @@ impl ObservationSignal {
     }
 }
 
+/// How the service resolves an authored `Ask` on a builtin capability.
+///
+/// APXM keeps its own broker for builtins; a host-fulfilled reference is not
+/// brokered here at all (ADR-0025), so this policy never applies to one. The
+/// deployment states the posture explicitly rather than inheriting whatever
+/// broker a composition root happened to bind: unset means refuse.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ApprovalPolicy {
+    /// Refuse an unresolved `Ask` immediately, without consulting a broker.
+    #[default]
+    Deny,
+    /// Wait this long for a broker answer, then refuse.
+    Timeout(Duration),
+}
+
+const APPROVAL_POLICY_DENY: &str = "deny";
+const APPROVAL_POLICY_TIMEOUT_PREFIX: &str = "timeout:";
+
+impl ApprovalPolicy {
+    /// Parse one declared policy value.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact reason the value is not a policy. There is no
+    /// permissive reading: an unrecognized value is a configuration error,
+    /// not a silent fall back to the default.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let declared = value.trim();
+        if declared.is_empty() || declared == APPROVAL_POLICY_DENY {
+            return Ok(Self::Deny);
+        }
+        let Some(milliseconds) = declared.strip_prefix(APPROVAL_POLICY_TIMEOUT_PREFIX) else {
+            return Err(format!(
+                "{declared:?} is not a policy; expected \"deny\" or \"timeout:<ms>\""
+            ));
+        };
+        let parsed: u64 = milliseconds.parse().map_err(|_| {
+            format!("{milliseconds:?} is not a whole number of milliseconds; expected \"timeout:<ms>\"")
+        })?;
+        if parsed == 0 {
+            return Err(
+                "\"timeout:0\" never waits; state \"deny\" to refuse an ask immediately".to_owned(),
+            );
+        }
+        Ok(Self::Timeout(Duration::from_millis(parsed)))
+    }
+
+    /// Read the declared policy from `APXM_APPROVAL_POLICY`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the parse failure so the composition root can fail closed at
+    /// startup instead of serving an unstated approval posture.
+    pub fn from_env() -> Result<Self, String> {
+        match std::env::var(apxm_core::constants::env::APXM_APPROVAL_POLICY) {
+            Ok(value) => Self::parse(&value),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Deny),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err("value is not valid Unicode; expected \"deny\" or \"timeout:<ms>\"".to_owned())
+            }
+        }
+    }
+}
+
 /// Typed production startup failures. Runtime Service never silently creates
 /// an ephemeral state directory because doing so would make committed reads
 /// disappear across restart.
@@ -219,6 +285,7 @@ pub enum RuntimeServiceStartupError {
     UnsafeRuntimeStateDir(PathBuf),
     OpenRuntimeStateDir(String),
     InvalidAdmissionProfile(String),
+    InvalidApprovalPolicy(String),
 }
 
 impl std::fmt::Display for RuntimeServiceStartupError {
@@ -248,6 +315,9 @@ impl std::fmt::Display for RuntimeServiceStartupError {
             }
             Self::InvalidAdmissionProfile(error) => {
                 write!(formatter, "invalid APXM runtime admission profile: {error}")
+            }
+            Self::InvalidApprovalPolicy(error) => {
+                write!(formatter, "invalid APXM_APPROVAL_POLICY: {error}")
             }
         }
     }
@@ -293,6 +363,7 @@ impl RuntimeService {
             ),
             observation_sink,
             broker: Arc::new(DenyBroker),
+            approval_policy: ApprovalPolicy::Deny,
             cancelled: BTreeMap::new(),
             active_cancellations: BTreeMap::new(),
             cancellation_bytes: 0,
@@ -346,6 +417,17 @@ impl RuntimeService {
                 service.startup_error =
                     Some(RuntimeServiceStartupError::InvalidAdmissionProfile(error));
             }
+        }
+        match ApprovalPolicy::from_env() {
+            Ok(policy) => service.approval_policy = policy,
+            // A declared-but-unreadable approval posture is a startup failure
+            // of its own; it never downgrades to the default, and it never
+            // hides an earlier failure the operator still has to fix.
+            Err(error) if service.startup_error.is_none() => {
+                service.startup_error =
+                    Some(RuntimeServiceStartupError::InvalidApprovalPolicy(error));
+            }
+            Err(_) => {}
         }
         service
     }
@@ -699,6 +781,7 @@ pub(crate) struct PreparedInvocation {
     execution_backend: Arc<dyn ExecutionCommitPort>,
     observation_sink: Arc<ObservationRecorder>,
     broker: Arc<dyn ApprovalBroker>,
+    approval_policy: ApprovalPolicy,
     cancellation: CancellationToken,
     resumable: bool,
 }
@@ -718,10 +801,22 @@ impl PreparedInvocation {
                 if is_host_capability_ref(capability_ref) {
                     continue;
                 }
-                match self.broker.resolve_ask(capability_ref).await {
-                    ApprovalDecision::Allow => {}
-                    ApprovalDecision::Deny => return Err("ask_denied".to_owned()),
-                    ApprovalDecision::Timeout => return Err("ask_timeout".to_owned()),
+                // The deployment states how long, if at all, a builtin `Ask`
+                // may wait for an answer. `Deny` refuses without asking: with
+                // no external answerer, waiting only defers the same refusal.
+                match self.approval_policy {
+                    ApprovalPolicy::Deny => return Err("ask_denied".to_owned()),
+                    ApprovalPolicy::Timeout(wait) => {
+                        match tokio::time::timeout(wait, self.broker.resolve_ask(capability_ref))
+                            .await
+                        {
+                            Ok(ApprovalDecision::Allow) => {}
+                            Ok(ApprovalDecision::Deny) => return Err("ask_denied".to_owned()),
+                            Ok(ApprovalDecision::Timeout) | Err(_) => {
+                                return Err("ask_timeout".to_owned());
+                            }
+                        }
+                    }
                 }
             }
             if self.resumable {
@@ -1675,6 +1770,18 @@ impl RuntimeService {
         self.broker = broker;
     }
 
+    /// State the posture for an authored `Ask` on a builtin capability
+    /// explicitly, as `APXM_APPROVAL_POLICY` does for a deployed service.
+    pub fn bind_approval_policy(&mut self, policy: ApprovalPolicy) {
+        self.approval_policy = policy;
+    }
+
+    /// The posture an authored `Ask` on a builtin capability is resolved under.
+    #[must_use]
+    pub const fn approval_policy(&self) -> ApprovalPolicy {
+        self.approval_policy
+    }
+
     /// Handle the negotiated APXM execution read/observation surface.
     pub fn handle_v2(
         &self,
@@ -2251,6 +2358,7 @@ impl RuntimeService {
             execution_backend: self.execution_backend.commit_port(),
             observation_sink: self.observation_sink.clone(),
             broker: self.broker.clone(),
+            approval_policy: self.approval_policy,
             cancellation,
             resumable: self.resumable_invocations,
         };
@@ -3048,7 +3156,7 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     struct InvocationGate {
@@ -4137,6 +4245,111 @@ mod tests {
             .unwrap()
     }
 
+    struct CountingBroker {
+        asked: Arc<AtomicUsize>,
+        decision: ApprovalDecision,
+    }
+
+    #[async_trait::async_trait]
+    impl ApprovalBroker for CountingBroker {
+        async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+            self.asked.fetch_add(1, Ordering::Release);
+            self.decision
+        }
+    }
+
+    struct SilentBroker;
+
+    #[async_trait::async_trait]
+    impl ApprovalBroker for SilentBroker {
+        async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+            std::future::pending().await
+        }
+    }
+
+    fn start_ask_invocation(service: &mut RuntimeService) -> RuntimeResult {
+        let instance = create_started(service, ask_air_bytes());
+        service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    owner_claim: owner_claim(service, &instance),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn approval_policy_reads_deny_and_timeout_and_rejects_anything_else() {
+        assert_eq!(ApprovalPolicy::parse("").unwrap(), ApprovalPolicy::Deny);
+        assert_eq!(ApprovalPolicy::parse("deny").unwrap(), ApprovalPolicy::Deny);
+        assert_eq!(
+            ApprovalPolicy::parse(" timeout:250 ").unwrap(),
+            ApprovalPolicy::Timeout(Duration::from_millis(250))
+        );
+        for malformed in ["allow", "timeout", "timeout:", "timeout:-1", "timeout:2s", "timeout:0"] {
+            let error = ApprovalPolicy::parse(malformed)
+                .expect_err("a value that is not a policy must not be read as one");
+            assert!(
+                error.contains("deny") || error.contains("timeout"),
+                "{malformed}: {error}"
+            );
+        }
+        assert_eq!(
+            RuntimeServiceStartupError::InvalidApprovalPolicy(
+                ApprovalPolicy::parse("allow").unwrap_err()
+            )
+            .to_string(),
+            "invalid APXM_APPROVAL_POLICY: \"allow\" is not a policy; expected \"deny\" or \"timeout:<ms>\""
+        );
+    }
+
+    #[test]
+    fn deny_policy_refuses_a_builtin_ask_without_consulting_the_broker() {
+        let mut service = RuntimeService::default();
+        assert_eq!(service.approval_policy(), ApprovalPolicy::Deny);
+        let asked = Arc::new(AtomicUsize::new(0));
+        service.bind_approval_broker(Arc::new(CountingBroker {
+            asked: Arc::clone(&asked),
+            decision: ApprovalDecision::Allow,
+        }));
+        let result = start_ask_invocation(&mut service);
+        assert!(
+            matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_denied"),
+            "{result:?}"
+        );
+        assert_eq!(asked.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn timeout_policy_admits_an_answered_ask_and_denies_an_unanswered_one() {
+        let mut service = RuntimeService::default();
+        let asked = Arc::new(AtomicUsize::new(0));
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_secs(30)));
+        service.bind_approval_broker(Arc::new(CountingBroker {
+            asked: Arc::clone(&asked),
+            decision: ApprovalDecision::Allow,
+        }));
+        let allowed = start_ask_invocation(&mut service);
+        assert!(
+            !matches!(allowed, RuntimeResult::Failed { ref code, .. } if code.starts_with("ask_")),
+            "{allowed:?}"
+        );
+        assert_eq!(asked.load(Ordering::Acquire), 1);
+
+        let mut refusing = RuntimeService::default();
+        refusing.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_millis(25)));
+        refusing.bind_approval_broker(Arc::new(SilentBroker));
+        let unanswered = start_ask_invocation(&mut refusing);
+        assert!(
+            matches!(unanswered, RuntimeResult::Failed { ref code, .. } if code == "ask_timeout"),
+            "{unanswered:?}"
+        );
+    }
+
     #[test]
     fn denied_ask_never_executes() {
         let mut service = RuntimeService::default();
@@ -4161,6 +4374,7 @@ mod tests {
     #[test]
     fn timed_out_ask_never_executes() {
         let mut service = RuntimeService::default();
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_millis(500)));
         service.bind_approval_broker(std::sync::Arc::new(apxm_execution::TimeoutBroker));
         let instance = create_started(&mut service, ask_air_bytes());
         let result = service
@@ -4256,6 +4470,7 @@ mod tests {
         let gate = Arc::new(InvocationGate {
             released: Arc::new(AtomicBool::new(false)),
         });
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_secs(60)));
         service.bind_approval_broker(gate.clone());
         let shared = Arc::new(Mutex::new(service));
         let prepared = {
