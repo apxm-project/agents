@@ -16,7 +16,9 @@
 //! handling are this port's responsibility and are invisible above it. A caller
 //! never names an interpreter, never sees a process, and never handles a panic:
 //! an absent interpreter or an absent frontend package returns
-//! [`SourceDiagnosticCode::FrontendUnavailable`].
+//! [`SourceDiagnosticCode::FrontendUnavailable`], and so does a host whose
+//! kernel cannot provide the capture boundary described in
+//! [`confinement`].
 //!
 //! # Fail closed
 //!
@@ -33,6 +35,7 @@
 //! that: it accepts exactly one FrontendGraph document from a frontend and
 //! lowers it itself.
 
+pub mod confinement;
 pub mod diagnostic;
 mod frontend;
 pub mod package_snapshot;
@@ -44,6 +47,10 @@ use apxm_program::air::AirModule;
 use apxm_program::frontend_graph::FrontendGraph;
 use apxm_program::source_map::SourceMap;
 
+pub use crate::confinement::{
+    CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE, ConfinementMode, ConfinementReadiness,
+    ConfinementStatus, capture_confinement_readiness,
+};
 pub use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 pub use crate::frontend::Frontend;
 pub use crate::package_snapshot::{

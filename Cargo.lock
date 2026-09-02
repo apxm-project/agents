@@ -532,6 +532,7 @@ version = "0.1.0"
 dependencies = [
  "apxm-core",
  "apxm-program",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
