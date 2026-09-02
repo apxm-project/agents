@@ -48,6 +48,7 @@ SERVICE_GATE_COMMANDS: tuple[str, ...] = (
     "test-typescript-frontend",
     "test-release-qualification",
     "test-owner-qualification",
+    "test-service-images",
     "commit-lint",
 )
 
