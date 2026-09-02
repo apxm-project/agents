@@ -784,7 +784,7 @@ mod tests {
         assert_eq!(output["tool_calls"], json!([]));
         let content = output["content"].as_str().expect("a textual completion");
         assert!(
-            content.starts_with("apxm-fixture:"),
+            content.starts_with(fixture::FIXTURE_COMPLETION_PREFIX),
             "a development answer is never mistakable for a provider answer: {content}"
         );
         assert!(usage.input_tokens > 0 && usage.output_tokens > 0);

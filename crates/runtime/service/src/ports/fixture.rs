@@ -209,6 +209,13 @@ pub fn register_selected_backend(
         ));
         return;
     }
+    if registry.get_backend(FIXTURE_BACKEND_NAME).is_some() {
+        skipped.push(format!(
+            "the roster already registers a backend named '{FIXTURE_BACKEND_NAME}', so the \
+             development backend was not registered over it"
+        ));
+        return;
+    }
     let backend: Arc<dyn LLMBackend> = Arc::new(FixtureBackend::new(models.clone()));
     if let Err(error) = registry.register_arc(FIXTURE_BACKEND_NAME, backend) {
         skipped.push(format!(
@@ -283,6 +290,40 @@ mod tests {
         assert_eq!(
             bound,
             BTreeSet::from(["a.model".to_owned(), "b.model".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_roster_backend_of_the_same_name_is_not_registered_over() {
+        let registry = LLMRegistry::new();
+        registry
+            .register_arc(
+                FIXTURE_BACKEND_NAME,
+                Arc::new(FixtureBackend::new(vec!["roster.model".to_owned()])),
+            )
+            .expect("the roster registers the name first");
+
+        let mut bound = BTreeSet::new();
+        let mut skipped = Vec::new();
+        register_selected_backend(
+            &registry,
+            Some("fixture"),
+            Some("a.model"),
+            &mut bound,
+            &mut skipped,
+        );
+
+        assert!(bound.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains("already registers"), "{}", skipped[0]);
+        let request = {
+            let mut request = LLMRequest::new("anything");
+            request.model = Some("a.model".to_owned());
+            request
+        };
+        assert!(
+            registry.resolve_backend(&request).is_err(),
+            "nothing was bound to the reference the selection named"
         );
     }
 
