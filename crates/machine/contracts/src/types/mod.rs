@@ -25,6 +25,7 @@ pub mod execution;
 pub mod graph_hints;
 pub mod graph_metrics;
 pub mod handler_manifest;
+pub mod host_capability;
 pub mod intents;
 pub mod metrics;
 

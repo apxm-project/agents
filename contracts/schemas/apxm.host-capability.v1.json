@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.host-capability.v1",
+  "title": "HostCapability",
+  "description": "The host-fulfilled Capability surface. A host capability is declared in `agent.toml` as `[[capabilities.host]]` and referred to from authored source as `Capability(\"host:<id>\")`. The runtime never executes one: it publishes a request, parks the invocation on the durable-event machinery, and settles the node when the embedding host answers. One schema states the whole surface because the three documents are one contract: the declaration set a package publishes, the request a parked node publishes, and the outcome the host returns. Every document carries the same `schema_version`, and the three are mutually exclusive by construction.",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.host-capability.v1"
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/HostCapabilityDeclaration"
+      }
+    },
+    "capability_request_id": {
+      "$ref": "#/$defs/HostCapabilityRequestId"
+    },
+    "program_invocation_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "capability_ref": {
+      "$ref": "#/$defs/HostCapabilityRef"
+    },
+    "effect": {
+      "$ref": "#/$defs/HostCapabilityEffect"
+    },
+    "input": {
+      "description": "The exact canonical JSON bytes of the authored arguments, as text. The request carries the arguments rather than a reference to them because a host that cannot read the arguments cannot perform the call.",
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "authored_permission": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "ask",
+        "deny"
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "denied",
+        "failed",
+        "unknown",
+        "cancelled"
+      ]
+    },
+    "output": {
+      "description": "Present only for `ok`: the exact canonical JSON bytes of the typed output, as text.",
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "receipt_ref": {
+      "description": "The host's own durable record of the effect, carried opaquely into the program's evidence.",
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "message": {
+      "description": "Why a settlement that is not `ok` decided what it decided.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "$ref": "#/$defs/HostCapabilitySet"
+    },
+    {
+      "$ref": "#/$defs/HostCapabilityRequest"
+    },
+    {
+      "$ref": "#/$defs/HostCapabilityOutcome"
+    }
+  ],
+  "$defs": {
+    "HostCapabilityId": {
+      "description": "The declared id, without the `host:` prefix the authored reference carries. Lowercase dotted segments, so one id reads the same in a manifest, a reference, and a receipt.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
+      "maxLength": 200
+    },
+    "HostCapabilityRef": {
+      "description": "The authored reference form: the declared id under the reserved `host:` prefix. No builtin id and no shipped handler directory may occupy this namespace.",
+      "type": "string",
+      "pattern": "^host:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
+      "maxLength": 205
+    },
+    "HostCapabilityEffect": {
+      "description": "What one call does to the system behind the host. `read` observes; `write` changes. The host decides what the value obliges it to do; APXM carries it verbatim into the request.",
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "HostCapabilityDeclaration": {
+      "description": "One host capability a package declares it needs. The schemas are JSON Schema documents carried verbatim: APXM does not evaluate them, and the host is the party that holds an input against `input_schema` and an output against `output_schema`.",
+      "type": "object",
+      "required": [
+        "id",
+        "effect",
+        "input_schema",
+        "output_schema"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/HostCapabilityId"
+        },
+        "effect": {
+          "$ref": "#/$defs/HostCapabilityEffect"
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "output_schema": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostCapabilitySet": {
+      "description": "Every host capability one package declares. The minted Capability set a program compiles against is the builtin catalogue united with `host:<id>` for each id declared here; a `host:` reference to anything else is a compile error.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "capabilities"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.host-capability.v1"
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/HostCapabilityDeclaration"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostCapabilityRequest": {
+      "description": "The request one parked `capability.invoke` node publishes. `capability_request_id` is derived from the invocation and node-execution coordinates, so a re-park after a restart republishes the same id rather than minting a second request for one effect. `authored_permission` is what the program's own source asked for: a request the host may narrow and may never widen, which APXM records and does not broker.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "capability_request_id",
+        "program_invocation_id",
+        "capability_ref",
+        "effect",
+        "input",
+        "authored_permission"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.host-capability.v1"
+        },
+        "capability_request_id": {
+          "$ref": "#/$defs/HostCapabilityRequestId"
+        },
+        "program_invocation_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "capability_ref": {
+          "$ref": "#/$defs/HostCapabilityRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/HostCapabilityEffect"
+        },
+        "input": {
+          "description": "The exact canonical JSON bytes of the authored arguments, as text. The request carries the arguments rather than a reference to them because a host that cannot read the arguments cannot perform the call.",
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "authored_permission": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostCapabilityRequestId": {
+      "description": "The deterministic identity of one host capability request, derived from the invocation and node-execution coordinates of the node that published it.",
+      "type": "string",
+      "pattern": "^capability-request\\.[0-9a-f]{64}$"
+    },
+    "HostCapabilityOutcome": {
+      "description": "How one request settled. `ok` carries the output the program receives; `denied` and `failed` settle the node as a typed failure the program observes; `unknown` settles it as an uncertain effect; `cancelled` is recorded by APXM when the request or its invocation was cancelled, and is not a settlement a host may send.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "capability_request_id",
+        "outcome"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.host-capability.v1"
+        },
+        "capability_request_id": {
+          "$ref": "#/$defs/HostCapabilityRequestId"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "denied",
+            "failed",
+            "unknown",
+            "cancelled"
+          ]
+        },
+        "output": {
+          "description": "Present only for `ok`: the exact canonical JSON bytes of the typed output, as text.",
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "receipt_ref": {
+          "description": "The host's own durable record of the effect, carried opaquely into the program's evidence.",
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "message": {
+          "description": "Why a settlement that is not `ok` decided what it decided.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "const": "ok"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "output"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "output"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -187,11 +187,12 @@ const SCHEMAS_SPELLING_THE_DECISION_VOCABULARY: &[&str] = &[
     "apxm.org.json",
     "apxm.frontend-conformance.json",
     "apxm.frontend-graph.json",
+    "apxm.host-capability.v1.json",
     "apxm.runtime-evidence.json",
 ];
 
 /// The permission decision has one owner — `PermissionDecision::DECISIONS` —
-/// and six published schemas restate it inline, in nine places. Before this
+/// and seven published schemas restate it inline. Before this
 /// test, exactly one of those nine (`apxm.frontend-graph`'s bare-string branch,
 /// pinned above) was held to the owner; the other eight could gain or lose a
 /// decision with nothing to disagree.
