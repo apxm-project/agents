@@ -59,6 +59,27 @@ def default_release_package_dir(root: Path, source_revision: str) -> Path:
         raise ValueError("cannot derive a release package path without a full lowercase source revision")
     return root / ".apxm" / "release-artifacts" / f"cohort-{source_revision[:8]}"
 
+
+def declared_release_package_dir(root: Path) -> Path:
+    """Return the cohort directory the checked-in source descriptor selects.
+
+    Consumer verification used to default to ``.apxm/release-artifacts/current``,
+    which the packager never writes: it materializes every cohort under its own
+    source-derived directory, so that default addressed whichever superseded
+    package happened to be left behind and reported its stale schema as a
+    consumer failure.  Resolve the source revision this checkout declares
+    instead, so the default verifies the cohort the descriptors name.
+    """
+
+    descriptor = _load_json(root, root / SOURCE_DESCRIPTOR_REL, [], "source descriptor")
+    revision = descriptor.get("source_revision") if isinstance(descriptor, dict) else None
+    if not isinstance(revision, str):
+        raise ValueError(
+            f"cannot select a release package without a source descriptor at {SOURCE_DESCRIPTOR_REL}"
+        )
+    return default_release_package_dir(root, revision)
+
+
 SOURCE_DESCRIPTOR_SCHEMA = "apxm.agents-source-revision.v1"
 OWNER_DESCRIPTOR_SCHEMA = "apxm.agents-owner-descriptor.v1"
 RELEASE_MANIFEST_SCHEMA = "apxm.agents-service-release-manifest.v1"
@@ -2027,17 +2048,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify_parser = subparsers.add_parser(
         "verify-package", help="verify one immutable local service release package as a consumer"
     )
-    verify_parser.add_argument(
-        "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
-    )
+    verify_parser.add_argument("--package-dir", type=Path, default=None)
     verify_parser.add_argument("--json", action="store_true", dest="as_json")
     verify_linux_parser = subparsers.add_parser(
         "verify-linux-package",
         help="verify one immutable package contains Linux x86_64 service executables",
     )
-    verify_linux_parser.add_argument(
-        "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
-    )
+    verify_linux_parser.add_argument("--package-dir", type=Path, default=None)
     verify_linux_parser.add_argument(
         "--architecture",
         choices=("x86_64", "arm64"),
@@ -2100,6 +2117,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
         return 0 if payload.get("qualified") else 1
+    if mode in {"verify-package", "verify-linux-package"} and args.package_dir is None:
+        try:
+            args.package_dir = declared_release_package_dir(REPOSITORY_ROOT)
+        except (OSError, ValueError) as exc:
+            print(f"consumer verification failed: {exc}", file=sys.stderr)
+            return 2
     if mode == "verify-package":
         payload = verify_package(args.package_dir)
         if args.as_json:
