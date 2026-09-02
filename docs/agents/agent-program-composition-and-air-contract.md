@@ -494,6 +494,15 @@ Deny` is recorded in AIR and carried verbatim to the host, which merges it with
 its own policy and may only narrow it. The published contract is
 `contracts/schemas/apxm.host-capability.v1.json`.
 
+A builtin reference keeps APXM's own broker, and the deployment states how far
+that broker may be trusted through `APXM_APPROVAL_POLICY`: `deny` (the value
+assumed when the variable is unset) refuses an authored `Ask` on a builtin
+immediately without consulting a broker, and `timeout:<ms>` waits that long for
+a broker answer and then refuses. Any other value is a startup failure rather
+than a silent fall back to the default, so a deployment cannot serve an
+approval posture nobody stated. The policy never touches a `host:` reference:
+that permission is the host's to answer.
+
 ### 8.3 `program.new`
 
 ```text

@@ -65,8 +65,15 @@ def make_clean_owner_checkout(root: Path) -> tuple[str, dict[str, Path]]:
         protocol = root / relative
         protocol.parent.mkdir(parents=True, exist_ok=True)
         protocol.write_bytes(contents)
+    schemas = root / "contracts" / "schemas"
+    schemas.mkdir(parents=True, exist_ok=True)
+    for schema_name in ("apxm.host-capability.v1", "apxm.execution-observation.v1"):
+        (schemas / f"{schema_name}.json").write_text(
+            json.dumps({"$id": schema_name, "type": "object"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     subprocess.run(
-        ["git", "-C", str(root), "add", ".gitignore", "README.md", "crates"],
+        ["git", "-C", str(root), "add", ".gitignore", "README.md", "crates", "contracts"],
         check=True,
         env=git_environment(),
     )
@@ -301,6 +308,165 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any(item.code == "service-artifact-digest-mismatch" for item in result.diagnostics))
 
+    def test_generation_publishes_every_shipped_schema_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            _, _, _, manifest = self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root / "out",
+                source_revision=revision,
+            )
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            expected = {
+                path.stem: "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted((root / "contracts" / "schemas").iterdir())
+            }
+        self.assertEqual({item["name"]: item["digest"] for item in payload["schemas"]}, expected)
+        self.assertEqual(
+            {item["path"] for item in payload["schemas"]},
+            {f"contracts/schemas/{name}.json" for name in expected},
+        )
+
+    def test_generation_refuses_a_cohort_that_ships_no_schemas(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            subprocess.run(
+                ["git", "-C", str(root), "rm", "-rq", "contracts/schemas"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "drop schemas"],
+                check=True,
+                env=git_environment(),
+            )
+            with self.assertRaisesRegex(ValueError, "contract schemas are missing"):
+                self.qualification.generate_descriptors(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    output_dir=root / "out",
+                    source_revision=revision,
+                )
+
+    def test_mutated_schema_is_rejected_against_the_published_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            (root / "contracts/schemas/apxm.host-capability.v1.json").write_text(
+                '{"$id": "apxm.host-capability.v1", "type": "string"}\n', encoding="utf-8"
+            )
+            result = self.qualification.qualify(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+        self.assertFalse(result.ok)
+        self.assertTrue(any(item.code == "schema-digest-mismatch" for item in result.diagnostics))
+
+    def test_unpublished_schema_blocks_qualification_until_the_manifest_is_regenerated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            (root / "contracts/schemas/apxm.execution-read.v1.json").write_text(
+                '{"$id": "apxm.execution-read.v1", "type": "object"}\n', encoding="utf-8"
+            )
+            result = self.qualification.qualify(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+        self.assertFalse(result.ok)
+        rendered = "\n".join(item.render() for item in result.diagnostics)
+        self.assertIn("missing-published-schema", rendered)
+        self.assertIn("apxm.execution-read.v1", rendered)
+
+    def test_consumer_verification_rejects_a_tampered_packaged_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            packaged_schema = (
+                Path(package_dir) / "contracts/schemas/apxm.host-capability.v1.json"
+            )
+            self.assertTrue(packaged_schema.is_file())
+            packaged_schema.write_text('{"type": "string"}\n', encoding="utf-8")
+            verified = self.qualification.verify_package(Path(package_dir))
+        self.assertFalse(verified["qualified"])
+        codes = {item["code"] for item in verified["diagnostics"]}
+        self.assertIn("schema-digest-mismatch", codes)
+
+    def test_release_manifest_schema_document_matches_the_validator(self) -> None:
+        document = json.loads(
+            (
+                ROOT / "contracts/schemas/apxm.agents-service-release-manifest.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (ROOT / self.qualification.RELEASE_MANIFEST_REL).read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(document["required"]), set(document["properties"]))
+        self.assertEqual(set(manifest), set(document["required"]))
+        self.assertIn("schemas", document["required"])
+        self.assertEqual(
+            set(document["properties"]["schemas"]["items"]["required"]),
+            {"name", "path", "digest"},
+        )
+
+    def test_checked_in_manifest_publishes_every_shipped_schema(self) -> None:
+        manifest = json.loads(
+            (ROOT / self.qualification.RELEASE_MANIFEST_REL).read_text(encoding="utf-8")
+        )
+        published = {item["name"]: item["digest"] for item in manifest["schemas"]}
+        shipped = {
+            name: "sha256:" + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+            for name, relative in self.qualification._discover_shipped_schemas(ROOT)
+        }
+        self.assertEqual(published, shipped)
+
     def test_manifest_must_bind_owner_descriptor_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -515,6 +681,8 @@ class ReleaseQualificationTests(unittest.TestCase):
                     "compilation-service",
                     "runtime-service",
                     "python-frontend-native",
+                    "apxm.host-capability.v1",
+                    "apxm.execution-observation.v1",
                 },
             )
             package_manifest = Path(package["root"]) / package["manifest"]
@@ -626,7 +794,7 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertEqual(
             verified["package_manifest_digest"], packaged["package"]["manifest_digest"]
         )
-        self.assertEqual(len(verified["verified_files"]), 9)
+        self.assertEqual(len(verified["verified_files"]), 11)
 
     def test_consumer_verification_rejects_tampered_bytes_and_extra_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:

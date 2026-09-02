@@ -71,8 +71,8 @@ fn a_declared_host_capability_compiles_and_keeps_its_namespace() {
             program_invoking(frontend, "host:notes.search"),
         )
         .with_host_capabilities(["notes.search"]);
-        let compiled = compile_source_bundle(&request, &roots(), &drivers())
-            .unwrap_or_else(|diagnostics| {
+        let compiled =
+            compile_source_bundle(&request, &roots(), &drivers()).unwrap_or_else(|diagnostics| {
                 panic!(
                     "a declared host capability compiles in {}; rejected with {diagnostics:?}",
                     frontend.wire()

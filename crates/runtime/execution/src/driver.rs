@@ -34,6 +34,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
+use apxm_core::types::host_capability::{
+    HostCapabilityOutcomeKind, HostCapabilitySettlement, host_capability_request_id,
+    is_host_capability_ref,
+};
 use apxm_inference::{
     BindingError, CommittedInferenceDispatch, InferenceTargetCommitment, InferenceUsageLineage,
     ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestError,
@@ -50,10 +54,6 @@ use apxm_kernel::{
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
-};
-use apxm_core::types::host_capability::{
-    HostCapabilityOutcomeKind, HostCapabilitySettlement, host_capability_request_id,
-    is_host_capability_ref,
 };
 use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
 use apxm_program::common::{ErrorCategory as EvidenceErrorCategory, TypedErrorEnvelope, TypedRef};
@@ -1120,15 +1120,14 @@ impl DriveState {
         region_occurrence_id: Option<&str>,
         node_started_at: Instant,
     ) -> Result<(), ExecutionError> {
-        self.pending_host_capability =
-            Some(apxm_runtime_protocol::HostCapabilityObservation {
-                capability_request_id: settlement.capability_request_id.clone(),
-                capability_ref: capability_ref.to_owned(),
-                input: None,
-                authored_permission: None,
-                outcome: Some(settlement.outcome),
-                receipt_ref: settlement.receipt_ref.clone(),
-            });
+        self.pending_host_capability = Some(apxm_runtime_protocol::HostCapabilityObservation {
+            capability_request_id: settlement.capability_request_id.clone(),
+            capability_ref: capability_ref.to_owned(),
+            input: None,
+            authored_permission: None,
+            outcome: Some(settlement.outcome),
+            receipt_ref: settlement.receipt_ref.clone(),
+        });
         self.observe(
             ports,
             apxm_runtime_protocol::ObservationKind::CapabilitySettled,
@@ -4908,8 +4907,7 @@ async fn resume_from_continuation(
             Instant::now(),
         )?;
         let outcome = host_capability_outcome(&settlement);
-        state.last_operation_succeeded =
-            matches!(&outcome, CapabilityOutcome::Completed { .. });
+        state.last_operation_succeeded = matches!(&outcome, CapabilityOutcome::Completed { .. });
         state.last_result = match &outcome {
             CapabilityOutcome::Completed { result } => Value::String(result.clone()),
             CapabilityOutcome::Failed { message }
@@ -4933,11 +4931,7 @@ async fn resume_from_continuation(
             CapabilityOutcome::Failed { message } => {
                 state.append_invocation_failure(
                     &parked_node_execution_id,
-                    unavailable_failure_envelope(
-                        "capability",
-                        &parked_node_execution_id,
-                        message,
-                    ),
+                    unavailable_failure_envelope("capability", &parked_node_execution_id, message),
                 );
             }
         }

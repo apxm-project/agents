@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_ais::{SLOT_CAPABILITY_REF, SemanticOpKind};
-use apxm_core::types::host_capability::{
-    ManifestCapabilities, host_capability_ref, minted_host_capability_refs,
-};
 use apxm_compilation_protocol::{
     CompilationHandshake, CompilationRequest, CompilationResult, ProtocolError,
+};
+use apxm_core::types::host_capability::{
+    ManifestCapabilities, host_capability_ref, minted_host_capability_refs,
 };
 use apxm_program::{ExecutableArtifact, air::AirModule};
 use apxm_source_port::{
