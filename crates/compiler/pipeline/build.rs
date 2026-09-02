@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+#[cfg(feature = "mlir")]
+use std::process::Command;
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use apxm_ais::{
@@ -10,14 +11,21 @@ use apxm_ais::{
     generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
     generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen,
 };
+#[cfg(feature = "mlir")]
+use apxm_core::log_debug;
+use apxm_core::log_info;
 use apxm_core::toolchain_env;
+#[cfg(feature = "mlir")]
 use apxm_core::utils::build::{
     LibraryConfig, LinkSpec, Platform, detect_llvm_version, emit_link_directives,
-    find_versioned_mlir_library, get_target_dir, get_workspace_root, locate_library,
+    find_versioned_mlir_library, locate_library,
 };
-use apxm_core::{log_debug, log_info};
+use apxm_core::utils::build::{get_target_dir, get_workspace_root};
 
 /// Build configuration derived from environment variables
+// Only the stub-bindings path reads `out_dir`; the rest is what the CMake and
+// bindgen invocations behind the `mlir` feature need.
+#[cfg_attr(not(feature = "mlir"), allow(dead_code))]
 struct BuildConfig {
     manifest_dir: PathBuf,
     out_dir: PathBuf,
@@ -56,12 +64,14 @@ impl BuildConfig {
 }
 
 /// Paths describing the discovered MLIR installation.
+#[cfg(feature = "mlir")]
 struct MlirLayout {
     prefix: PathBuf,
     lib_dir: PathBuf,
     link_spec: LinkSpec,
 }
 
+#[cfg(feature = "mlir")]
 impl MlirLayout {
     fn new(link_spec: LinkSpec) -> Result<Self> {
         let lib_dir = link_spec
@@ -239,6 +249,7 @@ fn generate_artifact_wire_files(out_dir: &Path, build_dir: Option<&Path>) -> Res
 }
 
 /// Locate MLIR installation and return key directories.
+#[cfg(feature = "mlir")]
 fn locate_mlir_layout() -> Result<MlirLayout> {
     let config = LibraryConfig::for_mlir();
     let link_spec = locate_library(&config)
@@ -248,6 +259,7 @@ fn locate_mlir_layout() -> Result<MlirLayout> {
 }
 
 /// Execute a command and check for success
+#[cfg(feature = "mlir")]
 fn run_command(cmd: &mut Command, error_msg: &str) -> Result<()> {
     log_debug!("apxm-compiler-build", "Running: {:?}", cmd);
     let status = cmd
@@ -266,6 +278,7 @@ fn run_command(cmd: &mut Command, error_msg: &str) -> Result<()> {
 }
 
 /// Configure CMake build
+#[cfg(feature = "mlir")]
 fn configure_cmake(
     build_dir: &Path,
     manifest_dir: &Path,
@@ -357,6 +370,7 @@ fn configure_cmake(
 }
 
 /// Build CMake target
+#[cfg(feature = "mlir")]
 fn build_cmake(build_dir: &Path) -> Result<()> {
     remove_zero_byte_objects(build_dir)?;
 
@@ -374,6 +388,7 @@ fn build_cmake(build_dir: &Path) -> Result<()> {
     )
 }
 
+#[cfg(feature = "mlir")]
 fn remove_zero_byte_objects(dir: &Path) -> Result<()> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(());
@@ -407,6 +422,7 @@ fn remove_zero_byte_objects(dir: &Path) -> Result<()> {
 }
 
 /// Install CMake build
+#[cfg(feature = "mlir")]
 fn install_cmake(build_dir: &Path) -> Result<()> {
     run_command(
         Command::new("cmake")
@@ -419,17 +435,26 @@ fn install_cmake(build_dir: &Path) -> Result<()> {
 // --- libclang discovery for bindgen / clang-sys (`toolchain_env::LIBCLANG_PATH`) ------------
 
 /// Directory containing the loadable `libclang` shared library clang-sys expects.
+#[cfg(feature = "mlir")]
 const LIBCLANG_FILE_DLL: &str = "libclang.dll";
+#[cfg(feature = "mlir")]
 const LIBCLANG_FILE_SO: &str = "libclang.so";
+#[cfg(feature = "mlir")]
 const LIBCLANG_FILE_DYLIB: &str = "libclang.dylib";
+#[cfg(feature = "mlir")]
 const LIBCLANG_WIN_PREFIX: &str = "libclang-";
 /// Windows MSVC layout (`libclang-13.dll`, …), not the host's `DLL_SUFFIX`.
+#[cfg(feature = "mlir")]
 const LIBCLANG_WINDOWS_DLL_SUFFIX: &str = ".dll";
+#[cfg(feature = "mlir")]
 const LIBCLANG_SO_DOT: &str = "libclang.so.";
 /// conda-forge macOS: `libclang.13.dylib` (SONAME), often without `libclang.dylib`.
+#[cfg(feature = "mlir")]
 const LIBCLANG_MACOS_DOT_PREFIX: &str = "libclang.";
+#[cfg(feature = "mlir")]
 const LIBCLANG_MACOS_DYLIB_SUFFIX: &str = ".dylib";
 
+#[cfg(feature = "mlir")]
 fn is_libclang_shared_library_file_name(file_name: &str) -> bool {
     if matches!(
         file_name,
@@ -455,6 +480,7 @@ fn is_libclang_shared_library_file_name(file_name: &str) -> bool {
     false
 }
 
+#[cfg(feature = "mlir")]
 fn directory_contains_libclang_shared_library(dir: &Path) -> bool {
     if !dir.is_dir() {
         return false;
@@ -469,6 +495,7 @@ fn directory_contains_libclang_shared_library(dir: &Path) -> bool {
     })
 }
 
+#[cfg(feature = "mlir")]
 fn find_libclang_search_dir(bin_dir: &Path, lib_dir: &Path) -> Option<PathBuf> {
     for dir in [bin_dir, lib_dir] {
         if directory_contains_libclang_shared_library(dir) {
@@ -480,7 +507,7 @@ fn find_libclang_search_dir(bin_dir: &Path, lib_dir: &Path) -> Option<PathBuf> {
 
 /// conda-forge on macOS ships `libclang.<major>.dylib` but not always `libclang.dylib`;
 /// clang-sys looks for the unversioned name under [`toolchain_env::LIBCLANG_PATH`].
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "mlir", target_os = "macos"))]
 fn ensure_libclang_dylib_alias_for_bindgen(prefix: &Path) -> Result<()> {
     let lib_dir = prefix.join("lib");
     if !lib_dir.is_dir() {
@@ -531,11 +558,12 @@ fn ensure_libclang_dylib_alias_for_bindgen(prefix: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(feature = "mlir", not(target_os = "macos")))]
 fn ensure_libclang_dylib_alias_for_bindgen(_prefix: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "mlir")]
 fn clang_builtin_include_dirs(clang_roots: &[PathBuf]) -> Option<PathBuf> {
     let mut best: Option<(u32, PathBuf)> = None;
     for root in clang_roots {
@@ -569,6 +597,7 @@ fn clang_builtin_include_dirs(clang_roots: &[PathBuf]) -> Option<PathBuf> {
     best.map(|(_, p)| p)
 }
 
+#[cfg(feature = "mlir")]
 fn conda_sysroot_include_dir(root: &Path) -> Option<PathBuf> {
     let Ok(entries) = fs::read_dir(root) else {
         return None;
@@ -595,6 +624,7 @@ fn conda_sysroot_include_dir(root: &Path) -> Option<PathBuf> {
 }
 
 /// Generate Rust bindings using bindgen
+#[cfg(feature = "mlir")]
 fn generate_bindings(
     manifest_dir: &Path,
     out_dir: &Path,
@@ -737,6 +767,7 @@ fn generate_bindings(
 }
 
 /// Emit linker directives for C++ libraries
+#[cfg(feature = "mlir")]
 fn emit_compiler_link_directives(install_dir: &Path, mlir_layout: &MlirLayout) -> Result<()> {
     let apxm_lib_dir = install_dir.join("lib");
     let mlir_lib_dir = &mlir_layout.lib_dir;
@@ -803,11 +834,12 @@ fn emit_compiler_link_directives(install_dir: &Path, mlir_layout: &MlirLayout) -
 /// This allows the crate to compile without a full LLVM/MLIR installation.
 /// All stub functions return null/error — the Rust API layer converts them to
 /// `CompilerError::MlirNotAvailable` at runtime.
+#[cfg(not(feature = "mlir"))]
 fn generate_stub_bindings(out_dir: &Path) -> Result<()> {
     // Signatures are derived from how the Rust API layer in api/module.rs, api/context.rs,
     // passes/manager.rs, and passes/registry.rs call into the FFI layer.
     let stub = r"
-// Stub bindings generated because MLIR was not found at build time.
+// Stub bindings generated because the `mlir` feature is off.
 // All functions return null/false/empty — the Rust wrappers surface CompilerError at runtime.
 #[allow(dead_code, non_upper_case_globals, non_camel_case_types, clippy::missing_safety_doc)]
 pub mod bindings_inner {
@@ -939,7 +971,7 @@ pub use bindings_inner::*;
     std::fs::write(&bindings_path, stub).context("Failed to write stub bindings")?;
     log_info!(
         "apxm-compiler-build",
-        "MLIR not found — wrote stub bindings. Compiler will return errors at runtime."
+        "`mlir` feature off — wrote stub bindings. Compiler will return errors at runtime."
     );
     Ok(())
 }
@@ -963,36 +995,29 @@ fn build() -> Result<()> {
     );
     generate_artifact_wire_files(&config.out_dir, Some(&config.build_dir))?;
 
-    // ═══ STEP 2: Locate MLIR installation (optional) ═══
-    let mlir_layout = match locate_mlir_layout() {
-        Ok(layout) => {
-            log_info!(
-                "apxm-compiler-build",
-                "Found MLIR at: {}",
-                layout.prefix.display()
-            );
-            Some(layout)
-        }
-        Err(e) => {
-            log_info!(
-                "apxm-compiler-build",
-                "MLIR not found ({}). Building without native compiler support.",
-                e
-            );
-            None
-        }
-    };
+    // ═══ STEP 2: Link the native dialect, only when the `mlir` feature is on ═══
+    //
+    // The feature — not the shape of the host — decides. A build with `mlir`
+    // requires MLIR/LLVM, CMake and libclang and fails loudly when they are
+    // missing; a build without it never looks for them, so the crate compiles
+    // on a toolchain that carries none of the four. That keeps the service
+    // build graph, which no crate joins to this one, provisionable from Rust,
+    // Python and Node alone.
+    link_native_dialect(&config)
+}
 
-    let Some(mlir_layout) = mlir_layout else {
-        // No MLIR: emit stub bindings and exit successfully.
-        // The Rust wrapper will return errors at runtime when compile_graph() is called.
-        // MLIR-dependent tests will be skipped (no `mlir` feature emitted).
-        generate_stub_bindings(&config.out_dir)?;
-        return Ok(());
-    };
-
-    // MLIR found — emit the feature flag so MLIR-dependent tests are enabled.
-    println!("cargo:rustc-cfg=feature=\"mlir\"");
+/// Build and link the native AIS dialect against the discovered MLIR install.
+#[cfg(feature = "mlir")]
+fn link_native_dialect(config: &BuildConfig) -> Result<()> {
+    let mlir_layout = locate_mlir_layout().context(
+        "the `mlir` feature is enabled but no MLIR installation was found; \
+         set MLIR_DIR/LLVM_DIR or build without the feature",
+    )?;
+    log_info!(
+        "apxm-compiler-build",
+        "Found MLIR at: {}",
+        mlir_layout.prefix.display()
+    );
 
     let MlirLayout {
         prefix: ref mlir_dir,
@@ -1054,6 +1079,16 @@ fn build() -> Result<()> {
     emit_compiler_link_directives(&config.install_dir, &mlir_layout)?;
 
     Ok(())
+}
+
+/// Emit stub FFI bindings so the crate compiles with no MLIR on the host.
+///
+/// Every native entry point then returns null/false and the Rust wrappers
+/// surface `CompilerError` at run time; the MLIR-dependent tests are compiled
+/// out with the same feature.
+#[cfg(not(feature = "mlir"))]
+fn link_native_dialect(config: &BuildConfig) -> Result<()> {
+    generate_stub_bindings(&config.out_dir)
 }
 
 fn main() {
