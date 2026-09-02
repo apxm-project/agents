@@ -40,6 +40,8 @@ PROTOCOL_DESCRIPTORS = (
     ("compilation-protocol", Path("crates/compiler/service-protocol/src/lib.rs")),
     ("runtime-protocol", Path("crates/runtime/service-protocol/src/lib.rs")),
 )
+SCHEMA_DIRECTORY_REL = Path("contracts/schemas")
+SCHEMA_SUFFIX = ".json"
 LOCAL_ARTIFACT_SCHEMA = "apxm.agents.local-release-artifact.v1"
 LOCAL_ARTIFACT_MANIFEST_REL = Path("apxm.agents-local-release-artifact.v1.json")
 CONSUMER_VERIFICATION_SCHEMA = "apxm.agents.release-consumer-verification.v1"
@@ -137,6 +139,8 @@ class Qualification:
     artifacts: dict[str, Path] = field(default_factory=dict)
     artifact_digests: dict[str, str] = field(default_factory=dict)
     protocol_descriptors: dict[str, dict[str, str]] = field(default_factory=dict)
+    schema_digests: dict[str, str] = field(default_factory=dict)
+    schema_paths: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -336,6 +340,28 @@ def _resolve_regular_file(root: Path, candidate: Path) -> Path | None:
 def _rooted_path(root: Path, raw: str | Path) -> Path:
     candidate = Path(raw).expanduser()
     return candidate if candidate.is_absolute() else root / candidate
+
+
+def _discover_shipped_schemas(root: Path) -> list[tuple[str, Path]]:
+    """Enumerate every shipped contract schema under the owner checkout.
+
+    A consumer pins schemas the same way it pins service bytes, so the
+    published set is the directory itself rather than a hand-kept list that
+    silently drops a schema the moment one is added.  The schema name is the
+    document identity (`apxm.host-capability.v1`), not a file label.
+    """
+
+    directory = root / SCHEMA_DIRECTORY_REL
+    if directory.is_symlink() or not directory.is_dir():
+        return []
+    discovered: list[tuple[str, Path]] = []
+    for candidate in sorted(directory.iterdir(), key=lambda item: item.name):
+        if candidate.suffix != SCHEMA_SUFFIX:
+            continue
+        if _resolve_regular_file(root, candidate) is None:
+            continue
+        discovered.append((candidate.stem, SCHEMA_DIRECTORY_REL / candidate.name))
+    return discovered
 
 
 def _external_service_binding(name: str) -> Path | None:
@@ -545,6 +571,130 @@ def _validate_protocol_descriptors(
             "path": relative.as_posix(),
             "digest": current_digest,
         }
+
+
+def _validate_manifest_schemas(
+    root: Path,
+    declared: Any,
+    *,
+    schema_digests: Mapping[str, str],
+    schema_paths: Mapping[str, str],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Bind every published schema entry to the exact bytes it names.
+
+    Service digests let a consumer pin executables; schema digests let the
+    same consumer pin the wire contracts those executables speak.  A mutated,
+    added, or removed schema is a different release, so it fails here rather
+    than being discovered by whatever spoke the changed contract first.
+    """
+
+    if not isinstance(declared, list):
+        diagnostics.append(
+            Diagnostic(
+                "invalid-schema",
+                "release manifest.schemas must be an array",
+                "regenerate the manifest with one entry for every shipped contract schema",
+            )
+        )
+        return
+    seen_names: set[str] = set()
+    for index, entry in enumerate(declared):
+        label = f"release manifest.schemas[{index}]"
+        if not isinstance(entry, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-schema",
+                    f"{label} must be an object",
+                    "regenerate the manifest with named schema entries",
+                )
+            )
+            continue
+        entry_valid = _require_exact_shape(
+            entry,
+            label=label,
+            required=("name", "path", "digest"),
+            optional=(),
+            diagnostics=diagnostics,
+        )
+        entry_valid &= _require_string(entry, "name", label=label, diagnostics=diagnostics)
+        entry_valid &= _require_string(
+            entry, "path", label=label, diagnostics=diagnostics, pattern=SAFE_RELATIVE_PATH
+        )
+        entry_valid &= _require_string(
+            entry, "digest", label=label, diagnostics=diagnostics, pattern=DIGEST
+        )
+        if not entry_valid:
+            continue
+        name = str(entry["name"])
+        if name in seen_names:
+            diagnostics.append(
+                Diagnostic(
+                    "duplicate-published-schema",
+                    f"release manifest contains duplicate schema {name!r}",
+                    "publish one immutable entry for each shipped schema",
+                )
+            )
+            continue
+        seen_names.add(name)
+        expected_path = schema_paths.get(name)
+        if expected_path is not None and str(entry["path"]) != expected_path:
+            diagnostics.append(
+                Diagnostic(
+                    "schema-path-mismatch",
+                    f"release manifest schema {name!r} names {entry['path']}, but the shipped schema is {expected_path}",
+                    "publish every schema at its exact repository path",
+                )
+            )
+            continue
+        declared_file = _resolve_regular_file(root, root / str(entry["path"]))
+        if declared_file is None:
+            diagnostics.append(
+                Diagnostic(
+                    "missing-published-schema",
+                    f"release manifest schema {name!r} does not name a regular file inside the owner checkout: {entry['path']}",
+                    "publish the exact schema document at the manifest path",
+                )
+            )
+            continue
+        if _digest_file(declared_file) != str(entry["digest"]):
+            diagnostics.append(
+                Diagnostic(
+                    "schema-digest-mismatch",
+                    f"release manifest digest for schema {name!r} does not match the published schema bytes",
+                    "publish the exact schema bytes named by the manifest or regenerate the manifest",
+                )
+            )
+    if not schema_digests:
+        if not seen_names:
+            diagnostics.append(
+                Diagnostic(
+                    "missing-published-schema",
+                    "release manifest publishes no schemas",
+                    "publish one entry for every shipped contract schema so a consumer can pin them",
+                )
+            )
+        return
+    missing = sorted(set(schema_digests) - seen_names)
+    if missing:
+        diagnostics.append(
+            Diagnostic(
+                "missing-published-schema",
+                f"release manifest does not publish shipped schema(s): {', '.join(missing)}",
+                "regenerate the release manifest so it lists every shipped schema",
+            )
+        )
+    unknown = sorted(seen_names - set(schema_digests))
+    if unknown:
+        diagnostics.append(
+            Diagnostic(
+                "unknown-published-schema",
+                f"release manifest publishes schema(s) that are not shipped: {', '.join(unknown)}",
+                "publish only the schemas this source cohort ships",
+            )
+        )
+
+
 def _validate_release_manifest(
     root: Path,
     value: Mapping[str, Any] | None,
@@ -553,6 +703,8 @@ def _validate_release_manifest(
     owner_descriptor_digest: str | None,
     artifacts: Mapping[str, Path],
     artifact_digests: Mapping[str, str],
+    schema_digests: Mapping[str, str],
+    schema_paths: Mapping[str, str],
     diagnostics: list[Diagnostic],
 ) -> None:
     if value is None:
@@ -566,6 +718,7 @@ def _validate_release_manifest(
             "source_revision",
             "artifact_kind",
             "services",
+            "schemas",
             "frontend_native",
             "owner_descriptor_digest",
             "integrity_algorithm",
@@ -611,6 +764,13 @@ def _validate_release_manifest(
                 "regenerate the release manifest from one immutable source cohort",
             )
         )
+    _validate_manifest_schemas(
+        root,
+        value.get("schemas"),
+        schema_digests=schema_digests,
+        schema_paths=schema_paths,
+        diagnostics=diagnostics,
+    )
     services = value.get("services")
     if not isinstance(services, list):
         diagnostics.append(
@@ -1061,6 +1221,9 @@ def qualify(
                     f"publish the executable `{binary}` service with execute permission",
                 )
             )
+    for schema_name, schema_relative in _discover_shipped_schemas(root):
+        result.schema_paths[schema_name] = schema_relative.as_posix()
+        result.schema_digests[schema_name] = _digest_file(root / schema_relative)
     frontend_native = _find_frontend_native(root)
     if frontend_native is None:
         result.diagnostics.append(
@@ -1091,6 +1254,8 @@ def qualify(
         owner_descriptor_digest=owner_descriptor_digest,
         artifacts=artifacts,
         artifact_digests=result.artifact_digests,
+        schema_digests=result.schema_digests,
+        schema_paths=result.schema_paths,
         diagnostics=result.diagnostics,
     )
     if not result.ok:
@@ -1151,6 +1316,11 @@ def generate_descriptors(
         raise ValueError(
             "publishable Python frontend native bridge is missing; supply the real bridge or an immutable APXM_PYTHON_FRONTEND_NATIVE coordinate"
         )
+    shipped_schemas = _discover_shipped_schemas(root)
+    if not shipped_schemas:
+        raise ValueError(
+            f"publishable contract schemas are missing under {SCHEMA_DIRECTORY_REL}; a release cannot pin contracts it does not ship"
+        )
     revision = source_revision or _git_revision(root)
     if revision is None or not HEX40.fullmatch(revision):
         raise ValueError("cannot generate descriptors without a full lowercase Git source revision")
@@ -1194,6 +1364,14 @@ def generate_descriptors(
                 "digest": _digest_file(services[name]),
             }
             for name, name_for_path in SERVICE_ARTIFACTS
+        ],
+        "schemas": [
+            {
+                "name": schema_name,
+                "path": schema_relative.as_posix(),
+                "digest": _digest_file(root / schema_relative),
+            }
+            for schema_name, schema_relative in shipped_schemas
         ],
         "frontend_native": {
             "name": FRONTEND_NATIVE_ARTIFACT[0],
@@ -1280,9 +1458,11 @@ def _package_payload(result: Qualification, root: Path) -> dict[str, Any]:
         "release_manifest_digest": _digest_file(manifest_file) if manifest_file else None,
         "protocol_descriptors": result.protocol_descriptors,
         "manifest_services": manifest.get("services"),
+        "manifest_schemas": manifest.get("schemas"),
         "manifest_frontend_native": manifest.get("frontend_native"),
         "services": {name: str(path) for name, path in result.artifacts.items()},
         "service_digests": result.artifact_digests,
+        "schema_digests": result.schema_digests,
         "gates": result.gates,
         "diagnostics": [
             {"code": item.code, "message": item.message, "remediation": item.remediation}
@@ -1360,6 +1540,17 @@ def package_release(
         and isinstance(item.get("path"), str)
     } if isinstance(manifest_services, list) else {}
 
+    manifest_schemas = manifest.get("schemas")
+    schema_files = tuple(
+        (str(item["name"]), Path(str(item["path"])))
+        for item in manifest_schemas
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("path"), str)
+    ) if isinstance(manifest_schemas, list) else ()
+    if not schema_files:
+        raise ValueError("qualified release manifest publishes no schemas to package")
+
     files: list[dict[str, Any]] = []
     source_files = (
         ("source-descriptor", SOURCE_DESCRIPTOR_REL),
@@ -1367,7 +1558,7 @@ def package_release(
         ("owner-descriptor-sidecar", OWNER_DESCRIPTOR_SIDECAR_REL),
         ("release-manifest", RELEASE_MANIFEST_REL),
     )
-    for name, relative in (*source_files, *PROTOCOL_DESCRIPTORS):
+    for name, relative in (*source_files, *PROTOCOL_DESCRIPTORS, *schema_files):
         source = _resolve_regular_file(root, root / relative)
         if source is None:
             raise ValueError(f"qualified release input is not a regular file: {relative}")
@@ -1675,6 +1866,10 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
         by_name[name] = entry
         by_path[path] = entry
 
+    packaged_schemas = {
+        schema_name: schema_relative.as_posix()
+        for schema_name, schema_relative in _discover_shipped_schemas(root)
+    }
     expected_names = {
         "source-descriptor",
         "owner-descriptor",
@@ -1685,13 +1880,14 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
         "compilation-service",
         "runtime-service",
         FRONTEND_NATIVE_ARTIFACT[0],
+        *packaged_schemas,
     }
     if set(by_name) != expected_names:
         diagnostics.append(
             Diagnostic(
                 "invalid-package-files",
-                "consumer release package does not contain exactly the eight required owner and service files",
-                "package the source, owner, sidecar, manifest, protocol, and two service files exactly once",
+                "consumer release package does not contain exactly the required owner, service, and schema files",
+                "package the source, owner, sidecar, manifest, protocol, schema, and two service files exactly once",
             )
         )
 
@@ -1892,6 +2088,11 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
             else None,
             artifacts=service_files,
             artifact_digests=artifact_digests,
+            schema_digests={
+                schema_name: _digest_file(root / relative)
+                for schema_name, relative in packaged_schemas.items()
+            },
+            schema_paths=packaged_schemas,
             diagnostics=diagnostics,
         )
         release_digest_matches = (
