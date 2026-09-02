@@ -304,8 +304,13 @@ gets back the exact Capability id it implements, so the reference and the
 implementation are one object. Python has no type-checker in the build, so the
 same closed set is settled where the binding is constructed
 (`crates/compiler/frontend/python/apxm_program/_markers.py`): `Tool[...]` and
-`Capability[...]` admit a catalogue id or a `capability(...)` declaration and
-refuse anything else with `ToolRefNotCapability` / `CapabilityRefNotExact`. The
+`Capability[...]` admit a catalogue id, a `host:<id>` reference the package's
+`agent.toml` declares as `[[capabilities.host]]`, or a `capability(...)`
+declaration, and refuse anything else with `ToolRefNotCapability` /
+`CapabilityRefNotExact`. A `host:` reference is the one a package states rather
+than supplies: the runtime never executes it, and the embedding host answers
+the request (ADR-0025). An undeclared one is a compile error naming the line
+and column it is written at. The
 declaration subclasses `str`, so it still prints and compares as the id it
 spells, but being the declaration — not equalling one — is what admits it:
 
