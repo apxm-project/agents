@@ -42,6 +42,7 @@ use apxm_backends::llm::backends::LLMBackend;
 use apxm_backends::llm::{
     BackendRegistration, LLMRegistry, LLMRequest, LLMResponse, Message, Role,
 };
+use apxm_core::constants::env;
 use apxm_core::types::FinishReason;
 use apxm_inference::{
     AttemptDisposition, ErrorCategory, IdempotencyKey, ModelAttemptFuture, ModelCallPreparation,
@@ -50,6 +51,8 @@ use apxm_inference::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::ports::fixture;
 
 /// Prefix of the sealed model-context identity minted by the local root.
 const LOCAL_MODEL_CONTEXT_PREFIX: &str = "apxm.canonical.local.model-context.";
@@ -255,6 +258,17 @@ impl LocalModelInferencePort {
             Err(error) => skipped.push(format!("the roster is unreadable: {error}")),
         }
 
+        // A development backend is selected by the environment, never by the
+        // roster, and never as a fallback: with `APXM_BACKEND` unset this is a
+        // no-op and the roster stays the only source of backends.
+        fixture::register_selected_backend(
+            &registry,
+            std::env::var(env::APXM_BACKEND).ok().as_deref(),
+            std::env::var(env::APXM_BACKEND_MODEL).ok().as_deref(),
+            &mut bound_models,
+            &mut skipped,
+        );
+
         Ok(Self {
             registry,
             backend_runtime,
@@ -309,6 +323,36 @@ impl LocalModelInferencePort {
                 source: "the test-bound backend roster".into(),
                 bound_models: BTreeSet::from([model.to_string()]),
                 skipped: Vec::new(),
+            },
+            attempt_diagnostics: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// An inference surface carrying exactly the development backend the
+    /// supplied `APXM_BACKEND`/`APXM_BACKEND_MODEL` values select, for tests
+    /// that drive the selection without mutating the process environment.
+    #[cfg(test)]
+    pub(super) fn for_selected_development_backend(
+        selector: Option<&str>,
+        model_value: Option<&str>,
+    ) -> Result<Self> {
+        let registry = Arc::new(LLMRegistry::new());
+        let mut bound_models = BTreeSet::new();
+        let mut skipped = Vec::new();
+        fixture::register_selected_backend(
+            &registry,
+            selector,
+            model_value,
+            &mut bound_models,
+            &mut skipped,
+        );
+        Ok(Self {
+            registry,
+            backend_runtime: BackendRuntime::new()?,
+            roster: RosterEvidence {
+                source: "the test-bound backend roster".into(),
+                bound_models,
+                skipped,
             },
             attempt_diagnostics: Mutex::new(Vec::new()),
         })
@@ -719,6 +763,121 @@ mod tests {
         assert!(
             backend.recorded_calls().is_empty(),
             "a cancelled provider future must not complete after the owner returns"
+        );
+    }
+
+    #[test]
+    fn the_selected_development_backend_answers_the_authored_target() {
+        let port = LocalModelInferencePort::for_selected_development_backend(
+            Some("fixture"),
+            Some(FIXTURE_MODEL),
+        )
+        .expect("the fixture selection builds an inference port");
+
+        let request = model_request(FIXTURE_MODEL, json!({"prompt": "summarise the day"}));
+        let AttemptDisposition::Success { usage, output } = port.attempt(&request, 0) else {
+            panic!("the selected development backend must commit an answer");
+        };
+
+        assert_eq!(output["model"], FIXTURE_MODEL);
+        assert_eq!(output["finish_reason"], "stop");
+        assert_eq!(output["tool_calls"], json!([]));
+        let content = output["content"].as_str().expect("a textual completion");
+        assert!(
+            content.starts_with(fixture::FIXTURE_COMPLETION_PREFIX),
+            "a development answer is never mistakable for a provider answer: {content}"
+        );
+        assert!(usage.input_tokens > 0 && usage.output_tokens > 0);
+
+        let repeated = port.attempt(&request, 1);
+        let AttemptDisposition::Success { output: again, .. } = repeated else {
+            panic!("the development backend answers every attempt");
+        };
+        assert_eq!(
+            again["content"], output["content"],
+            "the answer is a function of the request"
+        );
+        assert!(port.attempt_diagnostics().is_empty());
+    }
+
+    /// The authored target is whatever the program's `Model(...)` names, which
+    /// in practice is a qualified reference: underscored segments joined by a
+    /// dot. Resolution is exact and string-wise, so the shape is only ever a
+    /// question of what `APXM_BACKEND_MODEL` was set to; this pins that a
+    /// reference of that shape binds and is answered like any other.
+    #[test]
+    fn a_qualified_underscored_reference_binds_and_is_answered() {
+        const QUALIFIED: &str = "authored_program.model";
+
+        let port = LocalModelInferencePort::for_selected_development_backend(
+            Some("fixture"),
+            Some(QUALIFIED),
+        )
+        .expect("the fixture selection builds an inference port");
+
+        let AttemptDisposition::Success { output, .. } = port.attempt(
+            &model_request(QUALIFIED, json!({"prompt": "review the orders"})),
+            0,
+        ) else {
+            panic!("a qualified reference is an exact reference like any other");
+        };
+
+        assert_eq!(
+            output
+                .as_object()
+                .expect("an object outcome")
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["content", "finish_reason", "model", "tool_calls"],
+            "the outcome carries exactly the admitted model-outcome keys"
+        );
+        assert_eq!(output["model"], QUALIFIED);
+        assert!(
+            output["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with(fixture::FIXTURE_COMPLETION_PREFIX))
+        );
+    }
+
+    #[test]
+    fn a_target_the_development_backend_was_not_named_for_is_still_unresolvable() {
+        let port = LocalModelInferencePort::for_selected_development_backend(
+            Some("fixture"),
+            Some("a.different.model"),
+        )
+        .expect("the fixture selection builds an inference port");
+
+        let disposition =
+            port.attempt(&model_request(FIXTURE_MODEL, json!({"prompt": "hello"})), 0);
+
+        let AttemptDisposition::FailedBeforeSend(error) = disposition else {
+            panic!("a development backend is not a default: {disposition:?}");
+        };
+        assert_eq!(error.code, "model_target_not_registered");
+        assert!(
+            error.message.contains("a.different.model"),
+            "the roster evidence names what the development backend does serve: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn an_unselected_development_backend_leaves_the_surface_empty() {
+        let port =
+            LocalModelInferencePort::for_selected_development_backend(None, Some(FIXTURE_MODEL))
+                .expect("an unselected inference port");
+
+        let disposition =
+            port.attempt(&model_request(FIXTURE_MODEL, json!({"prompt": "hello"})), 0);
+
+        let AttemptDisposition::FailedBeforeSend(error) = disposition else {
+            panic!("nothing is registered without a selection: {disposition:?}");
+        };
+        assert_eq!(error.code, "model_target_not_registered");
+        assert!(
+            error.message.contains("binds no model reference"),
+            "{}",
+            error.message
         );
     }
 

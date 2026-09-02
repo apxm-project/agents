@@ -22,6 +22,7 @@ from the active index; Git history retains their rationale.
 | [0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md) | Capability references resolve against a generated catalogue plus shipped handlers; a declared permission is a request the layer stack may only tighten. |
 | [0024](0024-non-loopback-serving-requires-a-complete-security-profile.md) | Non-loopback Event/OpenAI HTTP serving requires a complete security profile. |
 | [0025](0025-host-fulfilled-capabilities-are-requested-by-the-runtime-and-settled-by-the-host.md) | A package-declared `host:` Capability is requested by the runtime and settled by the embedding host; APXM never executes it. |
+| [0026](0026-a-development-inference-backend-is-selected-by-the-environment.md) | One development inference backend, selected by `APXM_BACKEND` and bound to the references `APXM_BACKEND_MODEL` names, answers deterministically without a provider. |
 
 ## Amending an accepted record
 
