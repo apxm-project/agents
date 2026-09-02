@@ -370,6 +370,8 @@ dependencies = [
 name = "apxm-execution"
 version = "0.1.0"
 dependencies = [
+ "apxm-ais",
+ "apxm-core",
  "apxm-inference",
  "apxm-kernel",
  "apxm-program",

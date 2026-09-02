@@ -184,6 +184,7 @@ fn published_decision_enum_sites() -> Vec<(String, String, Vec<String>)> {
 const SCHEMAS_SPELLING_THE_DECISION_VOCABULARY: &[&str] = &[
     "apxm.agent.json",
     "apxm.execution-admission.json",
+    "apxm.execution-observation.v1.json",
     "apxm.org.json",
     "apxm.frontend-conformance.json",
     "apxm.frontend-graph.json",
@@ -192,7 +193,7 @@ const SCHEMAS_SPELLING_THE_DECISION_VOCABULARY: &[&str] = &[
 ];
 
 /// The permission decision has one owner — `PermissionDecision::DECISIONS` —
-/// and seven published schemas restate it inline. Before this
+/// and eight published schemas restate it inline. Before this
 /// test, exactly one of those nine (`apxm.frontend-graph`'s bare-string branch,
 /// pinned above) was held to the owner; the other eight could gain or lose a
 /// decision with nothing to disagree.

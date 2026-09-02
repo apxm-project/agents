@@ -1,0 +1,81 @@
+{
+  "schema_version": "apxm.air",
+  "value_assemblies": [
+    {
+      "value_id": "fixture.notes.search.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "query",
+            "value": {
+              "kind": "string",
+              "value": "canonical host capability"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "value_id": "fixture.notes.append.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "note",
+            "value": {
+              "kind": "string",
+              "value": "the second request is issued only after the first settles"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "semantic_operations": [
+    {
+      "node_id": "fixture.host.search",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 0,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "host:notes.search", "type_ref": "CapabilityRef" },
+        {
+          "slot": "arguments",
+          "value_id": "fixture.notes.search.arguments",
+          "type_ref": "ArgumentValue"
+        }
+      ],
+      "result": { "value_id": "fixture.host.search.output", "type_ref": "ToolOutput" }
+    },
+    {
+      "node_id": "fixture.host.append",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 1,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "host:notes.append", "type_ref": "CapabilityRef" },
+        {
+          "slot": "arguments",
+          "value_id": "fixture.notes.append.arguments",
+          "type_ref": "ArgumentValue"
+        }
+      ],
+      "result": { "value_id": "fixture.host.append.output", "type_ref": "ToolOutput" }
+    }
+  ],
+  "structural_ir": [
+    { "region_id": "fixture.root", "kind": "function", "execution_order": 0 }
+  ],
+  "context_flow": [],
+  "capability_permission_requests": {
+    "host:notes.search": "allow",
+    "host:notes.append": { "decision": "ask", "reason": "The note is written to the system behind the host." }
+  },
+  "source_map": {
+    "schema_version": "apxm.source-map",
+    "source_language": "typescript",
+    "node_spans": [],
+    "region_annotations": []
+  }
+}

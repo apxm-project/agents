@@ -34,6 +34,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use apxm_ais::permissions::PermissionDecision;
+use apxm_core::types::host_capability::{
+    HostCapabilityOutcomeKind, HostCapabilitySettlement, is_host_capability_ref,
+    is_host_capability_request_id,
+};
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_commit_local::{
     CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, ReadAccessHook,
@@ -704,6 +708,14 @@ impl PreparedInvocation {
         block_on(async {
             for (capability_ref, decision) in &self.air.capability_permission_requests {
                 if !matches!(decision, PermissionDecision::Ask { .. }) {
+                    continue;
+                }
+                // Permission for a host-fulfilled reference is the host's
+                // decision (ADR-0025). APXM records the authored request and
+                // carries it to the host in `capability.requested`; brokering
+                // it here would answer a question that is not APXM's to answer,
+                // and would refuse the invocation before the host ever saw it.
+                if is_host_capability_ref(capability_ref) {
                     continue;
                 }
                 match self.broker.resolve_ask(capability_ref).await {
@@ -1781,6 +1793,8 @@ impl RuntimeService {
             | RuntimeRequest::EventInspect { request_id, .. }
             | RuntimeRequest::EventExpire { request_id, .. }
             | RuntimeRequest::EventCancel { request_id, .. }
+            | RuntimeRequest::CapabilityFulfill { request_id, .. }
+            | RuntimeRequest::CapabilityCancel { request_id, .. }
             | RuntimeRequest::ProgramInvocationCancel { request_id, .. } => request_id,
         };
         if request_id.trim().is_empty() {
@@ -1827,6 +1841,37 @@ impl RuntimeService {
             } => {
                 self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Cancelled)
             }
+            RuntimeRequest::CapabilityFulfill {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                outcome,
+                output,
+                receipt_ref,
+                message,
+            } => Ok(self.settle_host_capability(
+                request_id,
+                owner_claim,
+                capability_request_id,
+                outcome,
+                output,
+                receipt_ref,
+                message,
+            )),
+            RuntimeRequest::CapabilityCancel {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                message,
+            } => Ok(self.settle_host_capability(
+                request_id,
+                owner_claim,
+                capability_request_id,
+                HostCapabilityOutcomeKind::Cancelled,
+                None,
+                None,
+                message,
+            )),
             RuntimeRequest::ProgramInvocationCancel {
                 request_id,
                 owner_claim,
@@ -2388,6 +2433,12 @@ impl RuntimeService {
         if let Some(cancellation) = self.active_cancellations.get(&cancellation_id) {
             cancellation.cancel();
         }
+        // A live invocation observes the token at its next node boundary. A
+        // parked one has no token to observe: it is waiting on a host that will
+        // never answer now, so its outstanding requests are withdrawn here and
+        // the invocation settles rather than staying parked on a cancellation
+        // marker nothing acts on (ADR-0025).
+        self.cancel_outstanding_host_capabilities(&program_invocation_id);
         RuntimeResult::Cancelled { request_id }
     }
 
@@ -2569,7 +2620,7 @@ impl RuntimeService {
         // owns continuation removal, the resume observation, and the next
         // atomic commit; this path never reconstructs execution from output.
         let _ = self.resume_fulfilled_event(
-            &application.event_ref,
+            &application.event_ref.event_id,
             application.occurrence.payload.clone(),
         );
         Ok(RuntimeResult::EventApplied {
@@ -2578,9 +2629,151 @@ impl RuntimeService {
         })
     }
 
+    /// Settle one outstanding host-fulfilled Capability request.
+    ///
+    /// There is no request registry to consult: the park itself is the record.
+    /// A parked continuation whose event identity is this request id *is* the
+    /// outstanding request, so a settlement cannot name a request that never
+    /// existed, and a restart loses nothing it would have had to remember.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_host_capability(
+        &mut self,
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        capability_request_id: String,
+        outcome: HostCapabilityOutcomeKind,
+        output: Option<String>,
+        receipt_ref: Option<String>,
+        message: Option<String>,
+    ) -> RuntimeResult {
+        if owner_claim.validate().is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_owner_claim".to_owned(),
+            };
+        }
+        if !is_host_capability_request_id(&capability_request_id) {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        }
+        // `cancelled` is APXM's own record of a withdrawn request. A host that
+        // wants to withdraw one says so with `capability_cancel`, which is the
+        // only caller that reaches this with that outcome.
+        if outcome == HostCapabilityOutcomeKind::Ok && output.is_none() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        if outcome != HostCapabilityOutcomeKind::Ok && output.is_some() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        let Some(instance_id) = self.parked_host_capability_instance(&capability_request_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        };
+        let Some(instance) = self.instances.get(&instance_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        };
+        if instance.owner_claim != owner_claim {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "owner_mismatch".to_owned(),
+            };
+        }
+        let settlement = HostCapabilitySettlement::new(
+            capability_request_id.clone(),
+            outcome,
+            output,
+            receipt_ref,
+            message,
+        );
+        let Ok(payload) = serde_json::to_string(&settlement) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "internal_error".to_owned(),
+            };
+        };
+        match self.resume_fulfilled_event(&capability_request_id, Value::String(payload)) {
+            Ok(()) => RuntimeResult::CapabilitySettled {
+                request_id,
+                capability_request_id,
+                outcome,
+            },
+            Err(_) => RuntimeResult::Failed {
+                request_id,
+                code: "capability_settlement_failed".to_owned(),
+            },
+        }
+    }
+
+    /// The instance whose parked continuation is waiting on this request.
+    fn parked_host_capability_instance(&self, capability_request_id: &str) -> Option<String> {
+        self.instances.keys().find(|instance_id| {
+            self.execution_backend
+                .load_continuation(&ProgramInstanceRef::new((*instance_id).clone()))
+                .and_then(|committed| {
+                    serde_json::from_value::<Continuation>(committed.payload).ok()
+                })
+                .and_then(|continuation| continuation.event_ref)
+                .is_some_and(|reference| reference.as_str() == capability_request_id)
+        })
+        .cloned()
+    }
+
+    /// Withdraw every host capability request this invocation left outstanding.
+    ///
+    /// Cancelling an invocation cancels the requests it is waiting on. Without
+    /// this a cancelled invocation would stay parked forever on a request no
+    /// host will ever answer, and the cancellation would be a marker rather
+    /// than an outcome.
+    fn cancel_outstanding_host_capabilities(&mut self, program_invocation_id: &str) {
+        let outstanding = self
+            .instances
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                let invocation = instance.invocation.as_ref()?;
+                if invocation.program_invocation_id != program_invocation_id {
+                    return None;
+                }
+                let committed = self
+                    .execution_backend
+                    .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))?;
+                let continuation: Continuation =
+                    serde_json::from_value(committed.payload).ok()?;
+                let event_ref = continuation.event_ref?;
+                is_host_capability_request_id(event_ref.as_str())
+                    .then(|| event_ref.as_str().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for capability_request_id in outstanding {
+            let settlement = HostCapabilitySettlement::new(
+                capability_request_id.clone(),
+                HostCapabilityOutcomeKind::Cancelled,
+                None,
+                None,
+                Some("the Program Invocation was cancelled".to_owned()),
+            );
+            let Ok(payload) = serde_json::to_string(&settlement) else {
+                continue;
+            };
+            let _ = self.resume_fulfilled_event(&capability_request_id, Value::String(payload));
+        }
+    }
+
     fn resume_fulfilled_event(
         &mut self,
-        event_ref: &CanonicalEventRef,
+        event_id: &str,
         delivered: Value,
     ) -> Result<(), String> {
         let mut candidate = None;
@@ -2597,7 +2790,7 @@ impl RuntimeService {
             if continuation
                 .event_ref
                 .as_ref()
-                .is_some_and(|reference| reference.as_str() == event_ref.event_id)
+                .is_some_and(|reference| reference.as_str() == event_id)
             {
                 if candidate.is_some() {
                     return Err("event maps to multiple parked invocations".to_owned());
@@ -2640,7 +2833,7 @@ impl RuntimeService {
             self.execution_backend.commit_port(),
             Some(self.observation_sink.clone()),
             ProgramInstanceRef::new(instance_id.clone()),
-            apxm_kernel::EventRef::new(event_ref.event_id.clone())
+            apxm_kernel::EventRef::new(event_id.to_owned())
                 .map_err(|error| error.to_string())?,
             delivered,
         ))?;

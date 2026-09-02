@@ -27,9 +27,6 @@
     "capability_ref": {
       "$ref": "#/$defs/HostCapabilityRef"
     },
-    "effect": {
-      "$ref": "#/$defs/HostCapabilityEffect"
-    },
     "input": {
       "description": "The exact canonical JSON bytes of the authored arguments, as text. The request carries the arguments rather than a reference to them because a host that cannot read the arguments cannot perform the call.",
       "type": "string",
@@ -149,14 +146,13 @@
       "additionalProperties": false
     },
     "HostCapabilityRequest": {
-      "description": "The request one parked `capability.invoke` node publishes. `capability_request_id` is derived from the invocation and node-execution coordinates, so a re-park after a restart republishes the same id rather than minting a second request for one effect. `authored_permission` is what the program's own source asked for: a request the host may narrow and may never widen, which APXM records and does not broker.",
+      "description": "The request one parked `capability.invoke` node publishes, and the payload of the `capability_requested` observation. `capability_request_id` is derived from the invocation and node-execution coordinates, so a re-park after a restart republishes the same id rather than minting a second request for one effect. The effect is not restated here: the host already holds the declaration that states it. `authored_permission` is what the program's own source asked for: a request the host may narrow and may never widen, which APXM records and does not broker.",
       "type": "object",
       "required": [
         "schema_version",
         "capability_request_id",
         "program_invocation_id",
         "capability_ref",
-        "effect",
         "input",
         "authored_permission"
       ],
@@ -172,9 +168,6 @@
         },
         "capability_ref": {
           "$ref": "#/$defs/HostCapabilityRef"
-        },
-        "effect": {
-          "$ref": "#/$defs/HostCapabilityEffect"
         },
         "input": {
           "description": "The exact canonical JSON bytes of the authored arguments, as text. The request carries the arguments rather than a reference to them because a host that cannot read the arguments cannot perform the call.",

@@ -11,6 +11,7 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Published schema identity of every document in this module.
 pub const HOST_CAPABILITY_SCHEMA: &str = "apxm.host-capability.v1";
@@ -175,6 +176,119 @@ pub fn minted_host_capability_refs(
     Ok(minted)
 }
 
+/// The prefix every host capability request identity carries.
+pub const HOST_CAPABILITY_REQUEST_PREFIX: &str = "capability-request.";
+
+/// The deterministic identity of one host-fulfilled Capability request.
+///
+/// Derived from the invocation and node-execution coordinates of the node that
+/// published it, so a re-park after a restart republishes the same id rather
+/// than minting a second request for one effect. That is what makes a host's
+/// settlement idempotent without the host having to remember anything.
+#[must_use]
+pub fn host_capability_request_id(
+    program_invocation_ref: &str,
+    node_execution_id: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"apxm.host-capability-request\0");
+    hasher.update(program_invocation_ref.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(node_execution_id.as_bytes());
+    format!("{HOST_CAPABILITY_REQUEST_PREFIX}{:x}", hasher.finalize())
+}
+
+/// Whether `value` is shaped like a host capability request identity. The
+/// runtime recognizes a parked continuation as a host capability park by this
+/// alone, so the shape is stated once here.
+#[must_use]
+pub fn is_host_capability_request_id(value: &str) -> bool {
+    value
+        .strip_prefix(HOST_CAPABILITY_REQUEST_PREFIX)
+        .is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+}
+
+/// How one host-fulfilled Capability request settled.
+///
+/// `Cancelled` is recorded by APXM when the request or its invocation was
+/// cancelled; it is not a settlement a host sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostCapabilityOutcomeKind {
+    Ok,
+    Denied,
+    Failed,
+    Unknown,
+    Cancelled,
+}
+
+impl HostCapabilityOutcomeKind {
+    /// The canonical wire string.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Denied => "denied",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// One settled host capability request, as the runtime delivers it into the
+/// parked node. This is the `HostCapabilityOutcome` document of
+/// `apxm.host-capability.v1`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostCapabilitySettlement {
+    pub schema_version: String,
+    pub capability_request_id: String,
+    pub outcome: HostCapabilityOutcomeKind,
+    /// Present only for `ok`: the exact canonical JSON output bytes, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl HostCapabilitySettlement {
+    /// Seal one settlement for `capability_request_id`.
+    #[must_use]
+    pub fn new(
+        capability_request_id: impl Into<String>,
+        outcome: HostCapabilityOutcomeKind,
+        output: Option<String>,
+        receipt_ref: Option<String>,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: HOST_CAPABILITY_SCHEMA.to_owned(),
+            capability_request_id: capability_request_id.into(),
+            outcome,
+            output: if outcome == HostCapabilityOutcomeKind::Ok {
+                output
+            } else {
+                None
+            },
+            receipt_ref,
+            message,
+        }
+    }
+
+    /// Whether this settlement states the shape its outcome requires.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        self.schema_version == HOST_CAPABILITY_SCHEMA
+            && is_host_capability_request_id(&self.capability_request_id)
+            && (self.outcome == HostCapabilityOutcomeKind::Ok) == self.output.is_some()
+    }
+}
+
 /// The `[capabilities]` table of `agent.toml`.
 ///
 /// Only `host` is a member. A shipped handler stays declared by shipping
@@ -234,6 +348,49 @@ mod tests {
                 id: "notes".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn a_request_identity_is_derived_from_the_node_that_published_it() {
+        let first = host_capability_request_id("invocation.1", "node-execution.1");
+        assert!(is_host_capability_request_id(&first));
+        assert_eq!(
+            first,
+            host_capability_request_id("invocation.1", "node-execution.1"),
+            "a re-park republishes one request rather than minting a second"
+        );
+        assert_ne!(
+            first,
+            host_capability_request_id("invocation.1", "node-execution.2")
+        );
+        assert_ne!(
+            first,
+            host_capability_request_id("invocation.2", "node-execution.1")
+        );
+        assert!(!is_host_capability_request_id("capability-request.short"));
+        assert!(!is_host_capability_request_id("evt-1"));
+    }
+
+    #[test]
+    fn only_an_ok_settlement_carries_an_output() {
+        let request_id = host_capability_request_id("invocation.1", "node-execution.1");
+        let settled = HostCapabilitySettlement::new(
+            request_id.clone(),
+            HostCapabilityOutcomeKind::Ok,
+            Some("{}".to_owned()),
+            None,
+            None,
+        );
+        assert!(settled.is_well_formed());
+        let denied = HostCapabilitySettlement::new(
+            request_id,
+            HostCapabilityOutcomeKind::Denied,
+            Some("{}".to_owned()),
+            None,
+            Some("policy refused the write effect".to_owned()),
+        );
+        assert!(denied.output.is_none());
+        assert!(denied.is_well_formed());
     }
 
     #[test]

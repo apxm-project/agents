@@ -9,8 +9,13 @@
       "occurrence_id": "occurrence.1",
       "region_occurrence_id": "region-occurrence.1",
       "sequence": 1,
-      "cursor": {"position": 1, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 1},
+      "cursor": {
+        "position": 1,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 1
+      },
       "observation_kind": "invocation_failed",
       "commitment": "committed",
       "evidence_ref": "evidence.invoke.commit.1"
@@ -24,8 +29,13 @@
       "observation_id": "observation.1",
       "program_invocation_id": "invocation.1",
       "sequence": 1,
-      "cursor": {"position": 1, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 1},
+      "cursor": {
+        "position": 1,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 1
+      },
       "observation_kind": "node_started",
       "commitment": "committed"
     },
@@ -38,8 +48,13 @@
       "observation_id": "observation.1",
       "program_invocation_id": "invocation.1",
       "sequence": 1,
-      "cursor": {"position": 1, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 1},
+      "cursor": {
+        "position": 1,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 1
+      },
       "observation_kind": "unknown_kind",
       "commitment": "committed"
     },
@@ -52,8 +67,13 @@
       "observation_id": "observation.2",
       "program_invocation_id": "invocation.1",
       "sequence": 2,
-      "cursor": {"position": 2, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 2},
+      "cursor": {
+        "position": 2,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 2
+      },
       "observation_kind": "event_waiting",
       "commitment": "provisional",
       "event_ref": {
@@ -71,11 +91,18 @@
       "observation_id": "observation.3",
       "program_invocation_id": "invocation.1",
       "sequence": 3,
-      "cursor": {"position": 3, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 3},
+      "cursor": {
+        "position": 3,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 3
+      },
       "observation_kind": "event_resumed",
       "commitment": "provisional",
-      "event_ref": {"event_ref": "event.1"}
+      "event_ref": {
+        "event_ref": "event.1"
+      }
     },
     "expected_valid": true
   },
@@ -86,8 +113,13 @@
       "observation_id": "observation.boundary-event-ref",
       "program_invocation_id": "invocation.1",
       "sequence": 4,
-      "cursor": {"position": 4, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 4},
+      "cursor": {
+        "position": 4,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 4
+      },
       "observation_kind": "event_waiting",
       "commitment": "provisional",
       "event_ref": {
@@ -103,8 +135,13 @@
       "observation_id": "observation.4",
       "program_invocation_id": "invocation.1",
       "sequence": 4,
-      "cursor": {"position": 4, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 4},
+      "cursor": {
+        "position": 4,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 4
+      },
       "observation_kind": "event_waiting",
       "commitment": "provisional"
     },
@@ -117,8 +154,13 @@
       "observation_id": "observation.long-event-ref",
       "program_invocation_id": "invocation.1",
       "sequence": 9,
-      "cursor": {"position": 9, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 9},
+      "cursor": {
+        "position": 9,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 9
+      },
       "observation_kind": "event_waiting",
       "commitment": "provisional",
       "event_ref": {
@@ -134,8 +176,13 @@
       "observation_id": "observation.5",
       "program_invocation_id": "invocation.1",
       "sequence": 5,
-      "cursor": {"position": 5, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 5},
+      "cursor": {
+        "position": 5,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 5
+      },
       "observation_kind": "content_committed",
       "commitment": "committed"
     },
@@ -148,8 +195,13 @@
       "observation_id": "observation.6",
       "program_invocation_id": "invocation.1",
       "sequence": 6,
-      "cursor": {"position": 6, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 6},
+      "cursor": {
+        "position": 6,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 6
+      },
       "observation_kind": "content_published",
       "commitment": "committed",
       "content_ref": "content.1"
@@ -163,8 +215,13 @@
       "observation_id": "observation.7",
       "program_invocation_id": "invocation.1",
       "sequence": 7,
-      "cursor": {"position": 7, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 7},
+      "cursor": {
+        "position": 7,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 7
+      },
       "observation_kind": "terminal_committed",
       "commitment": "committed"
     },
@@ -177,10 +234,302 @@
       "observation_id": "observation.8",
       "program_invocation_id": "invocation.1",
       "sequence": 8,
-      "cursor": {"position": 8, "token": "scope.cursor"},
-      "timing": {"observed_at_unix_ms": 8},
+      "cursor": {
+        "position": 8,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 8
+      },
       "observation_kind": "evidence_committed",
       "commitment": "committed"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-parked-node-publishes-its-host-capability-request",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.1",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 1,
+      "cursor": {
+        "position": 1,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 1
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "input": "{\"query\":\"quarterly\"}",
+        "authored_permission": "allow"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-requested-observation-carries-the-authored-ask",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.2",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 2,
+      "cursor": {
+        "position": 2,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 2
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:sale_order.confirm",
+        "input": "{\"order_id\":7}",
+        "authored_permission": "ask"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-settled-observation-carries-the-outcome-and-the-receipt",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.3",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 3,
+      "cursor": {
+        "position": 3,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 3
+      },
+      "observation_kind": "capability_settled",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "outcome": "ok",
+        "receipt_ref": "receipt.9f2a"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-cancelled-request-settles-as-an-observation",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.4",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 4,
+      "cursor": {
+        "position": 4,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 4
+      },
+      "observation_kind": "capability_settled",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "outcome": "cancelled"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-requested-observation-without-an-input-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.5",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 5,
+      "cursor": {
+        "position": 5,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 5
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "authored_permission": "allow"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-requested-observation-carrying-an-outcome-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.6",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 6,
+      "cursor": {
+        "position": 6,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 6
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "input": "{}",
+        "authored_permission": "allow",
+        "outcome": "ok"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-settled-observation-restating-the-request-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.7",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 7,
+      "cursor": {
+        "position": 7,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 7
+      },
+      "observation_kind": "capability_settled",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "input": "{}",
+        "authored_permission": "allow",
+        "outcome": "ok"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-host-capability-payload-on-another-kind-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.8",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 8,
+      "cursor": {
+        "position": 8,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 8
+      },
+      "observation_kind": "node_started",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "host:notes.search",
+        "outcome": "ok"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-request-identity-outside-the-derived-shape-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.9",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 9,
+      "cursor": {
+        "position": 9,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 9
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "req-1",
+        "capability_ref": "host:notes.search",
+        "input": "{}",
+        "authored_permission": "allow"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-host-observation-naming-a-builtin-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.10",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "occurrence_id": "occurrence.1",
+      "sequence": 10,
+      "cursor": {
+        "position": 10,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 10
+      },
+      "observation_kind": "capability_settled",
+      "commitment": "provisional",
+      "host_capability": {
+        "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "capability_ref": "read",
+        "outcome": "ok"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-capability-requested-observation-without-a-payload-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.11",
+      "program_invocation_id": "invocation.1",
+      "sequence": 11,
+      "cursor": {
+        "position": 11,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 11
+      },
+      "observation_kind": "capability_requested",
+      "commitment": "provisional"
     },
     "expected_valid": false
   }

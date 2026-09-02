@@ -51,6 +51,10 @@ use apxm_kernel::{
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
 };
+use apxm_core::types::host_capability::{
+    HostCapabilityOutcomeKind, HostCapabilitySettlement, host_capability_request_id,
+    is_host_capability_ref,
+};
 use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
 use apxm_program::common::{ErrorCategory as EvidenceErrorCategory, TypedErrorEnvelope, TypedRef};
 use apxm_program::external_agent::ExternalAgentEvidence;
@@ -878,6 +882,11 @@ struct DriveState {
     durable_observations: Vec<apxm_runtime_protocol::ExecutionObservation>,
     /// Exact event identity for the next wait/resume observation.
     pending_event_ref: Option<String>,
+    /// The host-fulfilled Capability request or settlement the next
+    /// `capability_requested`/`capability_settled` observation carries. Staged
+    /// the way `pending_event_ref` is, so no observation call site that has
+    /// nothing to say about a host capability has to say so.
+    pending_host_capability: Option<apxm_runtime_protocol::HostCapabilityObservation>,
     /// Observation position is independent from the evidence/fact sequence;
     /// publishing a live observation must never perturb scheduler identities.
     observation_seq: u64,
@@ -1062,6 +1071,15 @@ impl DriveState {
         } else {
             None
         };
+        let host_capability = if matches!(
+            kind,
+            apxm_runtime_protocol::ObservationKind::CapabilityRequested
+                | apxm_runtime_protocol::ObservationKind::CapabilitySettled
+        ) {
+            self.pending_host_capability.take()
+        } else {
+            None
+        };
         let observation = make_observation(
             &self.program_invocation_id,
             self.observation_seq,
@@ -1079,6 +1097,7 @@ impl DriveState {
             output_ref,
             evidence_ref,
             event_ref.as_deref(),
+            host_capability,
         );
         let observation = match observation {
             Ok(observation) => observation,
@@ -1086,6 +1105,43 @@ impl DriveState {
         };
         self.durable_observations.push(observation.clone());
         Ok(observation)
+    }
+
+    /// Record how one host-fulfilled Capability request settled, and append the
+    /// evidence its outcome obliges.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_host_capability(
+        &mut self,
+        ports: &ExecutionPorts,
+        capability_ref: &str,
+        settlement: &HostCapabilitySettlement,
+        node_execution_id: &str,
+        occurrence_id: &str,
+        region_occurrence_id: Option<&str>,
+        node_started_at: Instant,
+    ) -> Result<(), ExecutionError> {
+        self.pending_host_capability =
+            Some(apxm_runtime_protocol::HostCapabilityObservation {
+                capability_request_id: settlement.capability_request_id.clone(),
+                capability_ref: capability_ref.to_owned(),
+                input: None,
+                authored_permission: None,
+                outcome: Some(settlement.outcome),
+                receipt_ref: settlement.receipt_ref.clone(),
+            });
+        self.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::CapabilitySettled,
+            apxm_runtime_protocol::Commitment::Provisional,
+            Some(node_execution_id),
+            Some(occurrence_id),
+            None,
+            region_occurrence_id,
+            None,
+            None,
+            None,
+            Some(node_started_at),
+        )
     }
 
     /// Deliver observations after the atomic commit on a best-effort basis.
@@ -1238,6 +1294,7 @@ impl DriveState {
             batch,
             durable_observations: Vec::new(),
             pending_event_ref: None,
+            pending_host_capability: None,
             observation_seq: 0,
             seq,
             program_invocation_id: program_invocation_id.to_string(),
@@ -2508,7 +2565,13 @@ async fn drive_from(
                             // line. There is no undecided attempt to skip:
                             // the admission type has no "no decision" state.
                             let resolved = &admission.permission;
-                            if !resolved.decision.is_allow() {
+                            // Permission for a host-fulfilled reference is the
+                            // host's decision (ADR-0025). APXM records the
+                            // authored request and carries it to the host; it
+                            // does not broker it, so it raises neither of its
+                            // own approval observations here.
+                            let host_fulfilled = is_host_capability_ref(&capability_ref);
+                            if !host_fulfilled && !resolved.decision.is_allow() {
                                 state.observe(
                                     ports,
                                     apxm_runtime_protocol::ObservationKind::ApprovalRequested,
@@ -2523,19 +2586,21 @@ async fn drive_from(
                                     Some(node_started_at),
                                 )?;
                             }
-                            state.observe(
-                                ports,
-                                apxm_runtime_protocol::ObservationKind::ApprovalResolved,
-                                apxm_runtime_protocol::Commitment::Provisional,
-                                Some(&node_execution_id),
-                                Some(&occurrence_id),
-                                None,
-                                region_occurrence_id.as_deref(),
-                                None,
-                                None,
-                                None,
-                                Some(node_started_at),
-                            )?;
+                            if !host_fulfilled {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::ApprovalResolved,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    None,
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                            }
                             state.seq += 1;
                             let mut decided = fact(
                                 &state.program_invocation_id,
@@ -2556,7 +2621,129 @@ async fn drive_from(
                             // approval broker, so `Ask` has nothing to ask.
                             let mut attempt_id = None;
                             let mut effect_id = None;
-                            let outcome = if resolved.decision.is_allow() {
+                            let outcome = if host_fulfilled {
+                                let arguments_value_id =
+                                    operand_str(op, "arguments").ok_or_else(|| {
+                                        ExecutionError::MissingOperand {
+                                            node_id: op.node_id.clone(),
+                                            operand: "arguments",
+                                        }
+                                    })?;
+                                let authored_arguments = materialize_ssa_value(
+                                    air,
+                                    &state,
+                                    &op.node_id,
+                                    &arguments_value_id,
+                                    &mut BTreeSet::new(),
+                                )?;
+                                let request = CapabilityRequest::prepare(
+                                    capability_ref.clone(),
+                                    arguments_type_ref,
+                                    authored_arguments,
+                                    &state.program_invocation_id,
+                                    &node_execution_id,
+                                    admission.authority.clone(),
+                                )
+                                .map_err(ExecutionError::CapabilityRequest)?;
+                                let capability_request_id = host_capability_request_id(
+                                    &state.program_invocation_id,
+                                    &node_execution_id,
+                                );
+                                let event_ref = EventRef::new(capability_request_id.clone())
+                                    .map_err(|source| ExecutionError::InvalidEventRef {
+                                        node_id: op.node_id.clone(),
+                                        source,
+                                    })?;
+                                state.pending_host_capability =
+                                    Some(apxm_runtime_protocol::HostCapabilityObservation {
+                                        capability_request_id: capability_request_id.clone(),
+                                        capability_ref: capability_ref.clone(),
+                                        input: Some(
+                                            request.arguments().canonical_json().to_owned(),
+                                        ),
+                                        authored_permission: Some(authored_permission(
+                                            &resolved.decision,
+                                        )),
+                                        outcome: None,
+                                        receipt_ref: None,
+                                    });
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::CapabilityRequested,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    None,
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                                // Nothing in APXM runs. The request is published
+                                // and the node awaits the host's answer through
+                                // the same durable-event machinery `await.event`
+                                // parks on.
+                                let event_outcome = tokio::select! {
+                                    outcome = ports.events.await_event(EventAwait {
+                                        node_id: op.node_id.clone(),
+                                        event_ref: event_ref.clone(),
+                                    }) => outcome,
+                                    () = ports.cancellation.cancelled() => EventOutcome::Cancelled,
+                                };
+                                if options.suspend_on_park
+                                    && matches!(&event_outcome, EventOutcome::Parked)
+                                {
+                                    state.park_active_loops();
+                                    state.seq += 1;
+                                    state.batch.push(fact(
+                                        &state.program_invocation_id,
+                                        state.seq,
+                                        FactKind::EventAwaitRegistered,
+                                        None,
+                                        Some(InvocationState::WaitingEvent),
+                                        Some(op.node_id.clone()),
+                                        None,
+                                    ));
+                                    state.seq += 1;
+                                    state.batch.push(fact(
+                                        &state.program_invocation_id,
+                                        state.seq,
+                                        FactKind::InvocationParked,
+                                        None,
+                                        Some(InvocationState::WaitingEvent),
+                                        Some(op.node_id.clone()),
+                                        None,
+                                    ));
+                                    return Ok(DriveEnd::Parked {
+                                        state,
+                                        continuation_id: op.node_id.clone(),
+                                        event_ref: Some(event_ref),
+                                        next_schedule_position: schedule_position + 1,
+                                        parked_node_execution_id: Some(node_execution_id),
+                                        parked_loop_path: loop_path.clone(),
+                                        resume_value_id: op
+                                            .result
+                                            .as_ref()
+                                            .map(|result| result.value_id.clone()),
+                                    });
+                                }
+                                let settlement = host_settlement_from_event(
+                                    &capability_request_id,
+                                    &capability_ref,
+                                    &event_outcome,
+                                );
+                                state.settle_host_capability(
+                                    ports,
+                                    &capability_ref,
+                                    &settlement,
+                                    &node_execution_id,
+                                    &occurrence_id,
+                                    region_occurrence_id.as_deref(),
+                                    node_started_at,
+                                )?;
+                                host_capability_outcome(&settlement)
+                            } else if resolved.decision.is_allow() {
                                 let arguments_value_id =
                                     operand_str(op, "arguments").ok_or_else(|| {
                                         ExecutionError::MissingOperand {
@@ -4233,11 +4420,21 @@ async fn commit_suspension(
     let payload = serde_json::to_value(&committed_continuation)
         .expect("continuation contains only serializable canonical runtime values");
     tuple.continuation = Some(payload);
+    // One invocation may park more than once — a program that invokes two
+    // host-fulfilled Capabilities parks at each. The commit scope is keyed by
+    // this id, so a park that reused it would collide with the previous park
+    // rather than commit. The parked node and the continuation's event
+    // sequence are exactly the coordinates that separate two parks of one
+    // invocation, and both are replayed identically, so this stays idempotent.
+    let yield_commit_id = format!(
+        "{}.yield.{}.{}",
+        continuation.commit_id, continuation.continuation_id, committed_continuation.event_sequence
+    );
     let request = ExecutionCommitRequest {
-        commit_id: format!("{}.yield", continuation.commit_id),
+        commit_id: yield_commit_id.clone(),
         program_instance_ref: continuation.program_instance_ref.clone(),
         program_invocation_ref: continuation.program_invocation_ref.clone(),
-        idempotency_key: format!("idem.{}.yield", continuation.commit_id),
+        idempotency_key: format!("idem.{yield_commit_id}"),
         expected_program_state_version: expected,
         write_set: committed_continuation.write_set.clone(),
         tuple,
@@ -4251,7 +4448,7 @@ async fn commit_suspension(
     let commit = ports.execution_commit.commit(request).await;
     let operational_usage = publish_committed_native_model_usage(
         ports,
-        &format!("{}.yield", continuation.commit_id),
+        &yield_commit_id,
         &commit,
         &attempts,
         &lineages,
@@ -4621,6 +4818,7 @@ async fn resume_from_continuation(
         batch: Vec::new(),
         durable_observations: Vec::new(),
         pending_event_ref: None,
+        pending_host_capability: None,
         // A resumed invocation may already have durable observations from an
         // earlier commit. The committed event sequence is a safe lower bound;
         // the next live position remains strictly increasing without changing
@@ -4651,6 +4849,19 @@ async fn resume_from_continuation(
     state.last_result_value_id = Some(resume_value_id.clone());
     state.last_operation_succeeded = true;
 
+    // A park at a host-fulfilled `capability.invoke` resumes as that node's
+    // settlement, not as an `await.event` delivery: the parked node is a
+    // capability node, and the payload is the host's settlement document
+    // (ADR-0025). The AIR the continuation was rehydrated with is what says
+    // which of the two this is.
+    let host_capability_ref = air
+        .semantic_operations
+        .iter()
+        .find(|operation| operation.node_id == continuation_id)
+        .filter(|operation| operation.op == SemanticOpKind::CapabilityInvoke)
+        .and_then(|operation| operand_str(operation, "capability_ref"))
+        .filter(|capability_ref| is_host_capability_ref(capability_ref));
+
     let resumed_occurrence = format!("occurrence.{continuation_id}");
     let resumed_region_occurrence = parked_loop_path.last().and_then(|loop_id| {
         state
@@ -4660,7 +4871,97 @@ async fn resume_from_continuation(
             .map(|frame| frame.dynamic_occurrence_id.clone())
     });
 
-    if event_ref.is_some() {
+    let mut bound_value = delivered.clone();
+    if let Some(capability_ref) = host_capability_ref.clone() {
+        let capability_request_id = event_ref.as_ref().map_or_else(
+            || host_capability_request_id(&state.program_invocation_id, &continuation_id),
+            |reference| reference.as_str().to_owned(),
+        );
+        let settlement = host_settlement_from_event(
+            &capability_request_id,
+            &capability_ref,
+            &EventOutcome::Fulfilled {
+                event_ref: EventRef::new(capability_request_id.clone()).map_err(|_| {
+                    ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                        message: "parked host capability request has no identity".into(),
+                    })
+                })?,
+                payload: match &delivered {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                },
+            },
+        );
+        let parked_node_execution_id = parked_node_execution_id.clone().ok_or_else(|| {
+            ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                message: "host capability continuation is missing parked NodeExecution identity"
+                    .into(),
+            })
+        })?;
+        state.settle_host_capability(
+            ports,
+            &capability_ref,
+            &settlement,
+            &parked_node_execution_id,
+            &resumed_occurrence,
+            resumed_region_occurrence.as_deref(),
+            Instant::now(),
+        )?;
+        let outcome = host_capability_outcome(&settlement);
+        state.last_operation_succeeded =
+            matches!(&outcome, CapabilityOutcome::Completed { .. });
+        state.last_result = match &outcome {
+            CapabilityOutcome::Completed { result } => Value::String(result.clone()),
+            CapabilityOutcome::Failed { message }
+            | CapabilityOutcome::OutcomeUnknown { message } => Value::String(message.clone()),
+        };
+        bound_value = state.last_result.clone();
+        match &outcome {
+            CapabilityOutcome::Completed { .. } => {
+                state.committed_output_node_execution_id = Some(parked_node_execution_id.clone());
+                state.committed_output_occurrence_id = Some(resumed_occurrence.clone());
+                state
+                    .committed_output_region_occurrence_id
+                    .clone_from(&resumed_region_occurrence);
+            }
+            CapabilityOutcome::OutcomeUnknown { .. } => {
+                state.append_effect_outcome_unknown(
+                    &parked_node_execution_id,
+                    &settlement.capability_request_id,
+                );
+            }
+            CapabilityOutcome::Failed { message } => {
+                state.append_invocation_failure(
+                    &parked_node_execution_id,
+                    unavailable_failure_envelope(
+                        "capability",
+                        &parked_node_execution_id,
+                        message,
+                    ),
+                );
+            }
+        }
+        state.node_outcomes.push(NodeOutcome::Capability {
+            node_id: continuation_id.clone(),
+            outcome,
+            replaced: false,
+        });
+        for static_loop_id in &parked_loop_path {
+            let frame = state
+                .active_loops
+                .iter_mut()
+                .find(|frame| frame.static_loop_id == *static_loop_id)
+                .ok_or_else(|| {
+                    ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                        message: format!("missing parked loop frame {static_loop_id}"),
+                    })
+                })?;
+            frame.parked = false;
+            frame
+                .causal_node_execution_ids
+                .push(parked_node_execution_id.clone());
+        }
+    } else if event_ref.is_some() {
         // A continuation without an event ref is a structural yield (for
         // example a loop-yield), not an event delivery. Do not mislabel its
         // resume as EventResumed; that observation requires a real event
@@ -4716,8 +5017,14 @@ async fn resume_from_continuation(
                 .push(parked_node_execution_id.clone());
         }
     }
-    validate_resume_capability_arguments(&air, &resume_value_id)?;
-    state.values.insert(resume_value_id, delivered);
+    if host_capability_ref.is_none() {
+        // A delivered event payload is external data the program never asked
+        // for, so it may not become a Capability argument. A host capability
+        // settlement is not that: it is the authored result of the node the
+        // program itself invoked, and flows onward like any other result.
+        validate_resume_capability_arguments(&air, &resume_value_id)?;
+    }
+    state.values.insert(resume_value_id, bound_value);
 
     let end = drive_from(
         DriveInputs {
@@ -4747,6 +5054,110 @@ async fn resume_from_continuation(
         write_set,
     };
     finish(ports, parts, end).await
+}
+
+/// The bare authored decision one permission carries, for the request the host
+/// receives. The reason stays in AIR; the host is told what was asked for, not
+/// why the author asked for it.
+fn authored_permission(
+    decision: &apxm_ais::permissions::PermissionDecision,
+) -> apxm_runtime_protocol::AuthoredPermission {
+    use apxm_ais::permissions::PermissionDecision;
+    match decision {
+        PermissionDecision::Allow { .. } => apxm_runtime_protocol::AuthoredPermission::Allow,
+        PermissionDecision::Ask { .. } => apxm_runtime_protocol::AuthoredPermission::Ask,
+        PermissionDecision::Deny { .. } => apxm_runtime_protocol::AuthoredPermission::Deny,
+    }
+}
+
+/// How one host capability request settled, from the event the host applied.
+///
+/// A fulfilled event carries the host's own settlement document. Anything else
+/// is APXM's own answer about a request the host never settled: parked without
+/// durable suspension is a runtime that cannot wait, and expiry and
+/// cancellation each settle the node rather than leaving it open.
+fn host_settlement_from_event(
+    capability_request_id: &str,
+    capability_ref: &str,
+    outcome: &EventOutcome,
+) -> HostCapabilitySettlement {
+    match outcome {
+        EventOutcome::Fulfilled { payload, .. } => {
+            match serde_json::from_str::<HostCapabilitySettlement>(payload) {
+                Ok(settlement)
+                    if settlement.is_well_formed()
+                        && settlement.capability_request_id == capability_request_id =>
+                {
+                    settlement
+                }
+                _ => HostCapabilitySettlement::new(
+                    capability_request_id,
+                    HostCapabilityOutcomeKind::Failed,
+                    None,
+                    None,
+                    Some(format!(
+                        "the host settled '{capability_ref}' with a document outside \
+                         apxm.host-capability.v1"
+                    )),
+                ),
+            }
+        }
+        EventOutcome::Cancelled => HostCapabilitySettlement::new(
+            capability_request_id,
+            HostCapabilityOutcomeKind::Cancelled,
+            None,
+            None,
+            Some(format!(
+                "the invocation was cancelled while '{capability_ref}' was outstanding"
+            )),
+        ),
+        EventOutcome::Expired => HostCapabilitySettlement::new(
+            capability_request_id,
+            HostCapabilityOutcomeKind::Unknown,
+            None,
+            None,
+            Some(format!(
+                "the request for '{capability_ref}' expired before the host settled it"
+            )),
+        ),
+        EventOutcome::Parked | EventOutcome::Mismatched { .. } => HostCapabilitySettlement::new(
+            capability_request_id,
+            HostCapabilityOutcomeKind::Unknown,
+            None,
+            None,
+            Some(format!(
+                "'{capability_ref}' parked in an execution that cannot suspend, so no \
+                 host answer can reach it"
+            )),
+        ),
+    }
+}
+
+/// The program-visible outcome of one settlement.
+///
+/// `ok` hands the host's output to the program. `denied` and `failed` are typed
+/// failures the program observes. `unknown` and `cancelled` leave the effect
+/// uncertain, which is the honest state when a write may or may not have landed.
+fn host_capability_outcome(settlement: &HostCapabilitySettlement) -> CapabilityOutcome {
+    let message = || {
+        settlement.message.clone().unwrap_or_else(|| {
+            format!(
+                "the host settled the request as {}",
+                settlement.outcome.wire()
+            )
+        })
+    };
+    match settlement.outcome {
+        HostCapabilityOutcomeKind::Ok => CapabilityOutcome::Completed {
+            result: settlement.output.clone().unwrap_or_default(),
+        },
+        HostCapabilityOutcomeKind::Denied | HostCapabilityOutcomeKind::Failed => {
+            CapabilityOutcome::Failed { message: message() }
+        }
+        HostCapabilityOutcomeKind::Unknown | HostCapabilityOutcomeKind::Cancelled => {
+            CapabilityOutcome::OutcomeUnknown { message: message() }
+        }
+    }
 }
 
 fn verify_continuation_integrity(committed: &CommittedContinuation) -> Result<(), ExecutionError> {

@@ -9,11 +9,19 @@
           "effect": "read",
           "input_schema": {
             "type": "object",
-            "properties": { "query": { "type": "string" } },
-            "required": ["query"],
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           },
-          "output_schema": { "type": "object" }
+          "output_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -27,14 +35,22 @@
         {
           "id": "sale-orders.list",
           "effect": "read",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
         },
         {
           "id": "sale_order.confirm",
           "effect": "write",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -56,8 +72,12 @@
         {
           "id": "notes.search",
           "effect": "admin",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -71,7 +91,9 @@
         {
           "id": "notes.search",
           "effect": "read",
-          "input_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -85,8 +107,12 @@
         {
           "id": "host:notes.search",
           "effect": "read",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -100,8 +126,12 @@
         {
           "id": "Notes.Search",
           "effect": "read",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" }
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -115,8 +145,12 @@
         {
           "id": "notes.search",
           "effect": "read",
-          "input_schema": { "type": "object" },
-          "output_schema": { "type": "object" },
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
           "handler": "capabilities/notes/handler.py"
         }
       ]
@@ -130,7 +164,6 @@
       "capability_request_id": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
       "program_invocation_id": "invocation.1",
       "capability_ref": "host:notes.search",
-      "effect": "read",
       "input": "{\"query\":\"quarterly\"}",
       "authored_permission": "allow"
     },
@@ -143,7 +176,6 @@
       "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
       "program_invocation_id": "invocation.1",
       "capability_ref": "host:sale_order.confirm",
-      "effect": "write",
       "input": "{\"order_id\":7}",
       "authored_permission": "ask"
     },
@@ -156,7 +188,6 @@
       "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
       "program_invocation_id": "invocation.1",
       "capability_ref": "read",
-      "effect": "read",
       "input": "{}",
       "authored_permission": "allow"
     },
@@ -169,7 +200,6 @@
       "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
       "program_invocation_id": "invocation.1",
       "capability_ref": "host:notes.search",
-      "effect": "read",
       "input": "{}"
     },
     "expected_valid": false
@@ -181,7 +211,6 @@
       "capability_request_id": "req-1",
       "program_invocation_id": "invocation.1",
       "capability_ref": "host:notes.search",
-      "effect": "read",
       "input": "{}",
       "authored_permission": "allow"
     },
@@ -262,6 +291,19 @@
     "name": "a-document-that-is-neither-a-set-nor-a-request-nor-an-outcome-is-rejected",
     "input": {
       "schema_version": "apxm.host-capability.v1"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-request-restating-the-effect-is-rejected",
+    "input": {
+      "schema_version": "apxm.host-capability.v1",
+      "capability_request_id": "capability-request.0000000000000000000000000000000000000000000000000000000000000001",
+      "program_invocation_id": "invocation.1",
+      "capability_ref": "host:notes.search",
+      "effect": "read",
+      "input": "{}",
+      "authored_permission": "allow"
     },
     "expected_valid": false
   }
