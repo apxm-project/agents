@@ -800,6 +800,45 @@ mod tests {
         assert!(port.attempt_diagnostics().is_empty());
     }
 
+    /// The authored target is whatever the program's `Model(...)` names, which
+    /// in practice is a qualified reference: underscored segments joined by a
+    /// dot. Resolution is exact and string-wise, so the shape is only ever a
+    /// question of what `APXM_BACKEND_MODEL` was set to; this pins that a
+    /// reference of that shape binds and is answered like any other.
+    #[test]
+    fn a_qualified_underscored_reference_binds_and_is_answered() {
+        const QUALIFIED: &str = "authored_program.model";
+
+        let port = LocalModelInferencePort::for_selected_development_backend(
+            Some("fixture"),
+            Some(QUALIFIED),
+        )
+        .expect("the fixture selection builds an inference port");
+
+        let AttemptDisposition::Success { output, .. } = port.attempt(
+            &model_request(QUALIFIED, json!({"prompt": "review the orders"})),
+            0,
+        ) else {
+            panic!("a qualified reference is an exact reference like any other");
+        };
+
+        assert_eq!(
+            output
+                .as_object()
+                .expect("an object outcome")
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["content", "finish_reason", "model", "tool_calls"],
+            "the outcome carries exactly the admitted model-outcome keys"
+        );
+        assert_eq!(output["model"], QUALIFIED);
+        assert!(
+            output["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with(fixture::FIXTURE_COMPLETION_PREFIX))
+        );
+    }
+
     #[test]
     fn a_target_the_development_backend_was_not_named_for_is_still_unresolvable() {
         let port = LocalModelInferencePort::for_selected_development_backend(
