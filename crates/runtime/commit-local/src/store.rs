@@ -1385,14 +1385,13 @@ impl CommitLocalStore {
             precommit_ref
                 .validate()
                 .map_err(|error| CommitLocalError::InvalidRequest(error.to_owned()))?;
-            let (node_execution_id, occurrence_id) = node_coordinates(fact)
-                .map(|(node, _, _, occurrence, _, _)| {
+            let (node_execution_id, occurrence_id) =
+                node_coordinates(fact).map_or((None, None), |(node, _, _, occurrence, _, _)| {
                     (
                         NodeExecutionId::new(node).ok(),
                         occurrence.and_then(|value| OccurrenceId::new(value).ok()),
                     )
-                })
-                .unwrap_or((None, None));
+                });
             let mut evidence_ref = EvidenceRecord {
                 evidence_ref: apxm_runtime_protocol::EvidenceRef::new(precommit_ref.evidence_ref)
                     .map_err(|error| {
@@ -1673,7 +1672,10 @@ impl CommitLocalStore {
                 evidence_refs: Vec::new(),
                 child_program_refs: Vec::new(),
             });
-        invocation.program_instance_ref = request.program_instance_ref.as_str().to_owned();
+        request
+            .program_instance_ref
+            .as_str()
+            .clone_into(&mut invocation.program_instance_ref);
         invocation.status = fold_invocation_status(invocation.status, status, explicit_resolution);
         invocation.evidence_refs = evidence_refs;
         invocation.output_refs = output_refs;
@@ -1695,7 +1697,7 @@ impl CommitLocalStore {
             if let Some((node_id, air_node_id, parent, occurrence, region, attempt)) =
                 node_coordinates(fact)
             {
-                let status = node_status(fact).unwrap_or_else(|| {
+                let status = node_status(fact).unwrap_or({
                     if matches!(fact, Fact::AttemptRecorded(_)) {
                         apxm_runtime_protocol::NodeExecutionStatus::Succeeded
                     } else {
@@ -1861,7 +1863,8 @@ impl CommitLocalStore {
             | ObservationKind::CapabilityAttempt
             | ObservationKind::ProgramAttempt
             | ObservationKind::ApprovalRequested
-            | ObservationKind::ApprovalResolved => {
+            | ObservationKind::ApprovalResolved
+            | ObservationKind::EventResumed => {
                 inspection.status = fold_node_status(
                     inspection.status,
                     apxm_runtime_protocol::NodeExecutionStatus::Running,
@@ -1871,12 +1874,6 @@ impl CommitLocalStore {
                 inspection.status = fold_node_status(
                     inspection.status,
                     apxm_runtime_protocol::NodeExecutionStatus::Waiting,
-                );
-            }
-            ObservationKind::EventResumed => {
-                inspection.status = fold_node_status(
-                    inspection.status,
-                    apxm_runtime_protocol::NodeExecutionStatus::Running,
                 );
             }
             ObservationKind::OutcomeUnknown => {
@@ -1898,7 +1895,9 @@ impl CommitLocalStore {
                 );
             }
             ObservationKind::ContentPublished => {
-                inspection.provisional_response_ref = observation.content_ref.clone();
+                inspection
+                    .provisional_response_ref
+                    .clone_from(&observation.content_ref);
             }
             ObservationKind::ContentCommitted => {
                 inspection.status = fold_node_status(
@@ -1911,7 +1910,7 @@ impl CommitLocalStore {
                         .as_ref()
                         .and_then(|reference| ContentRef::new(reference.as_str()).ok())
                 });
-                inspection.output_ref = observation.output_ref.clone();
+                inspection.output_ref.clone_from(&observation.output_ref);
             }
             ObservationKind::TerminalCommitted => {
                 inspection.status = fold_node_status(
@@ -2392,6 +2391,7 @@ fn keyed_cursor_token(
     keyed_digest(key, payload.as_bytes())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_after_cursor(
     cursor: Option<&ExecutionCursor>,
     key: &[u8; 32],
@@ -2422,6 +2422,7 @@ fn validate_after_cursor(
     Ok(cursor.position)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn page_cursors(
     key: &[u8; 32],
     operation: ReadOperation,
@@ -2798,6 +2799,7 @@ fn fact_id_binds_invocation(fact_id: &str, invocation: &str) -> bool {
         .is_some_and(|suffix| suffix.starts_with(&format!("{invocation}.")))
 }
 
+#[allow(clippy::type_complexity)]
 fn node_coordinates(
     fact: &Fact,
 ) -> Option<(

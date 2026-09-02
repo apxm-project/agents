@@ -994,6 +994,7 @@ impl DriveState {
     /// Publish one redacted live observation using the same monotonic sequence
     /// that is carried through a parked continuation. A sink cannot mutate
     /// state; fail-closed is an explicit composition choice.
+    #[allow(clippy::too_many_arguments)]
     fn observe(
         &mut self,
         ports: &ExecutionPorts,
@@ -1035,6 +1036,7 @@ impl DriveState {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn stage_observation(
         &mut self,
         _ports: &ExecutionPorts,
@@ -1090,7 +1092,6 @@ impl DriveState {
     /// The commit has already established execution truth, so a fail-closed
     /// live sink policy must not turn a successful commit into an error result.
     fn deliver_post_commit(
-        &self,
         ports: &ExecutionPorts,
         observation: &apxm_runtime_protocol::ExecutionObservation,
     ) {
@@ -1101,7 +1102,6 @@ impl DriveState {
     }
 
     fn deliver_precommit(
-        &self,
         ports: &ExecutionPorts,
         observation: &apxm_runtime_protocol::ExecutionObservation,
     ) -> Result<(), ExecutionError> {
@@ -2138,7 +2138,9 @@ async fn drive_from(
                 let node_started_at = Instant::now();
                 state.current_node_execution_id = Some(node_execution_id.clone());
                 state.current_occurrence_id = Some(occurrence_id.clone());
-                state.current_region_occurrence_id = region_occurrence_id.clone();
+                state
+                    .current_region_occurrence_id
+                    .clone_from(&region_occurrence_id);
                 state.observe(
                     ports,
                     apxm_runtime_protocol::ObservationKind::NodeStarted,
@@ -2238,7 +2240,7 @@ async fn drive_from(
                                 duration_ms: dispatch_started.elapsed().as_millis() as u64,
                                 policy: RetryPolicy::default(),
                             }) => Some(result),
-                            _ = ports.cancellation.cancelled() => None,
+                            () = ports.cancellation.cancelled() => None,
                         };
                         let Some(dispatch) = dispatch else {
                             // The effect future was cancelled before it
@@ -2438,8 +2440,9 @@ async fn drive_from(
                             state.committed_output_node_execution_id =
                                 Some(node_execution_id.clone());
                             state.committed_output_occurrence_id = Some(occurrence_id.clone());
-                            state.committed_output_region_occurrence_id =
-                                region_occurrence_id.clone();
+                            state
+                                .committed_output_region_occurrence_id
+                                .clone_from(&region_occurrence_id);
                         }
                         state.node_outcomes.push(NodeOutcome::Model {
                             node_id: op.node_id.clone(),
@@ -2582,10 +2585,10 @@ async fn drive_from(
                                 // exact capability-attempt coordinate; do
                                 // not synthesize a retry index here.
                                 attempt_id = Some(request.effect().effect_id.clone());
-                                effect_id = attempt_id.clone();
+                                effect_id.clone_from(&attempt_id);
                                 tokio::select! {
                                     outcome = ports.capability.invoke_authorized(request) => outcome,
-                                    _ = ports.cancellation.cancelled() => {
+                                    () = ports.cancellation.cancelled() => {
                                         CapabilityOutcome::OutcomeUnknown {
                                             message: "capability effect outcome is unknown after cancellation".to_owned(),
                                         }
@@ -2614,8 +2617,9 @@ async fn drive_from(
                                 state.committed_output_node_execution_id =
                                     Some(node_execution_id.clone());
                                 state.committed_output_occurrence_id = Some(occurrence_id.clone());
-                                state.committed_output_region_occurrence_id =
-                                    region_occurrence_id.clone();
+                                state
+                                    .committed_output_region_occurrence_id
+                                    .clone_from(&region_occurrence_id);
                             }
                             // The request constructor supplied the exact
                             // effect identity when dispatch was authorized;
@@ -2842,7 +2846,7 @@ async fn drive_from(
                                 node_id: op.node_id.clone(),
                                 event_ref: event_ref.clone(),
                             }) => outcome,
-                            _ = ports.cancellation.cancelled() => EventOutcome::Cancelled,
+                                    () = ports.cancellation.cancelled() => EventOutcome::Cancelled,
                         };
                         if let EventOutcome::Fulfilled {
                             event_ref: fulfilled_event_ref,
@@ -2885,7 +2889,7 @@ async fn drive_from(
                                     None,
                                     None,
                                     Some(node_started_at),
-                                )?
+                                )?;
                             }
                             EventOutcome::Cancelled => {
                                 state.observe(
@@ -2969,7 +2973,9 @@ async fn drive_from(
                     if state.last_operation_succeeded {
                         state.committed_output_node_execution_id = Some(node_execution_id.clone());
                         state.committed_output_occurrence_id = Some(occurrence_id.clone());
-                        state.committed_output_region_occurrence_id = region_occurrence_id.clone();
+                        state
+                            .committed_output_region_occurrence_id
+                            .clone_from(&region_occurrence_id);
                     }
                 }
                 state.record_node_outcome(
@@ -3083,9 +3089,11 @@ async fn drive_from(
                 // node execution to publish it.  Resolve the exact `output`
                 // operand here, at the scheduler boundary, so the commit
                 // path can stage the value and mint its SessionOutputRef.
-                let return_region_id = match step {
-                    ScheduleStep::ProgramReturn { region_id } => region_id,
-                    _ => unreachable!("matched ProgramReturn above"),
+                let ScheduleStep::ProgramReturn {
+                    region_id: return_region_id,
+                } = step
+                else {
+                    unreachable!("matched ProgramReturn above")
                 };
                 let return_value_id = air
                     .structural_ir
@@ -3408,23 +3416,21 @@ async fn commit_and_report(
             .clone()
             .or_else(|| state.current_region_occurrence_id.clone())
     };
-    if !terminal_non_success {
-        if let Some(output_ref) = output_ref.as_deref() {
-            let observation = state.stage_observation(
-                ports,
-                apxm_runtime_protocol::ObservationKind::ContentPublished,
-                apxm_runtime_protocol::Commitment::Provisional,
-                output_node_execution_id.as_deref(),
-                output_occurrence_id.as_deref(),
-                None,
-                output_region_occurrence_id.as_deref(),
-                Some(output_ref),
-                Some(output_ref),
-                None,
-                None,
-            )?;
-            state.deliver_precommit(ports, &observation)?;
-        }
+    if !terminal_non_success && let Some(output_ref) = output_ref.as_deref() {
+        let observation = state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::ContentPublished,
+            apxm_runtime_protocol::Commitment::Provisional,
+            output_node_execution_id.as_deref(),
+            output_occurrence_id.as_deref(),
+            None,
+            output_region_occurrence_id.as_deref(),
+            Some(output_ref),
+            Some(output_ref),
+            None,
+            None,
+        )?;
+        DriveState::deliver_precommit(ports, &observation)?;
     }
     let mut committed_observations = Vec::new();
     let evidence_index =
@@ -3448,22 +3454,20 @@ async fn commit_and_report(
         .map_err(|error| ExecutionError::InvalidCommitRequest {
             message: error.to_owned(),
         })?;
-    if !terminal_non_success {
-        if let Some(output_ref) = output_ref.as_deref() {
-            committed_observations.push(state.stage_observation(
-                ports,
-                apxm_runtime_protocol::ObservationKind::ContentCommitted,
-                apxm_runtime_protocol::Commitment::Committed,
-                output_node_execution_id.as_deref(),
-                output_occurrence_id.as_deref(),
-                None,
-                output_region_occurrence_id.as_deref(),
-                None,
-                Some(output_ref),
-                None,
-                None,
-            )?);
-        }
+    if !terminal_non_success && let Some(output_ref) = output_ref.as_deref() {
+        committed_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::ContentCommitted,
+            apxm_runtime_protocol::Commitment::Committed,
+            output_node_execution_id.as_deref(),
+            output_occurrence_id.as_deref(),
+            None,
+            output_region_occurrence_id.as_deref(),
+            None,
+            Some(output_ref),
+            None,
+            None,
+        )?);
     }
     let has_failure = state
         .batch
@@ -3576,15 +3580,15 @@ async fn commit_and_report(
     match &commit {
         ExecutionCommitResult::Committed { .. } => {
             for observation in &committed_observations {
-                state.deliver_post_commit(ports, observation);
+                DriveState::deliver_post_commit(ports, observation);
             }
         }
-        ExecutionCommitResult::OutcomeUnknown { .. } => {
+        ExecutionCommitResult::OutcomeUnknown { .. }
+        | ExecutionCommitResult::CompareConflict { .. } => {
             // A commit result is not an execution observation. Any effect or
             // invocation uncertainty must already have been staged in the
             // atomic tuple; do not publish a live-only record here.
         }
-        ExecutionCommitResult::CompareConflict { .. } => {}
     }
 
     let operational_usage = publish_committed_native_model_usage(

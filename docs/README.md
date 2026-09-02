@@ -23,7 +23,7 @@ Python or TypeScript source
   -> FrontendGraph
   -> Rust verification and lowering
   -> AIR
-  -> registered AIS MLIR
+  -> canonical AIS dialect MLIR (verified when the native MLIR toolchain is available)
   -> immutable executable artifact
   -> exact Invocation Admission and Port bindings
   -> generic execution kernel

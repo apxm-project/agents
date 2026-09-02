@@ -1,4 +1,4 @@
-"""Run one APXM owner P80 phase and emit its final neutral result."""
+"""Run one APXM owner phase and emit its final neutral result."""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 PHASES: dict[str, tuple[str, ...]] = {
-    "p80-e2e": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol"),
-    "p80-journey-c": ("release-qualification", "compile-service-canonical", "execute-canonical"),
-    "p80-negative-recovery": ("release-qualification", "test-kernel", "test-runtime-protocol", "test-runtime-service"),
-    "p80-journey-g": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol", "compile-service-canonical", "execute-canonical"),
-    "p80-journey-h": ("release-qualification", "test-compilation-service", "test-runtime-service", "test-event-http", "test-interaction-client"),
-    "p80-restart-reopen": ("release-qualification", "test-runtime-protocol", "test-runtime-service", "test-kernel", "test-execution"),
+    "owner-e2e": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol"),
+    "owner-compilation-runtime": ("release-qualification", "compile-service-canonical", "execute-canonical"),
+    "owner-negative-recovery": ("release-qualification", "test-kernel", "test-runtime-protocol", "test-runtime-service"),
+    "owner-integrated-execution": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol", "compile-service-canonical", "execute-canonical"),
+    "owner-protocol-clients": ("release-qualification", "test-compilation-service", "test-runtime-service", "test-event-http", "test-interaction-client"),
+    "owner-restart-reopen": ("release-qualification", "test-runtime-protocol", "test-runtime-service", "test-kernel", "test-execution"),
 }
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
@@ -384,7 +384,7 @@ def final_result(
 
 def run_phase(phase: str, commands: Sequence[str] | None = None) -> int:
     if phase not in PHASES:
-        raise ValueError(f"unknown APXM P80 phase: {phase}")
+        raise ValueError(f"unknown APXM owner phase: {phase}")
     dekk = shutil.which("dekk")
     if not dekk:
         raise RuntimeError("dekk executable is unavailable")
@@ -417,7 +417,7 @@ def run_phase(phase: str, commands: Sequence[str] | None = None) -> int:
             )
         )
     if qualification is None:
-        raise RuntimeError("P80 phase completed without owner release qualification evidence")
+        raise RuntimeError("owner phase completed without owner release qualification evidence")
     evidence = {
         "schema": COMMAND_EVIDENCE_SCHEMA,
         "owner": "agents",

@@ -445,7 +445,7 @@ pub fn verify_invocation_materials(
 ) -> Result<VerifiedInvocationAdmission, String> {
     let artifact_digest = canonical_artifact_digest(artifact_bytes)?;
     let artifact = ExecutableArtifact::decode_for_execution(artifact_bytes, &artifact_digest)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.clone())?;
     let descriptor = canonical_runtime_descriptor();
     if materials.admission.port_bindings_digest != canonical_port_bindings_digest()
         || materials.admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
@@ -537,6 +537,7 @@ pub async fn execute_admitted_artifact_with_sandbox(
 /// Execute one admitted artifact against caller-owned commit/read ports.
 /// Observations remain a bounded, non-authoritative sink; committed execution
 /// truth is read back from the injected Execution Commit port.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_admitted_artifact_with_runtime_ports(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -564,6 +565,7 @@ pub async fn execute_admitted_artifact_with_runtime_ports(
 /// Execute one admitted artifact with a caller-owned cooperative cancellation
 /// signal. The signal is attached before the profile starts so service cancel
 /// and wall-clock expiry both reach the driver's atomic terminal commit path.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_admitted_artifact_with_runtime_ports_and_cancellation(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -595,6 +597,7 @@ pub async fn execute_admitted_artifact_with_runtime_ports_and_cancellation(
 /// Runtime-service start path carrying the caller's exact entrypoint input.
 /// The input is bound to the AIR parameter by the composition root; it is not
 /// inferred from artifact metadata or injected into the driver as context.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_admitted_artifact_with_runtime_ports_and_cancellation_with_input(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -628,6 +631,7 @@ pub(crate) async fn execute_admitted_artifact_with_runtime_ports_and_cancellatio
 /// returned JSON is a transport-neutral projection of either a suspended
 /// continuation or a committed terminal report; the continuation itself is
 /// owned by the execution commit port.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_admitted_artifact_resumable_with_runtime_ports_and_cancellation(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -655,6 +659,7 @@ pub async fn execute_admitted_artifact_resumable_with_runtime_ports_and_cancella
 }
 
 /// Resumable service entrypoint bound to the concrete Program Instance key.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_admitted_artifact_resumable_for_instance(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -685,6 +690,7 @@ pub async fn execute_admitted_artifact_resumable_for_instance(
 }
 
 /// Resumable Runtime-service start path carrying the exact entrypoint input.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -719,6 +725,7 @@ pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
 /// driver path used by resumable starts. The caller must have already
 /// durably applied the matching EventApplication; this function only drives
 /// the continuation and returns its committed/suspended projection.
+#[allow(clippy::too_many_arguments)]
 pub async fn resume_admitted_artifact_with_runtime_ports(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -795,6 +802,7 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_admitted_artifact_with_runtime_ports_mode(
     air: AirModule,
     artifact_bytes: &[u8],
@@ -921,7 +929,7 @@ fn run_report_json(report: &apxm_execution::RunReport, model: &LocalModelInferen
     json!({
         "schema_version": "apxm.local-execute-result",
         "runtime": "apxm_execution",
-        "status": runtime_status(&report),
+        "status": runtime_status(report),
         "content": report.final_context,
         "results": {
             "node_outcomes": report.node_outcomes.iter().map(node_outcome_json).collect::<Vec<_>>(),
@@ -969,6 +977,7 @@ pub fn materials_for_artifact(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn runtime_profile_from_invocation(
     commit: Arc<dyn ExecutionCommitPort>,
     observation_sink: Option<Arc<dyn ObservationSink>>,
@@ -1480,8 +1489,8 @@ fn runtime_status(report: &apxm_execution::RunReport) -> &'static str {
         (
             ExecutionCommitResult::Committed { .. },
             apxm_execution::RunTerminalStatus::OutcomeUnknown,
-        ) => "outcome_unknown",
+        )
+        | (ExecutionCommitResult::OutcomeUnknown { .. }, _) => "outcome_unknown",
         (ExecutionCommitResult::CompareConflict { .. }, _) => "compare_conflict",
-        (ExecutionCommitResult::OutcomeUnknown { .. }, _) => "outcome_unknown",
     }
 }

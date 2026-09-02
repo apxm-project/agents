@@ -1,9 +1,11 @@
 # Compiler pipeline
 
 The compiler has one source of truth for lowering: the typed FrontendGraph is
-validated by Rust, lowered to AIR, and then to the registered AIS MLIR
-dialect. The emitted artifact is executable only after exact capability and
-model ports are admitted by the host.
+validated by Rust, lowered to AIR, and then rendered as canonical MLIR using
+the registered AIS dialect. Native MLIR verification is an explicit toolchain
+gate; the semantic AIR/artifact boundary remains backend-neutral. The emitted
+artifact is executable only after exact capability and model ports are
+admitted by the host.
 
 ```text
 Python / TypeScript source

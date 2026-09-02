@@ -733,22 +733,22 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertIn("APXM_RUNTIME_SERVICE_BINARY", descriptor_command)
         self.assertNotIn("target/release/apxm-compilation-service", descriptor_command)
 
-    def test_dekk_manifest_exposes_distinct_p80_owner_declarations(self) -> None:
+    def test_dekk_manifest_exposes_distinct_owner_phase_declarations(self) -> None:
         import tomllib
 
         commands = tomllib.loads((ROOT / ".dekk.toml").read_text(encoding="utf-8"))["commands"]
         names = (
-            "p80-e2e",
-            "p80-journey-c",
-            "p80-negative-recovery",
-            "p80-journey-g",
-            "p80-journey-h",
-            "p80-restart-reopen",
+            "owner-e2e",
+            "owner-compilation-runtime",
+            "owner-negative-recovery",
+            "owner-integrated-execution",
+            "owner-protocol-clients",
+            "owner-restart-reopen",
         )
         runs = {name: commands[name]["run"] for name in names}
         self.assertEqual(len(set(runs.values())), len(names))
         for name, run in runs.items():
-            self.assertEqual(run, f"python tools/scripts/p80_owner.py {name}")
+            self.assertEqual(run, f"python tools/scripts/owner_phase.py {name}")
             self.assertNotIn("&&", run, name)
 
 

@@ -185,6 +185,7 @@ impl ObservationSink for ObservationRecorder {
 /// Build one observation from the driver's authoritative coordinates. This is
 /// kept in the execution crate so adapters cannot mint sequence, cursor, or
 /// timing values independently.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_observation(
     invocation_id: &str,
     sequence: u64,

@@ -1,4 +1,4 @@
-"""Validate APXM owner P80 wrapper plans and structured terminal output."""
+"""Validate APXM owner phase wrapper plans and structured terminal output."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import hashlib
 import tempfile
 
-from tools.scripts.p80_owner import (
+from tools.scripts.owner_phase import (
     COMMAND_ARTIFACT_SCHEMA,
     COMMAND_EVIDENCE_SCHEMA,
     PHASES,
@@ -23,20 +23,20 @@ from tools.scripts.p80_owner import (
 )
 
 
-class P80OwnerTests(unittest.TestCase):
-    def test_every_phase_runs_a_release_gate_once_without_recursive_p80_calls(self) -> None:
+class OwnerPhaseTests(unittest.TestCase):
+    def test_every_phase_runs_a_release_gate_once_without_recursive_owner_calls(self) -> None:
         self.assertEqual(set(PHASES), {
-            "p80-e2e",
-            "p80-journey-c",
-            "p80-negative-recovery",
-            "p80-journey-g",
-            "p80-journey-h",
-            "p80-restart-reopen",
+            "owner-e2e",
+            "owner-compilation-runtime",
+            "owner-negative-recovery",
+            "owner-integrated-execution",
+            "owner-protocol-clients",
+            "owner-restart-reopen",
         })
         for commands in PHASES.values():
             self.assertEqual(commands[0], "release-qualification")
             self.assertEqual(commands.count("release-qualification"), 1)
-            self.assertFalse(any(command.startswith("p80-") for command in commands))
+            self.assertFalse(any(command.startswith("owner-") for command in commands))
 
     def test_terminal_result_preserves_actual_neutral_qualification(self) -> None:
         qualification = {
@@ -62,7 +62,7 @@ class P80OwnerTests(unittest.TestCase):
                 )
             ],
         }
-        result = final_result("p80-e2e", qualification=qualification)
+        result = final_result("owner-e2e", qualification=qualification)
         self.assertEqual(result["qualification"], qualification)
         self.assertEqual(result["schema"], "apxm.agents.owner-phase-result.v1")
         self.assertNotIn("acceptance_index", result)
@@ -74,7 +74,7 @@ class P80OwnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             entry = _command_evidence_entry(
-                "p80-e2e", command, framed, 0, root=root
+                "owner-e2e", command, framed, 0, root=root
             )
             artifact = entry["evidence_artifact"]
             artifact_path = root / str(artifact["reference"])
@@ -102,20 +102,20 @@ class P80OwnerTests(unittest.TestCase):
                 entry,
                 *[
                     _command_evidence_entry(
-                        "p80-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
+                        "owner-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
                     )
-                    for ordinal, command in enumerate(PHASES["p80-e2e"][1:], start=1)
+                    for ordinal, command in enumerate(PHASES["owner-e2e"][1:], start=1)
                 ],
             ]
             evidence = {
                 "schema": COMMAND_EVIDENCE_SCHEMA,
                 "owner": "agents",
-                "phase": "p80-e2e",
+                "phase": "owner-e2e",
                 "status": "passed",
                 "commands": entries,
             }
             with self.assertRaisesRegex(ValueError, "output artifact"):
-                _strict_command_evidence(evidence, phase="p80-e2e", root=root)
+                _strict_command_evidence(evidence, phase="owner-e2e", root=root)
             self.assertEqual(
                 artifact["digest"],
                 "sha256:" + hashlib.sha256(raw).hexdigest(),
@@ -131,19 +131,19 @@ class P80OwnerTests(unittest.TestCase):
             root = Path(directory)
             entries = [
                 _command_evidence_entry(
-                    "p80-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
+                    "owner-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
                 )
-                for ordinal, command in enumerate(PHASES["p80-e2e"])
+                for ordinal, command in enumerate(PHASES["owner-e2e"])
             ]
             evidence = {
                 "schema": COMMAND_EVIDENCE_SCHEMA,
                 "owner": "agents",
-                "phase": "p80-e2e",
+                "phase": "owner-e2e",
                 "status": "passed",
                 "commands": entries,
             }
             result = final_result(
-                "p80-e2e", qualification=qualification, command_evidence=evidence, root=root
+                "owner-e2e", qualification=qualification, command_evidence=evidence, root=root
             )
             self.assertEqual(result["command_evidence"], evidence)
             self.assertTrue(result["command_evidence"]["schema"].startswith("apxm."))
@@ -151,7 +151,7 @@ class P80OwnerTests(unittest.TestCase):
 
     def test_qualification_digest_uses_utf8_canonical_json_and_rejects_nan(self) -> None:
         qualification = {"owner": "agents", "label": "café"}
-        result = final_result("p80-e2e", qualification=qualification)
+        result = final_result("owner-e2e", qualification=qualification)
         self.assertEqual(
             result["qualification_digest"],
             "sha256:" + hashlib.sha256(_canonical_json_bytes(qualification)).hexdigest(),
@@ -159,21 +159,21 @@ class P80OwnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _canonical_json_bytes({"value": float("nan")})
         with self.assertRaises(ValueError):
-            final_result("p80-e2e", qualification={"value": float("nan")})
+            final_result("owner-e2e", qualification={"value": float("nan")})
 
     def test_command_evidence_rejects_output_and_metadata_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             entries = [
                 _command_evidence_entry(
-                    "p80-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
+                    "owner-e2e", f"dekk agents {command}", b"ok\n", ordinal, root=root
                 )
-                for ordinal, command in enumerate(PHASES["p80-e2e"])
+                for ordinal, command in enumerate(PHASES["owner-e2e"])
             ]
             evidence = {
                 "schema": COMMAND_EVIDENCE_SCHEMA,
                 "owner": "agents",
-                "phase": "p80-e2e",
+                "phase": "owner-e2e",
                 "status": "passed",
                 "commands": entries,
             }
@@ -181,7 +181,7 @@ class P80OwnerTests(unittest.TestCase):
             output_path.unlink()
             output_path.symlink_to(root / "missing-output")
             with self.assertRaisesRegex(ValueError, "output artifact"):
-                _strict_command_evidence(evidence, phase="p80-e2e", root=root)
+                _strict_command_evidence(evidence, phase="owner-e2e", root=root)
 
             output_path.unlink()
             output_path.write_bytes(b"ok\n")
@@ -189,20 +189,20 @@ class P80OwnerTests(unittest.TestCase):
             metadata_path.unlink()
             metadata_path.symlink_to(root / "missing-metadata")
             with self.assertRaisesRegex(ValueError, "evidence artifact"):
-                _strict_command_evidence(evidence, phase="p80-e2e", root=root)
+                _strict_command_evidence(evidence, phase="owner-e2e", root=root)
 
     def test_command_evidence_writer_rejects_symlink_targets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             initial = _command_evidence_entry(
-                "p80-e2e", "dekk agents release-qualification", b"ok\n", 0, root=root
+                "owner-e2e", "dekk agents release-qualification", b"ok\n", 0, root=root
             )
             output_path = root / str(initial["output_artifact"]["reference"])
             output_path.unlink()
             output_path.symlink_to(root / "missing-output")
             with self.assertRaisesRegex(ValueError, "regular file"):
                 _command_evidence_entry(
-                    "p80-e2e", "dekk agents release-qualification", b"new\n", 0, root=root
+                    "owner-e2e", "dekk agents release-qualification", b"new\n", 0, root=root
                 )
 
             output_path.unlink()
@@ -212,7 +212,7 @@ class P80OwnerTests(unittest.TestCase):
             metadata_path.symlink_to(root / "missing-metadata")
             with self.assertRaisesRegex(ValueError, "regular file"):
                 _command_evidence_entry(
-                    "p80-e2e", "dekk agents release-qualification", b"new\n", 0, root=root
+                    "owner-e2e", "dekk agents release-qualification", b"new\n", 0, root=root
                 )
 
     def test_qualification_parser_rejects_forged_or_incomplete_evidence(self) -> None:
@@ -247,7 +247,7 @@ class P80OwnerTests(unittest.TestCase):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / ".dekk.toml").read_text())
         for phase in PHASES:
             run = manifest["commands"][phase]["run"]
-            self.assertEqual(run, f"python tools/scripts/p80_owner.py {phase}")
+            self.assertEqual(run, f"python tools/scripts/owner_phase.py {phase}")
             self.assertNotIn("&&", run)
 
 

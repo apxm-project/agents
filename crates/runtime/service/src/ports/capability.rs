@@ -628,6 +628,7 @@ fn register_package_handlers(
     package_root: Option<&Path>,
     sandbox_registry: Option<Arc<SandboxRegistry>>,
 ) -> Result<(), RuntimeError> {
+    validate_package_handler_binding(handlers)?;
     let mut workers: BTreeMap<_, Arc<PackageHandlerWorker>> = BTreeMap::new();
     for (language, command) in &handlers.workers {
         // A worker is given only the descriptors it can evaluate, so
@@ -667,6 +668,81 @@ fn register_package_handlers(
             Arc::clone(worker),
             handlers.trusted_read_only.contains(&descriptor.name),
         )?))?;
+    }
+    Ok(())
+}
+
+/// Validate the complete host-supplied package-handler binding before
+/// registering even one descriptor. The manifest is untrusted input and the
+/// worker map is host-selected implementation data; accepting either one
+/// partially would let a malformed package become visible as a capability or
+/// make the worker policy depend on map iteration order.
+fn validate_package_handler_binding(
+    handlers: &crate::AdmittedPackageHandlers,
+) -> Result<(), RuntimeError> {
+    handlers
+        .manifest
+        .validate()
+        .map_err(|error| RuntimeError::Capability {
+            capability: "package.handlers".to_owned(),
+            message: format!("the package handler manifest is invalid: {error}"),
+        })?;
+
+    let manifest_languages: BTreeSet<_> = handlers
+        .manifest
+        .handlers
+        .iter()
+        .map(|descriptor| descriptor.language)
+        .collect();
+    let worker_languages: BTreeSet<_> = handlers.workers.keys().copied().collect();
+    if manifest_languages != worker_languages {
+        return Err(RuntimeError::Capability {
+            capability: "package.handlers".to_owned(),
+            message: format!(
+                "package handler workers must exactly cover manifest languages (manifest: {:?}, workers: {:?})",
+                manifest_languages, worker_languages
+            ),
+        });
+    }
+
+    let manifest_names: BTreeSet<_> = handlers
+        .manifest
+        .handlers
+        .iter()
+        .map(|descriptor| descriptor.name.as_str())
+        .collect();
+    if let Some(name) = handlers
+        .trusted_read_only
+        .iter()
+        .find(|name| !manifest_names.contains(name.as_str()))
+    {
+        return Err(RuntimeError::Capability {
+            capability: name.clone(),
+            message: "host-issued read-only decision names no package handler".to_owned(),
+        });
+    }
+
+    for (language, command) in &handlers.workers {
+        if command.interpreter.trim().is_empty() {
+            return Err(RuntimeError::Capability {
+                capability: format!("package.handlers.{language:?}"),
+                message: "package handler worker interpreter must not be empty".to_owned(),
+            });
+        }
+        if command.entry.as_os_str().is_empty()
+            || command
+                .entry
+                .components()
+                .any(|component| component == std::path::Component::ParentDir)
+        {
+            return Err(RuntimeError::Capability {
+                capability: format!("package.handlers.{language:?}"),
+                message: format!(
+                    "package handler worker entry '{}' is not a safe path",
+                    command.entry.display()
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -826,6 +902,7 @@ fn capability_result_text(value: CapabilityValue) -> Result<String, ValueError> 
 mod tests {
     use super::*;
     use apxm_program::CapabilityInvocationAuthority;
+    use sha2::{Digest, Sha256};
 
     fn authority() -> CapabilityInvocationAuthority {
         CapabilityInvocationAuthority::new(
@@ -971,12 +1048,18 @@ mod tests {
         read_only: Option<bool>,
         requires_approval: Option<bool>,
     ) -> HandlerDescriptor {
+        let module = format!("capabilities/{name}/handler");
+        let qualname = name.to_string();
+        let handler_id = format!(
+            "sha256:{:x}",
+            Sha256::digest(format!("{module}:{qualname}"))
+        );
         HandlerDescriptor {
             kind: apxm_core::types::HandlerKind::Tool,
             language: apxm_core::types::HandlerLanguage::TypeScript,
-            handler_id: format!("sha256:{}", "a".repeat(64)),
-            module: format!("capabilities/{name}/handler"),
-            qualname: name.to_string(),
+            handler_id,
+            module,
+            qualname,
             name: name.to_string(),
             source: apxm_core::types::HandlerSource {
                 artifact_path: format!("handlers/{name}.mjs"),
@@ -1011,6 +1094,52 @@ mod tests {
             manifest: HandlerManifest::new(descriptors),
             trusted_read_only: BTreeSet::new(),
         }
+    }
+
+    #[test]
+    fn malformed_package_manifest_fails_before_registration() {
+        let mut handlers = supplied(vec![descriptor("proposal", Some(true), Some(false))]);
+        handlers.manifest.version = "unknown.handler-manifest".to_owned();
+        let error = match LocalCapabilityPort::with_package_root(Some(&handlers), None) {
+            Ok(_) => panic!("an unsupported package manifest must not be registered"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("handler manifest is invalid"),
+            "the fail-closed error identifies manifest validation: {error}"
+        );
+    }
+
+    #[test]
+    fn unknown_host_read_only_decisions_fail_before_registration() {
+        let mut handlers = supplied(vec![descriptor("proposal", Some(true), Some(false))]);
+        handlers.trusted_read_only.insert("not-shipped".to_owned());
+        let error = match LocalCapabilityPort::with_package_root(Some(&handlers), None) {
+            Ok(_) => panic!("a decision for an unknown package handler must not be registered"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("names no package handler"),
+            "the fail-closed error identifies the unknown decision: {error}"
+        );
+    }
+
+    #[test]
+    fn worker_parent_traversal_fails_before_registration() {
+        let mut handlers = supplied(vec![descriptor("proposal", Some(true), Some(false))]);
+        handlers
+            .workers
+            .get_mut(&apxm_core::types::HandlerLanguage::TypeScript)
+            .expect("the fixture supplies a TypeScript worker")
+            .entry = PathBuf::from("../worker.mjs");
+        let error = match LocalCapabilityPort::with_package_root(Some(&handlers), None) {
+            Ok(_) => panic!("a worker outside its package root must not be registered"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("not a safe path"),
+            "the fail-closed error identifies worker path traversal: {error}"
+        );
     }
 
     #[test]

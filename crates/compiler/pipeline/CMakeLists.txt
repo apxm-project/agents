@@ -22,7 +22,7 @@ include(HandleLLVMOptions)
 set(APXM_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(APXM_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-# The MLIR directory contains include/ and lib/ (CARTS-style layout).
+# The MLIR directory contains the project-owned include/ and lib/ trees.
 # Use the source include tree and a build-tree generated include dir.
 set(APXM_MLIR_DIR ${APXM_SOURCE_DIR}/mlir)
 set(APXM_INCLUDE_DIR ${APXM_MLIR_DIR}/include)

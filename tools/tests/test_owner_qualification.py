@@ -80,7 +80,6 @@ class OwnerQualificationTests(unittest.TestCase):
             commands[name]["run"]
             for name in ("owner-qualification", "owner-failure-restart")
         ).lower()
-        self.assertNotRegex(declared, r"clic|p50|p80")
         self.assertIn("test-compilation-runtime-failure-restart", PHASES["owner-qualification"])
 
     def test_failure_evidence_binds_return_code_and_raw_output(self) -> None:

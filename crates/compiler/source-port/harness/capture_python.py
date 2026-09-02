@@ -23,8 +23,11 @@ constrained:
   text runs against an already-closed module graph: an audit hook rejects
   importing any module that is not already resolved, and rejects process,
   network, dynamic code loading, and filesystem events outright.
-* A zero file-size limit, a CPU-time limit, and an address-space limit bound
-  what the submitted text can consume where no audit event exists.
+* A zero file-size limit, a CPU-time limit, an address-space limit, a small
+  descriptor limit, and a zero-process limit bound what the submitted text can
+  consume where no audit event exists. The last two limits make resource
+  exhaustion and child-process escape fail closed even if an interpreter or
+  platform ever omits an audit event.
 
 The submitted text shares this process's standard output, so it can write raw
 bytes to that descriptor. It cannot forge a result by doing so: the port decodes
@@ -121,6 +124,8 @@ DENIED_EVENTS = (
 #: CPU seconds and address-space bytes the submitted text may consume.
 CPU_LIMIT_SECONDS = 15
 ADDRESS_SPACE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+OPEN_FILE_LIMIT = 64
+CHILD_PROCESS_LIMIT = 0
 
 # Keep the final harness serialization independent of globals the submitted
 # module may mutate during evaluation.
@@ -451,6 +456,23 @@ def _lock_down() -> None:
     """Close the interpreter around the already-resolved frontend."""
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
     resource.setrlimit(resource.RLIMIT_CPU, (CPU_LIMIT_SECONDS, CPU_LIMIT_SECONDS))
+    for limit_name, limit_value in (
+        ("RLIMIT_NOFILE", OPEN_FILE_LIMIT),
+        ("RLIMIT_NPROC", CHILD_PROCESS_LIMIT),
+    ):
+        limit = getattr(resource, limit_name, None)
+        if limit is None:
+            raise Rejected(
+                REASON_FRONTEND,
+                f"the Python authoring frontend does not expose {limit_name}",
+            )
+        try:
+            resource.setrlimit(limit, (limit_value, limit_value))
+        except (OSError, ValueError) as error:
+            raise Rejected(
+                REASON_FRONTEND,
+                f"the Python authoring frontend could not install {limit_name}: {error}",
+            ) from None
     try:
         resource.setrlimit(
             resource.RLIMIT_AS, (ADDRESS_SPACE_LIMIT_BYTES, ADDRESS_SPACE_LIMIT_BYTES)

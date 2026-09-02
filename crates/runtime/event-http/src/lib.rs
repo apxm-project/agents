@@ -341,9 +341,11 @@ fn map_result(result: Result<RuntimeResult, apxm_runtime_protocol::ProtocolError
             json!({"event_ref": event_ref, "owner_claim": owner_claim}),
         ),
         Ok(RuntimeResult::EventApplied { result, .. }) => (200, json!({"result": result})),
-        Ok(RuntimeResult::EventInspected { inspection, .. }) => (200, json!(inspection)),
+        Ok(
+            RuntimeResult::EventInspected { inspection, .. }
+            | RuntimeResult::EventLifecycleChanged { inspection, .. },
+        ) => (200, json!(inspection)),
         Ok(RuntimeResult::EventListed { events, .. }) => (200, json!({"events": events})),
-        Ok(RuntimeResult::EventLifecycleChanged { inspection, .. }) => (200, json!(inspection)),
         Ok(other) => (200, json!({"result": format!("{other:?}")})),
         Err(error) => (400, json!({"error": format!("{error:?}")})),
     }

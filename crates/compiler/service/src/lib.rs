@@ -168,7 +168,7 @@ impl CompilationService {
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
                     artifact_digest,
-                    artifact,
+                    artifact: Box::new(artifact),
                     execution_lineage_ref,
                     build_key: format!("{}:{}", snapshot.frontend.wire(), snapshot.snapshot_digest),
                 })

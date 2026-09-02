@@ -316,7 +316,6 @@ impl RuntimeService {
                             RuntimeServiceStartupError::OpenRuntimeStateDir(error.clone()),
                         );
                         service.execution_backend = RuntimeExecutionBackend::Unavailable(error);
-                    } else {
                     }
                 }
                 Err(error) => {
@@ -872,11 +871,7 @@ fn invocation_result_from_execution_output(
         .and_then(|commit| commit.get("status"))
         .and_then(Value::as_str)
     {
-        Some("committed") => RuntimeResult::ProgramInvocationStarted {
-            request_id,
-            program_invocation_id,
-        },
-        Some("suspended") => RuntimeResult::ProgramInvocationStarted {
+        Some("committed" | "suspended") => RuntimeResult::ProgramInvocationStarted {
             request_id,
             program_invocation_id,
         },
@@ -889,7 +884,7 @@ fn invocation_result_from_execution_output(
             code: "invocation_failed".to_owned(),
         },
         Some("cancelled") => RuntimeResult::Cancelled { request_id },
-        Some("outcome_unknown") | None | Some(_) => RuntimeResult::Failed {
+        Some("outcome_unknown" | _) | None => RuntimeResult::Failed {
             request_id,
             code: "outcome_unknown".to_owned(),
         },
@@ -964,10 +959,7 @@ impl RuntimeService {
                             artifact_digest: instance.artifact_digest.clone(),
                             materials: instance.materials.clone(),
                             owner_claim: instance.owner_claim.clone(),
-                            invocation: instance
-                                .invocation
-                                .as_ref()
-                                .map(|invocation| durable_invocation(invocation)),
+                            invocation: instance.invocation.as_ref().map(durable_invocation),
                             invocation_history: instance
                                 .invocation_history
                                 .iter()
@@ -2048,6 +2040,7 @@ impl RuntimeService {
     /// Atomically validate and claim an invocation, returning only owned
     /// execution inputs. The caller must run the returned driver without the
     /// service mutex and then call [`Self::finish_invocation`].
+    #[allow(clippy::result_large_err)]
     pub(crate) fn prepare_invocation(
         &mut self,
         request_id: String,
