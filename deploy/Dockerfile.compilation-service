@@ -26,7 +26,8 @@
 # filesystem therefore compiles without the consumer mounting anything: the
 # declared volume stays writable when the layer beneath it does not. An
 # operator who would rather keep scratch in memory mounts a tmpfs on the same
-# path (`--tmpfs /var/lib/apxm/capture`), which needs no image change.
+# path, which needs no image change but does need the mount to belong to this
+# image's service user (`--tmpfs /var/lib/apxm/capture:uid=65532,gid=65532`).
 #
 # The builder and release stages are byte-identical to the Runtime Service
 # image's, so BuildKit compiles the workspace once and both images share it.

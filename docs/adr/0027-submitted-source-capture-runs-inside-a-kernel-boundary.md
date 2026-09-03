@@ -124,11 +124,14 @@ names that root; the Compilation Service image sets it to
 writable while the layer beneath it is not and a `--read-only` container
 compiles with nothing mounted by its consumer. The port creates the root when it
 is absent, so a mount that arrives empty needs no operator step. An operator who
-would rather keep scratch in memory mounts a tmpfs on the same path
-(`--tmpfs /var/lib/apxm/capture`), which needs no image change. A root that
-cannot hold a directory is refused with `frontend_unavailable` naming the root
-and this flag, and readiness reports the root and its writability before the
-first request, so the mistake is visible at start.
+would rather keep scratch in memory mounts a tmpfs on the same path, which needs
+no image change but does need the mount to belong to the service user the image
+runs as (`--tmpfs /var/lib/apxm/capture:uid=65532,gid=65532,mode=0700`); a bare
+tmpfs arrives owned by root and refuses the service, exactly as a bind mount of
+a root-owned directory would. A root that cannot hold a directory is refused
+with `frontend_unavailable` naming the root and this flag, and readiness reports
+the root and its writability before the first request, so either mistake is
+visible at start rather than at the first compile.
 
 ### A host that is not Linux
 
