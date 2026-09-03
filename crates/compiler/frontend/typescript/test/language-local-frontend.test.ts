@@ -296,3 +296,23 @@ describe("language-local TypeScript frontend facts", () => {
     expect(() => decodeFact({ fact_id: "attempt.2", event_sequence: 3, fact_kind: "attempt.recorded" })).toThrow();
   });
 });
+
+describe("host-fulfilled capability minting", () => {
+  it("mints only the host capabilities the trusted bridge declared", async () => {
+    const { Capability } = await import("../src/index.ts");
+    const { declareHostCapabilities } = await import("../src/host.ts");
+
+    declareHostCapabilities([]);
+    expect(() => Capability("host:notes.search")).toThrow(
+      /the package manifest does not declare as[\s\S]*declares none/,
+    );
+
+    declareHostCapabilities(["notes.search"]);
+    expect(Capability("host:notes.search").targetRef).toBe("host:notes.search");
+    expect(() => Capability("host:notes.append")).toThrow(
+      /host:notes\.search/,
+    );
+
+    declareHostCapabilities([]);
+  });
+});

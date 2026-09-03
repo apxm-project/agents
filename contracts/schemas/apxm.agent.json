@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.agent",
   "title": "AgentPackage",
-  "description": "The canonical authored agent package: one authored manifest (`agent.toml`) and the closed set of package-relative paths the folder contract recognizes. `files` is the digest map `apxm agent build` hashes into the generated `integrity.toml` chain, so the paths this schema recognizes and the paths that are hashed are one statement. A package declares no capability inventory and no permission inventory of its own: a Capability reference is satisfied by a built-in id or by a `capabilities/<id>/handler.py` or `capabilities/<id>/handler.ts` the package ships, and the only authored permission surface is the manifest's `[permissions]` table.",
+  "description": "The canonical authored agent package: one authored manifest (`agent.toml`) and the closed set of package-relative paths the folder contract recognizes. `files` is the digest map `apxm agent build` hashes into the generated `integrity.toml` chain, so the paths this schema recognizes and the paths that are hashed are one statement. A package declares no permission inventory of its own: the only authored permission surface is the manifest's `[permissions]` table. A Capability reference is satisfied by a built-in id, by a `capabilities/<id>/handler.py` or `capabilities/<id>/handler.ts` the package ships, or by a `[[capabilities.host]]` declaration the embedding host fulfils and the runtime never executes.",
   "type": "object",
   "required": [
     "agent",
@@ -115,6 +115,9 @@
         "hierarchy": {
           "$ref": "#/$defs/Hierarchy"
         },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
         "permissions": {
           "type": "object",
           "description": "The package layer of the permission stack: what this package decides about a capability its own tree can supply. Tighten-only — it may narrow a decision and may never decide for a capability nothing grants.",
@@ -146,6 +149,20 @@
             "python",
             "typescript"
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Capabilities": {
+      "description": "The capabilities this package declares rather than ships. The only member is `host`: capabilities the embedding host fulfils, declared as `[[capabilities.host]]` in `agent.toml`. A shipped handler is still declared by shipping `capabilities/<id>/handler.py` or `.ts` and appears nowhere in this table, so the two carriers cannot be confused for one another.",
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "apxm.host-capability.v1#/$defs/HostCapabilityDeclaration"
+          }
         }
       },
       "additionalProperties": false

@@ -3,7 +3,9 @@
 
 use std::io::{self, BufReader};
 
-use apxm_compilation_service::{CompilationService, UnixEndpoint, serve_stdio, serve_unix};
+use apxm_compilation_service::{
+    CompilationService, UnixEndpoint, capture_confinement_readiness, serve_stdio, serve_unix,
+};
 
 fn main() {
     let mut socket = None;
@@ -22,6 +24,19 @@ fn main() {
             }
         }
     }
+    // The service compiles submitted source by evaluating it inside an
+    // authoring frontend. What the kernel confines that evaluation to is the
+    // first thing an operator needs to know, so it is reported before the first
+    // request rather than inferred from a refused compile. Standard output
+    // carries the protocol, so readiness goes to standard error.
+    match serde_json::to_string(&capture_confinement_readiness()) {
+        Ok(readiness) => eprintln!("{readiness}"),
+        Err(error) => {
+            eprintln!("the capture confinement readiness could not be reported: {error}");
+            std::process::exit(1);
+        }
+    }
+
     let service = CompilationService::from_env();
     let result = if let Some(path) = socket {
         if let Err(error) = UnixEndpoint::new(path.clone()) {

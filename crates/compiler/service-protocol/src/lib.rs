@@ -75,7 +75,7 @@ pub enum CompilationResult {
         artifact_digest: String,
         /// Complete canonical executable-artifact envelope. Its encoded bytes
         /// are admissible by Runtime under `artifact_digest`.
-        artifact: apxm_program::ExecutableArtifact,
+        artifact: Box<apxm_program::ExecutableArtifact>,
         /// Opaque source/AIR/compiler lineage commitment.
         execution_lineage_ref: String,
         /// Complete build key used for cache identity.
@@ -172,7 +172,7 @@ impl InMemoryCompilationPeer {
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
                     artifact_digest,
-                    artifact,
+                    artifact: Box::new(artifact),
                     execution_lineage_ref,
                     build_key: format!("{:?}:{fingerprint}", snapshot.frontend),
                 })
@@ -221,7 +221,7 @@ fn protocol_artifact(
     let mut artifact = apxm_program::ExecutableArtifact::from_air(&air)
         .map_err(|_| ProtocolError::InvalidRequest)?;
     let source_digest = format!("sha256:{source_digest}");
-    artifact.source_bundle_digest = source_digest.clone();
+    artifact.source_bundle_digest.clone_from(&source_digest);
     artifact.execution_lineage_ref = Some(apxm_program::execution_lineage_ref(
         &source_digest,
         &artifact.air_digest,

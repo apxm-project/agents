@@ -1426,6 +1426,14 @@ HANDLER_DECLARATION = (
 )
 
 
+#: A host-fulfilled Capability reference (ADR-0025). Its authority is the
+#: author's own `agent.toml [[capabilities.host]]` table, which a document
+#: cannot show this checker, so the reserved prefix plus the published id
+#: grammar is the whole resolution rule. `host:<id>` is the placeholder form a
+#: document writes when the id is the reader's to choose.
+HOST_REFERENCE = re.compile(r"^host:(?:<id>|[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*)$")
+
+
 def package_handler_ids() -> set[str]:
     """Every Capability id a package in this repository ships a handler for.
 
@@ -1669,6 +1677,15 @@ def check_samples(
         }
         for match in LITERAL_REFERENCE.finditer(text):
             written = match.group(1)
+            if written.startswith("host:"):
+                if not HOST_REFERENCE.match(written):
+                    report(
+                        written,
+                        f"binds the host capability reference {written!r}, whose id is "
+                        "outside the published grammar: lowercase dotted segments of "
+                        "[a-z0-9_-] under the reserved `host:` prefix",
+                    )
+                continue
             minted = folded_ids.get(fold_reference(written))
             if minted is not None and written != minted:
                 report(

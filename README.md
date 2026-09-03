@@ -14,7 +14,7 @@ bind to these contracts from outside.
 Python / TypeScript source
   -> FrontendGraph
   -> Rust verification and AIR lowering
-  -> registered AIS MLIR
+  -> canonical AIS dialect MLIR (verified when the native MLIR toolchain is available)
   -> immutable artifact
   -> exact Invocation Admission and Port bindings
   -> generic execution kernel

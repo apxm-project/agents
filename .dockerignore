@@ -1,12 +1,29 @@
-.git
-.dekk
-.apxm
-target/*
-!target/release/
-target/release/*
-!target/release/apxm-compilation-service
-!target/release/apxm-runtime-service
-!target/release/lib_native.so
-!target/release/libapxm_frontend_typescript.so
-crates/compiler/frontend/python/**/__pycache__
-crates/compiler/frontend/typescript/node_modules/.cache
+# The service images build from the checkout, so the build context is the
+# checkout: sources, contracts, lockfiles and the release descriptors. Nothing
+# a build produces is an input to it, and host build output is the one thing an
+# image must never inherit -- a stale host binary in `target/` would be copied
+# into a Linux image and hashed into its release manifest.
+/target/
+**/target/
+**/node_modules/
+**/dist/
+**/build/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Host state, environments and evidence. `.git` is excluded on purpose: an
+# image build is handed its source revision and proves it by regenerating the
+# cohort's descriptors, so it needs no history.
+.git/
+.dekk/
+.apxm/
+.venv/
+.venv-*/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# The frontend bridge is copied into the Python package by an install step; the
+# image builds its own Linux bridge and must not inherit a host one.
+/crates/compiler/frontend/python/apxm_program/_native.so

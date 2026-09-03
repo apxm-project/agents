@@ -15,26 +15,27 @@ workspace = true
 apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-program.workspace = true
-apxm-backends.workspace = true
-apxm-artifact.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-toml.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
-blake3.workspace = true
-bpe-openai.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [features]
-mlir = []
+# The only switch that links the native AIS dialect. With `mlir`, `build.rs`
+# locates MLIR/LLVM, runs CMake and generates bindings with bindgen, and the
+# MLIR-dependent tests compile in. Without it the crate builds against stub FFI
+# bindings and needs no MLIR, LLVM, libclang, CMake or Ninja on the host — which
+# is what lets a service-only toolchain (Rust, Python, Node) build the whole
+# workspace. No crate depends on `apxm-compiler`, so nothing else in the
+# workspace observes the difference.
+mlir = ["dep:bindgen"]
 
 [build-dependencies]
 anyhow.workspace = true
 apxm-core.workspace = true
 apxm-ais.workspace = true
-bindgen = "0.72"
+bindgen = { version = "0.72", optional = true }
 tracing.workspace = true

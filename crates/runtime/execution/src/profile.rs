@@ -419,7 +419,7 @@ where
     let mut operation = Box::pin(operation);
     tokio::select! {
         result = &mut operation => result,
-        _ = tokio::time::sleep(Duration::from_millis(max_wall_ms)) => {
+        () = tokio::time::sleep(Duration::from_millis(max_wall_ms)) => {
             cancellation.cancel();
             operation.await
         }

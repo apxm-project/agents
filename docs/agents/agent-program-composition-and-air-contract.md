@@ -474,6 +474,35 @@ effect identity, retry policy, idempotency, cancellation, redaction, and audit
 apply here. Sandbox/code execution and external I/O are Capabilities, not
 privileged AIR escape hatches.
 
+A `capability_ref` under the reserved `host:` prefix is **host-fulfilled**
+(ADR-0025). One node in that namespace is the same AIR operation and the same
+chokepoint, but the runtime executes nothing: it publishes a
+`capability_requested` observation carrying the request identity, the
+reference, the exact canonical argument bytes and the authored permission,
+parks the invocation on the durable continuation the way `await.event` does,
+and settles the node when the embedding host answers over Runtime/1
+(`capability_fulfill`) or withdraws (`capability_cancel`). `ok` hands back the
+host's output; `denied` and `failed` settle as typed failures the program
+observes; `unknown` and `cancelled` settle as uncertain effects. Cancelling the
+invocation withdraws whatever request it is parked on.
+
+The ids are minted by the package: `[[capabilities.host]]` in `agent.toml`
+declares each one, and the minted Capability set a program compiles against is
+the builtin catalogue united with `host:<id>` for every declaration. Permission
+for a `host:` reference is not brokered by APXM — the authored `Allow | Ask |
+Deny` is recorded in AIR and carried verbatim to the host, which merges it with
+its own policy and may only narrow it. The published contract is
+`contracts/schemas/apxm.host-capability.v1.json`.
+
+A builtin reference keeps APXM's own broker, and the deployment states how far
+that broker may be trusted through `APXM_APPROVAL_POLICY`: `deny` (the value
+assumed when the variable is unset) refuses an authored `Ask` on a builtin
+immediately without consulting a broker, and `timeout:<ms>` waits that long for
+a broker answer and then refuses. Any other value is a startup failure rather
+than a silent fall back to the default, so a deployment cannot serve an
+approval posture nobody stated. The policy never touches a `host:` reference:
+that permission is the host's to answer.
+
 ### 8.3 `program.new`
 
 ```text

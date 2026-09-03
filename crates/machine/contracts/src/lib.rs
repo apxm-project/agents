@@ -50,4 +50,5 @@ pub use types::{
 pub use types::conformance;
 pub use types::consent;
 pub use types::host;
+pub use types::host_capability;
 pub use types::principal;

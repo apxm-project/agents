@@ -15,17 +15,40 @@
     "commitment"
   ],
   "properties": {
-    "contract": { "const": "apxm.execution-observation.v1" },
-    "observation_id": { "$ref": "#/$defs/OpaqueRef" },
-    "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
-    "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
-    "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
-    "event_ref": { "$ref": "#/$defs/EventObservationRef" },
-    "attempt_id": { "$ref": "#/$defs/OpaqueRef" },
-    "region_occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
-    "sequence": { "type": "integer", "minimum": 1 },
-    "cursor": { "$ref": "#/$defs/Cursor" },
-    "timing": { "$ref": "#/$defs/Timing" },
+    "contract": {
+      "const": "apxm.execution-observation.v1"
+    },
+    "observation_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "program_invocation_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "node_execution_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "occurrence_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "event_ref": {
+      "$ref": "#/$defs/EventObservationRef"
+    },
+    "attempt_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "region_occurrence_id": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cursor": {
+      "$ref": "#/$defs/Cursor"
+    },
+    "timing": {
+      "$ref": "#/$defs/Timing"
+    },
     "observation_kind": {
       "type": "string",
       "enum": [
@@ -37,6 +60,8 @@
         "loop_transition",
         "model_attempt",
         "capability_attempt",
+        "capability_requested",
+        "capability_settled",
         "program_attempt",
         "approval_requested",
         "approval_resolved",
@@ -53,57 +78,240 @@
     },
     "commitment": {
       "type": "string",
-      "enum": ["provisional", "committed"]
+      "enum": [
+        "provisional",
+        "committed"
+      ]
     },
-    "content_ref": { "$ref": "#/$defs/OpaqueRef" },
-    "output_ref": { "$ref": "#/$defs/OpaqueRef" },
-    "evidence_ref": { "$ref": "#/$defs/OpaqueRef" }
+    "content_ref": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "output_ref": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "evidence_ref": {
+      "$ref": "#/$defs/OpaqueRef"
+    },
+    "host_capability": {
+      "$ref": "#/$defs/HostCapabilityObservation"
+    }
   },
   "allOf": [
     {
       "if": {
         "properties": {
           "observation_kind": {
-            "enum": ["event_waiting", "event_resumed"]
+            "enum": [
+              "event_waiting",
+              "event_resumed"
+            ]
           }
         }
       },
-      "then": { "required": ["event_ref"] },
-      "else": { "not": { "required": ["event_ref"] } }
-    },
-    {
-      "if": { "properties": { "observation_kind": { "const": "content_published" } } },
       "then": {
-        "required": ["content_ref"],
-        "properties": { "commitment": { "const": "provisional" } }
+        "required": [
+          "event_ref"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "event_ref"
+          ]
+        }
       }
     },
     {
-      "if": { "properties": { "observation_kind": { "const": "content_committed" } } },
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "content_published"
+          }
+        }
+      },
       "then": {
-        "properties": { "commitment": { "const": "committed" } },
-        "anyOf": [{ "required": ["content_ref"] }, { "required": ["output_ref"] }]
+        "required": [
+          "content_ref"
+        ],
+        "properties": {
+          "commitment": {
+            "const": "provisional"
+          }
+        }
       }
     },
     {
-      "if": { "properties": { "observation_kind": { "const": "terminal_committed" } } },
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "content_committed"
+          }
+        }
+      },
       "then": {
-        "properties": { "commitment": { "const": "committed" } },
-        "anyOf": [{ "required": ["output_ref"] }, { "required": ["evidence_ref"] }]
+        "properties": {
+          "commitment": {
+            "const": "committed"
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "content_ref"
+            ]
+          },
+          {
+            "required": [
+              "output_ref"
+            ]
+          }
+        ]
       }
     },
     {
-      "if": { "properties": { "observation_kind": { "const": "evidence_committed" } } },
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "terminal_committed"
+          }
+        }
+      },
       "then": {
-        "properties": { "commitment": { "const": "committed" } },
-        "required": ["evidence_ref"]
+        "properties": {
+          "commitment": {
+            "const": "committed"
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "output_ref"
+            ]
+          },
+          {
+            "required": [
+              "evidence_ref"
+            ]
+          }
+        ]
       }
     },
     {
-      "if": { "properties": { "observation_kind": { "const": "invocation_failed" } } },
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "evidence_committed"
+          }
+        }
+      },
       "then": {
-        "properties": { "commitment": { "const": "committed" } },
-        "required": ["evidence_ref"]
+        "properties": {
+          "commitment": {
+            "const": "committed"
+          }
+        },
+        "required": [
+          "evidence_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "invocation_failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "commitment": {
+            "const": "committed"
+          }
+        },
+        "required": [
+          "evidence_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "enum": [
+              "capability_requested",
+              "capability_settled"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "host_capability"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "host_capability"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "capability_requested"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "host_capability": {
+            "required": [
+              "input",
+              "authored_permission"
+            ],
+            "not": {
+              "required": [
+                "outcome"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "const": "capability_settled"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "host_capability": {
+            "required": [
+              "outcome"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "input"
+                  ]
+                },
+                {
+                  "required": [
+                    "authored_permission"
+                  ]
+                }
+              ]
+            }
+          }
+        }
       }
     }
   ],
@@ -117,29 +325,99 @@
     },
     "Cursor": {
       "type": "object",
-      "required": ["position", "token"],
+      "required": [
+        "position",
+        "token"
+      ],
       "properties": {
-        "position": { "type": "integer", "minimum": 0 },
-        "token": { "$ref": "#/$defs/OpaqueRef" }
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "token": {
+          "$ref": "#/$defs/OpaqueRef"
+        }
       },
       "additionalProperties": false
     },
     "EventObservationRef": {
       "type": "object",
-      "required": ["event_ref"],
+      "required": [
+        "event_ref"
+      ],
       "properties": {
-        "event_ref": { "$ref": "#/$defs/OpaqueRef" },
-        "generation": { "type": "integer", "minimum": 0 },
-        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" }
+        "event_ref": {
+          "$ref": "#/$defs/OpaqueRef"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/OpaqueRef"
+        }
       },
       "additionalProperties": false
     },
     "Timing": {
       "type": "object",
-      "required": ["observed_at_unix_ms"],
+      "required": [
+        "observed_at_unix_ms"
+      ],
       "properties": {
-        "observed_at_unix_ms": { "type": "integer", "minimum": 0 },
-        "duration_ms": { "type": "integer", "minimum": 0 }
+        "observed_at_unix_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostCapabilityObservation": {
+      "description": "The host-fulfilled Capability request or settlement one observation is about (ADR-0025). A `capability_requested` observation is the whole request: a host that cannot read the arguments cannot perform the call, so `input` travels inline as the exact canonical argument bytes rather than as a reference. A `capability_settled` observation carries how the request ended. Its shapes are the ones `apxm.host-capability.v1` publishes, restated here rather than referenced across files, because this document is embedded verbatim into generated decoders that resolve only local definitions.",
+      "type": "object",
+      "required": [
+        "capability_request_id",
+        "capability_ref"
+      ],
+      "properties": {
+        "capability_request_id": {
+          "type": "string",
+          "pattern": "^capability-request\\.[0-9a-f]{64}$"
+        },
+        "capability_ref": {
+          "type": "string",
+          "pattern": "^host:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
+          "maxLength": 205
+        },
+        "input": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "authored_permission": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "denied",
+            "failed",
+            "unknown",
+            "cancelled"
+          ]
+        },
+        "receipt_ref": {
+          "$ref": "#/$defs/OpaqueRef"
+        }
       },
       "additionalProperties": false
     }

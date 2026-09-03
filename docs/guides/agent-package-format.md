@@ -3,7 +3,7 @@
 - Audience: authors packaging a compiled Agent Program for `apxm agent
   install` or an org's `org.toml [[members]]`
 - Format status: shipped and normative — `contracts/schemas/apxm.agent.json`,
-  proven against 26 vectors in `contracts/vectors/apxm.agent.json` that
+  proven against 30 vectors in `contracts/vectors/apxm.agent.json` that
   `apxm agent lint`/`verify` materialize as real packages and validate
 - Authority: [`contracts/schemas/apxm.agent.json`](../../contracts/schemas/apxm.agent.json)
   (the schema), [`crates/tools/cli/src/commands/agent.rs`](../../crates/tools/cli/src/commands/agent.rs)
@@ -55,7 +55,7 @@ file exactly as line 1 of
 [`examples/agents/conversational/agent.toml`](../../examples/agents/conversational/agent.toml)
 shows. (The schema's own top level wraps the manifest under an `agent` key
 alongside a `files` digest map — that shape is the conformance-vector
-document the schema's 26 vectors are written in, described in
+document the schema's 30 vectors are written in, described in
 [§6](#6-the-recognized-file-layout); it is not the shape of the file you
 write.)
 
@@ -143,8 +143,8 @@ covers further.
 
 ## 4. Capabilities: how they're granted
 
-A package declares no capability inventory of its own. What it can supply is
-the union of two sets, computed by `granted_capability_ids` in `agent.rs`:
+What a package can supply is the union of three sets, computed by
+`granted_capability_ids` in `agent.rs`:
 
 1. **The builtin catalogue** — `apxm_ais::capabilities::BUILTINS` in
    `crates/machine/ais/src/capabilities.rs`, tabulated below. That same set
@@ -154,6 +154,11 @@ the union of two sets, computed by `granted_capability_ids` in `agent.rs`:
 2. **Every id the package ships a handler for** — any subdirectory of
    `capabilities/` that contains a `handler.py` or `handler.ts`. The
    directory name *is* the capability id.
+3. **Every host-fulfilled capability the package declares** — each
+   `[[capabilities.host]]` entry mints the reference `host:<id>`. This is the
+   one capability a package states rather than supplies, because there is
+   nothing to supply: the runtime never executes it, and the embedding host
+   answers the request (ADR-0025).
 
 <!-- BEGIN CAPABILITY CATALOGUE -->
 | Capability id | Registered by `register_standard_tools` |
@@ -183,6 +188,25 @@ restates "this package supplies `edit`" — the presence of
 `examples/agents/coder/agent.toml`'s package does (see
 `examples/agents/coder/capabilities/edit/handler.ts` and
 `capabilities/test/handler.ts`).
+
+A host capability is the opposite case: the package ships no file for it, so
+the manifest entry is the whole statement. `id` is the declared id without the
+reserved `host:` prefix, `effect` is `read` or `write`, and the two schemas are
+carried verbatim to the host, which is the party that holds an input and an
+output against them.
+
+```toml
+[[capabilities.host]]
+id = "notes.search"
+effect = "read"
+input_schema = { type = "object", properties = { query = { type = "string" } }, required = ["query"], additionalProperties = false }
+output_schema = { type = "object" }
+```
+
+The declared id is lowercase dotted segments of `[a-z0-9_-]`; an id that is
+also shipped as `capabilities/<id>/handler.*` is refused, because one
+capability has one carrier. The published contract is
+`contracts/schemas/apxm.host-capability.v1.json`.
 
 ## 5. Permissions: the tighten-only layer
 

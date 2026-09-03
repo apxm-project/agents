@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import pytest
 
-from apxm_program import Agent, Event, Hook, Model, Skill, Tool
+from apxm_program import Agent, Capability, Event, Hook, Model, Skill, Tool
 from apxm_program._capture import CaptureError
 from apxm_program._generated.capabilities import READ
 from apxm_program._generated.diagnostics import (
@@ -147,6 +147,30 @@ def test_a_capability_permission_is_closed_before_graph_capture() -> None:
 
     with pytest.raises(ValueError, match="reason must be a non-empty string"):
         Tool[object, object](READ, permission=Permission("ask", ""))
+
+
+def test_only_the_declared_host_capabilities_are_minted() -> None:
+    """The manifest is not in this process, so the trusted harness declares it.
+
+    The declaration is a private module rather than an authoring import: a
+    program that could declare its own host capabilities would be minting its
+    own authority.
+    """
+    from apxm_program import _host_capabilities
+
+    _host_capabilities.set_declared_host_capabilities([])
+    try:
+        with pytest.raises(ValueError, match="This package declares none"):
+            Capability[object, object]("host:notes.search")
+
+        _host_capabilities.set_declared_host_capabilities(["notes.search"])
+        binding = Capability[object, object]("host:notes.search")
+        assert binding.target_ref == "host:notes.search"
+
+        with pytest.raises(ValueError, match="host:notes.search"):
+            Capability[object, object]("host:notes.append")
+    finally:
+        _host_capabilities.set_declared_host_capabilities([])
 
 
 def test_generated_runtime_evidence_binding_is_closed() -> None:

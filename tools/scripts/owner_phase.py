@@ -1,4 +1,4 @@
-"""Run one APXM owner P80 phase and emit its final neutral result."""
+"""Run one APXM owner phase and emit its final neutral result."""
 
 from __future__ import annotations
 
@@ -17,14 +17,20 @@ from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 PHASES: dict[str, tuple[str, ...]] = {
-    "p80-e2e": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol"),
-    "p80-journey-c": ("release-qualification", "compile-service-canonical", "execute-canonical"),
-    "p80-negative-recovery": ("release-qualification", "test-kernel", "test-runtime-protocol", "test-runtime-service"),
-    "p80-journey-g": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol", "compile-service-canonical", "execute-canonical"),
-    "p80-journey-h": ("release-qualification", "test-compilation-service", "test-runtime-service", "test-event-http", "test-interaction-client"),
-    "p80-restart-reopen": ("release-qualification", "test-runtime-protocol", "test-runtime-service", "test-kernel", "test-execution"),
+    "owner-e2e": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol"),
+    "owner-compilation-runtime": ("release-qualification", "compile-service-canonical", "execute-canonical"),
+    "owner-negative-recovery": ("release-qualification", "test-kernel", "test-runtime-protocol", "test-runtime-service"),
+    "owner-integrated-execution": ("release-qualification", "test-compilation-protocol", "test-runtime-protocol", "compile-service-canonical", "execute-canonical"),
+    "owner-protocol-clients": ("release-qualification", "test-compilation-service", "test-runtime-service", "test-event-http", "test-interaction-client"),
+    "owner-restart-reopen": ("release-qualification", "test-runtime-protocol", "test-runtime-service", "test-kernel", "test-execution"),
 }
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+# The release manifest binds the Python frontend bridge alongside the two
+# service executables, so the qualification result carries three artifact
+# digests and only two manifest services.
+SERVICE_NAMES = frozenset({"compilation-service", "runtime-service"})
+FRONTEND_NATIVE = "python-frontend-native"
+BOUND_ARTIFACTS = SERVICE_NAMES | {FRONTEND_NATIVE}
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 QUALIFICATION_SCHEMA = "apxm.agents.release-qualification.v1"
 COMMAND_EVIDENCE_SCHEMA = "apxm.agents.owner-command-evidence.v1"
@@ -58,10 +64,24 @@ def _strict_qualification(value: object) -> dict[str, Any]:
     if value.get("evidence_root") != str(ROOT.resolve()):
         raise ValueError("owner release qualification evidence root is not this owner checkout")
     services = value.get("service_digests")
-    if not isinstance(services, dict) or set(services) != {"compilation-service", "runtime-service"}:
-        raise ValueError("owner release qualification did not bind exactly the two APXM services")
+    if not isinstance(services, dict) or set(services) != BOUND_ARTIFACTS:
+        raise ValueError(
+            "owner release qualification did not bind exactly the two APXM services and the frontend bridge"
+        )
     if any(not isinstance(digest, str) or not SHA256.fullmatch(digest) for digest in services.values()):
         raise ValueError("owner release qualification contains an invalid service digest")
+    frontend_native = value.get("manifest_frontend_native")
+    if (
+        not isinstance(frontend_native, dict)
+        or set(frontend_native) != {"name", "path", "digest"}
+        or frontend_native["name"] != FRONTEND_NATIVE
+        or frontend_native["digest"] != services[FRONTEND_NATIVE]
+        or not isinstance(frontend_native["path"], str)
+        or not frontend_native["path"]
+        or Path(frontend_native["path"]).is_absolute()
+        or ".." in Path(frontend_native["path"]).parts
+    ):
+        raise ValueError("owner release qualification frontend bridge binding does not match the result digests")
     for field in ("source_descriptor_digest", "owner_descriptor_digest", "release_manifest_digest"):
         if not isinstance(value.get(field), str) or not SHA256.fullmatch(value[field]):
             raise ValueError(f"owner release qualification has no immutable {field}")
@@ -85,7 +105,7 @@ def _strict_qualification(value: object) -> dict[str, Any]:
             or ".." in Path(path).parts
         ):
             raise ValueError("owner release qualification service binding does not match the result digests")
-    if seen != set(services):
+    if seen != SERVICE_NAMES:
         raise ValueError("owner release qualification is missing a service binding")
     expected_files = {
         "source_descriptor_digest": ROOT / "deploy/services/source-revision.v1.json",
@@ -384,7 +404,7 @@ def final_result(
 
 def run_phase(phase: str, commands: Sequence[str] | None = None) -> int:
     if phase not in PHASES:
-        raise ValueError(f"unknown APXM P80 phase: {phase}")
+        raise ValueError(f"unknown APXM owner phase: {phase}")
     dekk = shutil.which("dekk")
     if not dekk:
         raise RuntimeError("dekk executable is unavailable")
@@ -417,7 +437,7 @@ def run_phase(phase: str, commands: Sequence[str] | None = None) -> int:
             )
         )
     if qualification is None:
-        raise RuntimeError("P80 phase completed without owner release qualification evidence")
+        raise RuntimeError("owner phase completed without owner release qualification evidence")
     evidence = {
         "schema": COMMAND_EVIDENCE_SCHEMA,
         "owner": "agents",

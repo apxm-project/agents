@@ -38,6 +38,10 @@ use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_commit_local::{
     CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, ReadAccessHook,
 };
+use apxm_core::types::host_capability::{
+    HostCapabilityOutcomeKind, HostCapabilitySettlement, is_host_capability_ref,
+    is_host_capability_request_id,
+};
 use apxm_execution::{
     ApprovalBroker, ApprovalDecision, CancellationToken, Continuation, DenyBroker,
     ObservationRecorder,
@@ -155,6 +159,8 @@ pub struct RuntimeService {
     /// reconnect/read APIs use the commit adapter's typed records.
     observation_sink: Arc<ObservationRecorder>,
     broker: Arc<dyn ApprovalBroker>,
+    /// Declared posture for an authored `Ask` on a builtin capability.
+    approval_policy: ApprovalPolicy,
     cancelled: BTreeMap<String, StateEntry>,
     /// Cooperative cancellation signals for invocations currently inside the
     /// driver. Durable cancellation markers remain separate service state;
@@ -204,6 +210,72 @@ impl ObservationSignal {
     }
 }
 
+/// How the service resolves an authored `Ask` on a builtin capability.
+///
+/// APXM keeps its own broker for builtins; a host-fulfilled reference is not
+/// brokered here at all (ADR-0025), so this policy never applies to one. The
+/// deployment states the posture explicitly rather than inheriting whatever
+/// broker a composition root happened to bind: unset means refuse.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ApprovalPolicy {
+    /// Refuse an unresolved `Ask` immediately, without consulting a broker.
+    #[default]
+    Deny,
+    /// Wait this long for a broker answer, then refuse.
+    Timeout(Duration),
+}
+
+const APPROVAL_POLICY_DENY: &str = "deny";
+const APPROVAL_POLICY_TIMEOUT_PREFIX: &str = "timeout:";
+
+impl ApprovalPolicy {
+    /// Parse one declared policy value.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact reason the value is not a policy. There is no
+    /// permissive reading: an unrecognized value is a configuration error,
+    /// not a silent fall back to the default.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let declared = value.trim();
+        if declared.is_empty() || declared == APPROVAL_POLICY_DENY {
+            return Ok(Self::Deny);
+        }
+        let Some(milliseconds) = declared.strip_prefix(APPROVAL_POLICY_TIMEOUT_PREFIX) else {
+            return Err(format!(
+                "{declared:?} is not a policy; expected \"deny\" or \"timeout:<ms>\""
+            ));
+        };
+        let parsed: u64 = milliseconds.parse().map_err(|_| {
+            format!(
+                "{milliseconds:?} is not a whole number of milliseconds; expected \"timeout:<ms>\""
+            )
+        })?;
+        if parsed == 0 {
+            return Err(
+                "\"timeout:0\" never waits; state \"deny\" to refuse an ask immediately".to_owned(),
+            );
+        }
+        Ok(Self::Timeout(Duration::from_millis(parsed)))
+    }
+
+    /// Read the declared policy from `APXM_APPROVAL_POLICY`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the parse failure so the composition root can fail closed at
+    /// startup instead of serving an unstated approval posture.
+    pub fn from_env() -> Result<Self, String> {
+        match std::env::var(apxm_core::constants::env::APXM_APPROVAL_POLICY) {
+            Ok(value) => Self::parse(&value),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Deny),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err("value is not valid Unicode; expected \"deny\" or \"timeout:<ms>\"".to_owned())
+            }
+        }
+    }
+}
+
 /// Typed production startup failures. Runtime Service never silently creates
 /// an ephemeral state directory because doing so would make committed reads
 /// disappear across restart.
@@ -215,6 +287,7 @@ pub enum RuntimeServiceStartupError {
     UnsafeRuntimeStateDir(PathBuf),
     OpenRuntimeStateDir(String),
     InvalidAdmissionProfile(String),
+    InvalidApprovalPolicy(String),
 }
 
 impl std::fmt::Display for RuntimeServiceStartupError {
@@ -244,6 +317,9 @@ impl std::fmt::Display for RuntimeServiceStartupError {
             }
             Self::InvalidAdmissionProfile(error) => {
                 write!(formatter, "invalid APXM runtime admission profile: {error}")
+            }
+            Self::InvalidApprovalPolicy(error) => {
+                write!(formatter, "invalid APXM_APPROVAL_POLICY: {error}")
             }
         }
     }
@@ -289,6 +365,7 @@ impl RuntimeService {
             ),
             observation_sink,
             broker: Arc::new(DenyBroker),
+            approval_policy: ApprovalPolicy::Deny,
             cancelled: BTreeMap::new(),
             active_cancellations: BTreeMap::new(),
             cancellation_bytes: 0,
@@ -316,7 +393,6 @@ impl RuntimeService {
                             RuntimeServiceStartupError::OpenRuntimeStateDir(error.clone()),
                         );
                         service.execution_backend = RuntimeExecutionBackend::Unavailable(error);
-                    } else {
                     }
                 }
                 Err(error) => {
@@ -343,6 +419,17 @@ impl RuntimeService {
                 service.startup_error =
                     Some(RuntimeServiceStartupError::InvalidAdmissionProfile(error));
             }
+        }
+        match ApprovalPolicy::from_env() {
+            Ok(policy) => service.approval_policy = policy,
+            // A declared-but-unreadable approval posture is a startup failure
+            // of its own; it never downgrades to the default, and it never
+            // hides an earlier failure the operator still has to fix.
+            Err(error) if service.startup_error.is_none() => {
+                service.startup_error =
+                    Some(RuntimeServiceStartupError::InvalidApprovalPolicy(error));
+            }
+            Err(_) => {}
         }
         service
     }
@@ -696,6 +783,7 @@ pub(crate) struct PreparedInvocation {
     execution_backend: Arc<dyn ExecutionCommitPort>,
     observation_sink: Arc<ObservationRecorder>,
     broker: Arc<dyn ApprovalBroker>,
+    approval_policy: ApprovalPolicy,
     cancellation: CancellationToken,
     resumable: bool,
 }
@@ -707,10 +795,30 @@ impl PreparedInvocation {
                 if !matches!(decision, PermissionDecision::Ask { .. }) {
                     continue;
                 }
-                match self.broker.resolve_ask(capability_ref).await {
-                    ApprovalDecision::Allow => {}
-                    ApprovalDecision::Deny => return Err("ask_denied".to_owned()),
-                    ApprovalDecision::Timeout => return Err("ask_timeout".to_owned()),
+                // Permission for a host-fulfilled reference is the host's
+                // decision (ADR-0025). APXM records the authored request and
+                // carries it to the host in `capability.requested`; brokering
+                // it here would answer a question that is not APXM's to answer,
+                // and would refuse the invocation before the host ever saw it.
+                if is_host_capability_ref(capability_ref) {
+                    continue;
+                }
+                // The deployment states how long, if at all, a builtin `Ask`
+                // may wait for an answer. `Deny` refuses without asking: with
+                // no external answerer, waiting only defers the same refusal.
+                match self.approval_policy {
+                    ApprovalPolicy::Deny => return Err("ask_denied".to_owned()),
+                    ApprovalPolicy::Timeout(wait) => {
+                        match tokio::time::timeout(wait, self.broker.resolve_ask(capability_ref))
+                            .await
+                        {
+                            Ok(ApprovalDecision::Allow) => {}
+                            Ok(ApprovalDecision::Deny) => return Err("ask_denied".to_owned()),
+                            Ok(ApprovalDecision::Timeout) | Err(_) => {
+                                return Err("ask_timeout".to_owned());
+                            }
+                        }
+                    }
                 }
             }
             if self.resumable {
@@ -872,11 +980,7 @@ fn invocation_result_from_execution_output(
         .and_then(|commit| commit.get("status"))
         .and_then(Value::as_str)
     {
-        Some("committed") => RuntimeResult::ProgramInvocationStarted {
-            request_id,
-            program_invocation_id,
-        },
-        Some("suspended") => RuntimeResult::ProgramInvocationStarted {
+        Some("committed" | "suspended") => RuntimeResult::ProgramInvocationStarted {
             request_id,
             program_invocation_id,
         },
@@ -889,7 +993,7 @@ fn invocation_result_from_execution_output(
             code: "invocation_failed".to_owned(),
         },
         Some("cancelled") => RuntimeResult::Cancelled { request_id },
-        Some("outcome_unknown") | None | Some(_) => RuntimeResult::Failed {
+        Some("outcome_unknown" | _) | None => RuntimeResult::Failed {
             request_id,
             code: "outcome_unknown".to_owned(),
         },
@@ -964,10 +1068,7 @@ impl RuntimeService {
                             artifact_digest: instance.artifact_digest.clone(),
                             materials: instance.materials.clone(),
                             owner_claim: instance.owner_claim.clone(),
-                            invocation: instance
-                                .invocation
-                                .as_ref()
-                                .map(|invocation| durable_invocation(invocation)),
+                            invocation: instance.invocation.as_ref().map(durable_invocation),
                             invocation_history: instance
                                 .invocation_history
                                 .iter()
@@ -1671,6 +1772,18 @@ impl RuntimeService {
         self.broker = broker;
     }
 
+    /// State the posture for an authored `Ask` on a builtin capability
+    /// explicitly, as `APXM_APPROVAL_POLICY` does for a deployed service.
+    pub fn bind_approval_policy(&mut self, policy: ApprovalPolicy) {
+        self.approval_policy = policy;
+    }
+
+    /// The posture an authored `Ask` on a builtin capability is resolved under.
+    #[must_use]
+    pub const fn approval_policy(&self) -> ApprovalPolicy {
+        self.approval_policy
+    }
+
     /// Handle the negotiated APXM execution read/observation surface.
     pub fn handle_v2(
         &self,
@@ -1789,6 +1902,8 @@ impl RuntimeService {
             | RuntimeRequest::EventInspect { request_id, .. }
             | RuntimeRequest::EventExpire { request_id, .. }
             | RuntimeRequest::EventCancel { request_id, .. }
+            | RuntimeRequest::CapabilityFulfill { request_id, .. }
+            | RuntimeRequest::CapabilityCancel { request_id, .. }
             | RuntimeRequest::ProgramInvocationCancel { request_id, .. } => request_id,
         };
         if request_id.trim().is_empty() {
@@ -1835,6 +1950,37 @@ impl RuntimeService {
             } => {
                 self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Cancelled)
             }
+            RuntimeRequest::CapabilityFulfill {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                outcome,
+                output,
+                receipt_ref,
+                message,
+            } => Ok(self.settle_host_capability(
+                request_id,
+                owner_claim,
+                capability_request_id,
+                outcome,
+                output,
+                receipt_ref,
+                message,
+            )),
+            RuntimeRequest::CapabilityCancel {
+                request_id,
+                owner_claim,
+                capability_request_id,
+                message,
+            } => Ok(self.settle_host_capability(
+                request_id,
+                owner_claim,
+                capability_request_id,
+                HostCapabilityOutcomeKind::Cancelled,
+                None,
+                None,
+                message,
+            )),
             RuntimeRequest::ProgramInvocationCancel {
                 request_id,
                 owner_claim,
@@ -2048,6 +2194,7 @@ impl RuntimeService {
     /// Atomically validate and claim an invocation, returning only owned
     /// execution inputs. The caller must run the returned driver without the
     /// service mutex and then call [`Self::finish_invocation`].
+    #[allow(clippy::result_large_err)]
     pub(crate) fn prepare_invocation(
         &mut self,
         request_id: String,
@@ -2213,6 +2360,7 @@ impl RuntimeService {
             execution_backend: self.execution_backend.commit_port(),
             observation_sink: self.observation_sink.clone(),
             broker: self.broker.clone(),
+            approval_policy: self.approval_policy,
             cancellation,
             resumable: self.resumable_invocations,
         };
@@ -2395,6 +2543,12 @@ impl RuntimeService {
         if let Some(cancellation) = self.active_cancellations.get(&cancellation_id) {
             cancellation.cancel();
         }
+        // A live invocation observes the token at its next node boundary. A
+        // parked one has no token to observe: it is waiting on a host that will
+        // never answer now, so its outstanding requests are withdrawn here and
+        // the invocation settles rather than staying parked on a cancellation
+        // marker nothing acts on (ADR-0025).
+        self.cancel_outstanding_host_capabilities(&program_invocation_id);
         RuntimeResult::Cancelled { request_id }
     }
 
@@ -2576,7 +2730,7 @@ impl RuntimeService {
         // owns continuation removal, the resume observation, and the next
         // atomic commit; this path never reconstructs execution from output.
         let _ = self.resume_fulfilled_event(
-            &application.event_ref,
+            &application.event_ref.event_id,
             application.occurrence.payload.clone(),
         );
         Ok(RuntimeResult::EventApplied {
@@ -2585,11 +2739,150 @@ impl RuntimeService {
         })
     }
 
-    fn resume_fulfilled_event(
+    /// Settle one outstanding host-fulfilled Capability request.
+    ///
+    /// There is no request registry to consult: the park itself is the record.
+    /// A parked continuation whose event identity is this request id *is* the
+    /// outstanding request, so a settlement cannot name a request that never
+    /// existed, and a restart loses nothing it would have had to remember.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_host_capability(
         &mut self,
-        event_ref: &CanonicalEventRef,
-        delivered: Value,
-    ) -> Result<(), String> {
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        capability_request_id: String,
+        outcome: HostCapabilityOutcomeKind,
+        output: Option<String>,
+        receipt_ref: Option<String>,
+        message: Option<String>,
+    ) -> RuntimeResult {
+        if owner_claim.validate().is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_owner_claim".to_owned(),
+            };
+        }
+        if !is_host_capability_request_id(&capability_request_id) {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        }
+        // `cancelled` is APXM's own record of a withdrawn request. A host that
+        // wants to withdraw one says so with `capability_cancel`, which is the
+        // only caller that reaches this with that outcome.
+        if outcome == HostCapabilityOutcomeKind::Ok && output.is_none() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        if outcome != HostCapabilityOutcomeKind::Ok && output.is_some() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        let Some(instance_id) = self.parked_host_capability_instance(&capability_request_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        };
+        let Some(instance) = self.instances.get(&instance_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_capability_request".to_owned(),
+            };
+        };
+        if instance.owner_claim != owner_claim {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "owner_mismatch".to_owned(),
+            };
+        }
+        let settlement = HostCapabilitySettlement::new(
+            capability_request_id.clone(),
+            outcome,
+            output,
+            receipt_ref,
+            message,
+        );
+        let Ok(payload) = serde_json::to_string(&settlement) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "internal_error".to_owned(),
+            };
+        };
+        match self.resume_fulfilled_event(&capability_request_id, Value::String(payload)) {
+            Ok(()) => RuntimeResult::CapabilitySettled {
+                request_id,
+                capability_request_id,
+                outcome,
+            },
+            Err(_) => RuntimeResult::Failed {
+                request_id,
+                code: "capability_settlement_failed".to_owned(),
+            },
+        }
+    }
+
+    /// The instance whose parked continuation is waiting on this request.
+    fn parked_host_capability_instance(&self, capability_request_id: &str) -> Option<String> {
+        self.instances
+            .keys()
+            .find(|instance_id| {
+                self.execution_backend
+                    .load_continuation(&ProgramInstanceRef::new((*instance_id).clone()))
+                    .and_then(|committed| {
+                        serde_json::from_value::<Continuation>(committed.payload).ok()
+                    })
+                    .and_then(|continuation| continuation.event_ref)
+                    .is_some_and(|reference| reference.as_str() == capability_request_id)
+            })
+            .cloned()
+    }
+
+    /// Withdraw every host capability request this invocation left outstanding.
+    ///
+    /// Cancelling an invocation cancels the requests it is waiting on. Without
+    /// this a cancelled invocation would stay parked forever on a request no
+    /// host will ever answer, and the cancellation would be a marker rather
+    /// than an outcome.
+    fn cancel_outstanding_host_capabilities(&mut self, program_invocation_id: &str) {
+        let outstanding = self
+            .instances
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                let invocation = instance.invocation.as_ref()?;
+                if invocation.program_invocation_id != program_invocation_id {
+                    return None;
+                }
+                let committed = self
+                    .execution_backend
+                    .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))?;
+                let continuation: Continuation = serde_json::from_value(committed.payload).ok()?;
+                let event_ref = continuation.event_ref?;
+                is_host_capability_request_id(event_ref.as_str())
+                    .then(|| event_ref.as_str().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for capability_request_id in outstanding {
+            let settlement = HostCapabilitySettlement::new(
+                capability_request_id.clone(),
+                HostCapabilityOutcomeKind::Cancelled,
+                None,
+                None,
+                Some("the Program Invocation was cancelled".to_owned()),
+            );
+            let Ok(payload) = serde_json::to_string(&settlement) else {
+                continue;
+            };
+            let _ = self.resume_fulfilled_event(&capability_request_id, Value::String(payload));
+        }
+    }
+
+    fn resume_fulfilled_event(&mut self, event_id: &str, delivered: Value) -> Result<(), String> {
         let mut candidate = None;
         for (instance_id, instance) in &self.instances {
             let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
@@ -2604,7 +2897,7 @@ impl RuntimeService {
             if continuation
                 .event_ref
                 .as_ref()
-                .is_some_and(|reference| reference.as_str() == event_ref.event_id)
+                .is_some_and(|reference| reference.as_str() == event_id)
             {
                 if candidate.is_some() {
                     return Err("event maps to multiple parked invocations".to_owned());
@@ -2647,8 +2940,7 @@ impl RuntimeService {
             self.execution_backend.commit_port(),
             Some(self.observation_sink.clone()),
             ProgramInstanceRef::new(instance_id.clone()),
-            apxm_kernel::EventRef::new(event_ref.event_id.clone())
-                .map_err(|error| error.to_string())?,
+            apxm_kernel::EventRef::new(event_id.to_owned()).map_err(|error| error.to_string())?,
             delivered,
         ))?;
         if output.get("status").and_then(Value::as_str) != Some("suspended") {
@@ -2862,7 +3154,7 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     struct InvocationGate {
@@ -3951,6 +4243,118 @@ mod tests {
             .unwrap()
     }
 
+    struct CountingBroker {
+        asked: Arc<AtomicUsize>,
+        decision: ApprovalDecision,
+    }
+
+    #[async_trait::async_trait]
+    impl ApprovalBroker for CountingBroker {
+        async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+            self.asked.fetch_add(1, Ordering::Release);
+            self.decision
+        }
+    }
+
+    struct SilentBroker;
+
+    #[async_trait::async_trait]
+    impl ApprovalBroker for SilentBroker {
+        async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+            std::future::pending().await
+        }
+    }
+
+    fn start_ask_invocation(service: &mut RuntimeService) -> RuntimeResult {
+        let instance = create_started(service, ask_air_bytes());
+        service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    owner_claim: owner_claim(service, &instance),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn approval_policy_reads_deny_and_timeout_and_rejects_anything_else() {
+        assert_eq!(ApprovalPolicy::parse("").unwrap(), ApprovalPolicy::Deny);
+        assert_eq!(ApprovalPolicy::parse("deny").unwrap(), ApprovalPolicy::Deny);
+        assert_eq!(
+            ApprovalPolicy::parse(" timeout:250 ").unwrap(),
+            ApprovalPolicy::Timeout(Duration::from_millis(250))
+        );
+        for malformed in [
+            "allow",
+            "timeout",
+            "timeout:",
+            "timeout:-1",
+            "timeout:2s",
+            "timeout:0",
+        ] {
+            let error = ApprovalPolicy::parse(malformed)
+                .expect_err("a value that is not a policy must not be read as one");
+            assert!(
+                error.contains("deny") || error.contains("timeout"),
+                "{malformed}: {error}"
+            );
+        }
+        assert_eq!(
+            RuntimeServiceStartupError::InvalidApprovalPolicy(
+                ApprovalPolicy::parse("allow").unwrap_err()
+            )
+            .to_string(),
+            "invalid APXM_APPROVAL_POLICY: \"allow\" is not a policy; expected \"deny\" or \"timeout:<ms>\""
+        );
+    }
+
+    #[test]
+    fn deny_policy_refuses_a_builtin_ask_without_consulting_the_broker() {
+        let mut service = RuntimeService::default();
+        assert_eq!(service.approval_policy(), ApprovalPolicy::Deny);
+        let asked = Arc::new(AtomicUsize::new(0));
+        service.bind_approval_broker(Arc::new(CountingBroker {
+            asked: Arc::clone(&asked),
+            decision: ApprovalDecision::Allow,
+        }));
+        let result = start_ask_invocation(&mut service);
+        assert!(
+            matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_denied"),
+            "{result:?}"
+        );
+        assert_eq!(asked.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn timeout_policy_admits_an_answered_ask_and_denies_an_unanswered_one() {
+        let mut service = RuntimeService::default();
+        let asked = Arc::new(AtomicUsize::new(0));
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_secs(30)));
+        service.bind_approval_broker(Arc::new(CountingBroker {
+            asked: Arc::clone(&asked),
+            decision: ApprovalDecision::Allow,
+        }));
+        let allowed = start_ask_invocation(&mut service);
+        assert!(
+            !matches!(allowed, RuntimeResult::Failed { ref code, .. } if code.starts_with("ask_")),
+            "{allowed:?}"
+        );
+        assert_eq!(asked.load(Ordering::Acquire), 1);
+
+        let mut refusing = RuntimeService::default();
+        refusing.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_millis(25)));
+        refusing.bind_approval_broker(Arc::new(SilentBroker));
+        let unanswered = start_ask_invocation(&mut refusing);
+        assert!(
+            matches!(unanswered, RuntimeResult::Failed { ref code, .. } if code == "ask_timeout"),
+            "{unanswered:?}"
+        );
+    }
+
     #[test]
     fn denied_ask_never_executes() {
         let mut service = RuntimeService::default();
@@ -3975,6 +4379,7 @@ mod tests {
     #[test]
     fn timed_out_ask_never_executes() {
         let mut service = RuntimeService::default();
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_millis(500)));
         service.bind_approval_broker(std::sync::Arc::new(apxm_execution::TimeoutBroker));
         let instance = create_started(&mut service, ask_air_bytes());
         let result = service
@@ -4070,6 +4475,7 @@ mod tests {
         let gate = Arc::new(InvocationGate {
             released: Arc::new(AtomicBool::new(false)),
         });
+        service.bind_approval_policy(ApprovalPolicy::Timeout(Duration::from_secs(60)));
         service.bind_approval_broker(gate.clone());
         let shared = Arc::new(Mutex::new(service));
         let prepared = {

@@ -37,6 +37,7 @@ import {
 // it actually is at the point where both meet.
 import type { CapabilityId as BuiltinCapabilityId } from "./generated/capabilities.js";
 import { BUILTIN_CAPABILITIES } from "./generated/capabilities.js";
+import { declaredHostCapabilities, isDeclaredHostCapability } from "./host-capabilities.js";
 
 // Capture the intrinsic before authored code can replace the global method.
 // Marker records are inputs to static capture, so their fields must remain
@@ -60,12 +61,25 @@ const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", 
 export type ShippedCapabilityReference = { readonly capabilityId: string };
 
 /**
- * A Capability reference is a builtin id from the generated catalogue or the
- * handler that implements one. Nothing else: an invented bare string is not a
- * member of either arm, so referencing a Capability nobody implements is a type
- * error rather than a check some later pass has to remember to run.
+ * A host-fulfilled Capability, declared in the package's `agent.toml` as
+ * `[[capabilities.host]]`. The runtime never executes one; the embedding host
+ * answers the request.
  */
-export type CapabilityReference = BuiltinCapabilityId | ShippedCapabilityReference;
+export type HostCapabilityReference = `host:${string}`;
+
+/**
+ * A Capability reference is a builtin id from the generated catalogue, the
+ * handler that implements one, or a host-fulfilled reference the package's
+ * manifest declares. Nothing else: an invented bare string is not a member of
+ * any arm, so referencing a Capability nobody implements is a type error rather
+ * than a check some later pass has to remember to run. The `host:` arm is a
+ * shape rather than a closed set because the ids live in `agent.toml`, which the
+ * type system cannot read; the set is closed at capture instead.
+ */
+export type CapabilityReference =
+  | BuiltinCapabilityId
+  | HostCapabilityReference
+  | ShippedCapabilityReference;
 
 function capabilityIdOf(reference: CapabilityReference): string {
   return typeof reference === "string" ? reference : reference?.capabilityId;
@@ -96,10 +110,24 @@ function rejectUnmintedCapability(
   if (typeof reference !== "string") {
     return;
   }
+  if (reference.startsWith("host:")) {
+    if (!isDeclaredHostCapability(reference)) {
+      const declared = declaredHostCapabilities();
+      throw new Error(
+        `${code}: ${marker} names the host-fulfilled Capability '${reference}', ` +
+          "which the package manifest does not declare as [[capabilities.host]]. " +
+          (declared.length === 0
+            ? "This package declares none"
+            : `It declares ${declared.join(", ")}`),
+      );
+    }
+    return;
+  }
   if (!(BUILTIN_CAPABILITIES as readonly string[]).includes(reference)) {
     throw new Error(
-      `${code}: ${marker} accepts a builtin catalogue id or the handler ` +
-        `declaration that implements one, not '${reference}'`,
+      `${code}: ${marker} accepts a builtin catalogue id, a host-fulfilled ` +
+        `'host:' reference the manifest declares, or the handler declaration ` +
+        `that implements one, not '${reference}'`,
     );
   }
 }

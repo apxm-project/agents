@@ -5,6 +5,7 @@
 //! the caller's composition boundary.
 
 use apxm_core::grammar::{is_digest, is_identifier};
+pub use apxm_core::types::host_capability::HostCapabilityOutcomeKind;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -238,6 +239,8 @@ pub enum ObservationKind {
     LoopTransition,
     ModelAttempt,
     CapabilityAttempt,
+    CapabilityRequested,
+    CapabilitySettled,
     ProgramAttempt,
     ApprovalRequested,
     ApprovalResolved,
@@ -265,6 +268,84 @@ pub struct ObservationTiming {
     pub observed_at_unix_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+}
+
+/// The authored permission a program's own source requested for one Capability.
+///
+/// For a host-fulfilled reference APXM records this and does not broker it: it
+/// is what the program asked for, carried verbatim to the host, which merges it
+/// with its own policy and may only narrow it (ADR-0025).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthoredPermission {
+    Allow,
+    Ask,
+    Deny,
+}
+
+/// The host-fulfilled Capability request or settlement one observation carries.
+///
+/// A `capability_requested` observation is the whole request: a host that
+/// cannot read the arguments cannot perform the call, so `input` travels inline
+/// as the exact canonical argument bytes rather than as a reference. A
+/// `capability_settled` observation carries how it ended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostCapabilityObservation {
+    pub capability_request_id: String,
+    pub capability_ref: String,
+    /// The exact canonical JSON argument bytes. Present on a request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    /// What the program's own source asked for. Present on a request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authored_permission: Option<AuthoredPermission>,
+    /// How the request ended. Present on a settlement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<HostCapabilityOutcomeKind>,
+    /// The host's own durable record of the effect. Present on a settlement
+    /// when the host stated one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+}
+
+impl HostCapabilityObservation {
+    pub fn validate(&self, kind: ObservationKind) -> Result<(), ContractValidationError> {
+        if !is_identifier(&self.capability_request_id) {
+            return Err(ContractValidationError::InvalidRef {
+                kind: "capability_request_id",
+            });
+        }
+        if self.capability_ref.len() > MAX_REF_BYTES {
+            return Err(ContractValidationError::RefTooLong {
+                kind: "capability_ref",
+            });
+        }
+        if !self.capability_ref.starts_with("host:") {
+            return Err(ContractValidationError::InvalidRef {
+                kind: "capability_ref",
+            });
+        }
+        if let Some(receipt_ref) = &self.receipt_ref
+            && !is_identifier(receipt_ref)
+        {
+            return Err(ContractValidationError::InvalidRef {
+                kind: "receipt_ref",
+            });
+        }
+        let requested = kind == ObservationKind::CapabilityRequested;
+        if requested
+            != (self.input.is_some()
+                && self.authored_permission.is_some()
+                && self.outcome.is_none())
+        {
+            return Err(ContractValidationError::InvalidObservationReference);
+        }
+        if !requested && self.outcome.is_none() {
+            return Err(ContractValidationError::InvalidObservationReference);
+        }
+        Ok(())
+    }
 }
 
 /// The actual runtime Event identity associated with an event wait/resume
@@ -322,6 +403,11 @@ pub struct ExecutionObservation {
     pub output_ref: Option<OutputRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_ref: Option<EvidenceRef>,
+    /// The host-fulfilled Capability request or settlement this observation is
+    /// about. Present exactly on `capability_requested` and
+    /// `capability_settled`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_capability: Option<HostCapabilityObservation>,
 }
 
 impl ExecutionObservation {
@@ -344,6 +430,15 @@ impl ExecutionObservation {
         ) != self.event_ref.is_some()
         {
             return Err(ContractValidationError::InvalidObservationReference);
+        }
+        let host_capability_kind = matches!(
+            self.observation_kind,
+            ObservationKind::CapabilityRequested | ObservationKind::CapabilitySettled
+        );
+        match (&self.host_capability, host_capability_kind) {
+            (Some(host_capability), true) => host_capability.validate(self.observation_kind)?,
+            (None, false) => {}
+            _ => return Err(ContractValidationError::InvalidObservationReference),
         }
         if matches!(
             self.observation_kind,
@@ -965,10 +1060,29 @@ pub enum ExecutionReadResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::host_capability::host_capability_request_id;
     use serde_json::json;
 
     fn cursor(position: u64) -> ExecutionCursor {
         ExecutionCursor::new(position, "scope.cursor").expect("cursor")
+    }
+
+    fn host_capability_observation(
+        kind: ObservationKind,
+        sequence: u64,
+    ) -> HostCapabilityObservation {
+        let requested = kind == ObservationKind::CapabilityRequested;
+        HostCapabilityObservation {
+            capability_request_id: host_capability_request_id(
+                "invocation.1",
+                &format!("node-execution.{sequence}"),
+            ),
+            capability_ref: "host:notes.search".to_owned(),
+            input: requested.then(|| "{}".to_owned()),
+            authored_permission: requested.then_some(AuthoredPermission::Allow),
+            outcome: (!requested).then_some(HostCapabilityOutcomeKind::Ok),
+            receipt_ref: None,
+        }
     }
 
     fn observation(
@@ -1002,6 +1116,11 @@ mod tests {
                 .then(|| OutputRef::new(format!("output.{sequence}")).expect("ref")),
             evidence_ref: matches!(kind, ObservationKind::EvidenceCommitted)
                 .then(|| EvidenceRef::new(format!("evidence.{sequence}")).expect("ref")),
+            host_capability: matches!(
+                kind,
+                ObservationKind::CapabilityRequested | ObservationKind::CapabilitySettled
+            )
+            .then(|| host_capability_observation(kind, sequence)),
         }
     }
 

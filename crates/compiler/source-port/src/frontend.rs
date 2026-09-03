@@ -17,17 +17,22 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::confinement::{CaptureScratch, Confinement};
 use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 
 /// The maximum time an authoring frontend may hold the source-port boundary.
-/// The Python harness has interpreter resource limits, but the TypeScript
-/// harness runs under Node's permission model, which does not bound CPU time.
+/// It is the outermost bound: the kernel's own CPU ceiling ends a program that
+/// only spins well before this, and this ends a child the kernel cannot reach.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 /// A frontend must not be able to make capture retain unbounded output. The
 /// readers continue draining after this budget is full so noisy output cannot
 /// deadlock the child on a full pipe.
 const CAPTURE_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const CAPTURE_READ_BUFFER_BYTES: usize = 16 * 1024;
+/// The old-space ceiling the TypeScript bridge runs under. Node has no
+/// interpreter resource limits of its own, so the ceiling is stated on its
+/// command line and holds on every host, kernel boundary or not.
+const NODE_HEAP_LIMIT_MB: usize = 512;
 const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// The closed authoring-frontend selector. It matches the source-language
@@ -82,13 +87,17 @@ impl Frontend {
             // read the declared frontend package and nothing else on the
             // filesystem, and can write nowhere at all. Synchronous loader
             // hooks keep submitted code in this same confined process; worker
-            // threads are deliberately not granted.
+            // threads are deliberately not granted. The heap ceiling is Node's
+            // own, so a submitted program that allocates without bound is
+            // refused by V8 on every host, not only where the kernel bounds
+            // writable data.
             Self::Typescript => vec![
                 // `--experimental-permission` is supported across the Node
                 // versions used by the repository toolchain.
                 "--no-warnings".to_string(),
                 "--experimental-permission".to_string(),
                 format!("--allow-fs-read={}", frontend_root.display()),
+                format!("--max-old-space-size={NODE_HEAP_LIMIT_MB}"),
                 "--input-type=module".to_string(),
                 "--eval".to_string(),
             ],
@@ -102,6 +111,10 @@ struct HarnessRequest<'a> {
     frontend_root: &'a Path,
     entrypoint: &'a str,
     source: &'a str,
+    /// The host capability ids the package declares. The harness hands them to
+    /// the frontend before evaluating the source, so the minted Capability set
+    /// inside the interpreter is the builtin catalogue united with these.
+    host_capabilities: &'a [String],
 }
 
 /// The single-field document a capture harness writes on success.
@@ -124,11 +137,13 @@ pub(crate) fn capture(
     driver: &Path,
     entrypoint: &str,
     source: &str,
+    host_capabilities: &[String],
 ) -> Result<serde_json::Value, SourceDiagnostic> {
     let request = serde_json::to_vec(&HarnessRequest {
         frontend_root,
         entrypoint,
         source,
+        host_capabilities,
     })
     .map_err(|error| {
         SourceDiagnostic::new(
@@ -137,7 +152,16 @@ pub(crate) fn capture(
         )
     })?;
 
-    let output = spawn(frontend, frontend_root, driver, &request)?;
+    let scratch = CaptureScratch::create()?;
+    let confinement = Confinement::capture(frontend_root, driver, scratch.path());
+    let output = spawn(
+        frontend,
+        frontend_root,
+        driver,
+        &request,
+        &scratch,
+        &confinement,
+    )?;
 
     if !output.status.success() {
         return Err(harness_rejection(frontend, &output.stderr));
@@ -175,8 +199,18 @@ fn spawn(
     frontend_root: &Path,
     driver: &Path,
     request: &[u8],
+    scratch: &CaptureScratch,
+    confinement: &Confinement,
 ) -> Result<std::process::Output, SourceDiagnostic> {
-    spawn_with_timeout(frontend, frontend_root, driver, request, CAPTURE_TIMEOUT)
+    spawn_with_timeout(
+        frontend,
+        frontend_root,
+        driver,
+        request,
+        CAPTURE_TIMEOUT,
+        Some(scratch.path()),
+        confinement,
+    )
 }
 
 /// Run one declared interpreter with a bounded lifetime.
@@ -186,6 +220,8 @@ fn spawn_with_timeout(
     driver: &Path,
     request: &[u8],
     timeout: Duration,
+    scratch: Option<&Path>,
+    confinement: &Confinement,
 ) -> Result<std::process::Output, SourceDiagnostic> {
     let mut command = Command::new(driver);
     command
@@ -195,6 +231,12 @@ fn spawn_with_timeout(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(scratch) = scratch {
+        // The one writable path the child has, named where an interpreter
+        // looks for one. Everything else it may write is denied by the kernel.
+        command.env("TMPDIR", scratch);
+    }
+    confinement.arm(&mut command)?;
 
     let mut child = command.spawn().map_err(|error| {
         SourceDiagnostic::new(
@@ -394,6 +436,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{Frontend, decode_response, harness_rejection, spawn_with_timeout};
+    use crate::confinement::Confinement;
     use crate::diagnostic::SourceDiagnosticCode;
 
     /// The one accepted shape: exactly one document carrying exactly the graph.
@@ -436,6 +479,11 @@ mod tests {
         assert!(diagnostic.message.contains("without a reported reason"));
     }
 
+    /// The port's own process mechanics: a child that never exits is ended at
+    /// the deadline. The stand-in driver is a shell script rather than a
+    /// declared interpreter, so this drives `spawn` without the kernel boundary
+    /// a real capture runs inside; that boundary is asserted directly by the
+    /// hostile-source reproduction in `confinement`.
     #[cfg(unix)]
     #[test]
     fn a_capture_that_does_not_exit_is_killed_at_the_boundary() {
@@ -453,6 +501,8 @@ mod tests {
             &path,
             &input,
             Duration::from_millis(25),
+            None,
+            &Confinement::none(),
         )
         .expect_err("a capture that exceeds its deadline is rejected");
 
@@ -461,6 +511,8 @@ mod tests {
         assert!(diagnostic.message.contains("capture timeout"));
     }
 
+    /// The port's own pipe mechanics, driven the same way and for the same
+    /// reason as the deadline test above.
     #[cfg(unix)]
     #[test]
     fn a_capture_drains_large_stdout_and_stderr_while_writing_input() {
@@ -482,6 +534,8 @@ mod tests {
             &path,
             &input,
             Duration::from_secs(2),
+            None,
+            &Confinement::none(),
         )
         .expect("large bidirectional output must not deadlock capture");
 

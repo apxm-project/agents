@@ -41,6 +41,12 @@ must support compiler-only and runtime-only consumers without installing a
 server, provider backend, database, HTTP client, CLI, hidden process, or
 unrelated application composition.
 
+The current repository state has removed the direct `apxm-backends` dependency
+from `apxm-compiler`; the baseline bullets above remain historical context for
+the decision. The compiler pipeline now depends on the focused contracts,
+AIS, and program layers and keeps backend/provider selection outside this
+owner boundary.
+
 ## Decision
 
 ### Public library roles

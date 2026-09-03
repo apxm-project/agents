@@ -21,6 +21,9 @@ from the active index; Git history retains their rationale.
 | [0021](0021-backend-neutral-graph-hints.md) | Graph hints are one Agents contract projected onto vLLM and llama.cpp `apxm` branches; the vLLM pin/join catalog is retired. |
 | [0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md) | Capability references resolve against a generated catalogue plus shipped handlers; a declared permission is a request the layer stack may only tighten. |
 | [0024](0024-non-loopback-serving-requires-a-complete-security-profile.md) | Non-loopback Event/OpenAI HTTP serving requires a complete security profile. |
+| [0025](0025-host-fulfilled-capabilities-are-requested-by-the-runtime-and-settled-by-the-host.md) | A package-declared `host:` Capability is requested by the runtime and settled by the embedding host; APXM never executes it. |
+| [0026](0026-a-development-inference-backend-is-selected-by-the-environment.md) | One development inference backend, selected by `APXM_BACKEND` and bound to the references `APXM_BACKEND_MODEL` names, answers deterministically without a provider. |
+| [0027](0027-submitted-source-capture-runs-inside-a-kernel-boundary.md) | Submitted-source capture runs inside a Landlock ruleset, a seccomp filter and resource ceilings; a kernel without them refuses capture unless `APXM_CAPTURE_CONFINEMENT=permissive`. |
 
 ## Amending an accepted record
 

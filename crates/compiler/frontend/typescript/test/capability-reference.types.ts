@@ -1,9 +1,10 @@
 // The Capability-reference property, proved where it is decided: the compiler.
 //
-// `Tool` and `Capability` accept a builtin id the generated catalogue mints or
-// the object a handler declaration hands back, and nothing else. That is a
-// property of the type, not of a check some pass runs, so the proof is a file
-// that must compile — and whose `@ts-expect-error` lines must keep erroring.
+// `Tool` and `Capability` accept a builtin id the generated catalogue mints, a
+// `host:` reference the package manifest declares, or the object a handler
+// declaration hands back, and nothing else. That is a property of the type, not
+// of a check some pass runs, so the proof is a file that must compile — and
+// whose `@ts-expect-error` lines must keep erroring.
 // A widened `CapabilityReference` makes the invented references below legal,
 // which turns each directive into an unused one and fails `tsc` just as loudly
 // as an accepted reference should.
@@ -30,7 +31,13 @@ const proposeEdit = { capabilityId: "edit" };
 export const ShippedHandler = Tool<Input, Output>(proposeEdit);
 export const ShippedCapability = Capability<Input, Output>(proposeEdit);
 
-// @ts-expect-error an invented bare string is neither a catalogue id nor a handler
+// The host-fulfilled arm. Its ids live in `agent.toml`, which the type system
+// cannot read, so the type states the shape and capture closes the set: an
+// undeclared `host:` reference is a capture diagnostic, not a type error.
+export const HostCapability = Capability<Input, Output>("host:notes.search");
+export const HostTool = Tool<Input, Output>("host:notes.search");
+
+// @ts-expect-error an invented bare string is neither a catalogue id, a host reference, nor a handler
 export const InventedTool = Tool<Input, Output>("cap.search");
 // @ts-expect-error `edit` is an id a package ships; only the declaration names it
 export const BareShippedTool = Tool<Input, Output>("edit");

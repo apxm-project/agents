@@ -236,6 +236,28 @@ fn submitted_source_cannot_start_a_process() {
     }
 }
 
+/// The Python capture process installs OS resource ceilings in addition to
+/// its audit wall. Keep this assertion in the hostile-source suite so a
+/// future interpreter upgrade cannot silently remove the process and file
+/// descriptor budgets while the import/event tests continue to pass.
+#[cfg(unix)]
+#[test]
+fn submitted_python_runs_under_closed_resource_ceilings() {
+    if !frontend_present(Frontend::Python) {
+        return;
+    }
+    let source = reaching_program(
+        Frontend::Python,
+        "import resource",
+        "assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] == 64\n\
+         assert resource.getrlimit(resource.RLIMIT_NPROC)[0] == 0",
+    );
+    let request = SourceBundleRequest::new(Frontend::Python, ENTRYPOINT, source);
+    compile_source_bundle(&request, &roots(), &drivers()).unwrap_or_else(|diagnostics| {
+        panic!("Python source must observe the installed resource ceilings; got {diagnostics:?}")
+    });
+}
+
 /// Ambient Node globals must not provide a network escape hatch when no module
 /// is named. The harness removes both fetch and process before evaluation.
 #[test]

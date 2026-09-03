@@ -45,6 +45,8 @@ DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
 APXM_CLI_BINARY = "apxm"
 APXM_COMPILER_PACKAGE = "apxm-compiler"
+#: Cargo feature that links the native AIS dialect into `apxm-compiler`.
+MLIR_FEATURE = "mlir"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
@@ -524,12 +526,17 @@ def _build_cli(project_root: Path, target_dir: Path) -> int:
 
 
 def _build_compiler(project_root: Path, target_dir: Path) -> int:
+    # `build-dialect` exists to rebuild the native dialect, which lives behind
+    # the compiler crate's `mlir` feature; without the feature this would emit
+    # stub bindings and leave no CMake build directory to drive.
     return _run(
         [
             CARGO,
             CargoCommand.BUILD.value,
             PACKAGE_FLAG,
             APXM_COMPILER_PACKAGE,
+            FEATURES_FLAG,
+            MLIR_FEATURE,
             RELEASE_FLAG,
         ],
         project_root=project_root,

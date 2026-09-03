@@ -10,6 +10,7 @@
     "source_revision",
     "artifact_kind",
     "services",
+    "schemas",
     "frontend_native",
     "owner_descriptor_digest",
     "integrity_algorithm"
@@ -30,6 +31,22 @@
         "properties": {
           "name": {"enum": ["compilation-service", "runtime-service"]},
           "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "schemas": {
+      "description": "Every contract schema this release ships, so a consumer pins the wire contracts the same way it pins the service bytes.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "digest"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "pattern": "^contracts/schemas/(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.json$"},
           "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         },
         "additionalProperties": false
