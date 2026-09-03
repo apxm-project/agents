@@ -34,8 +34,30 @@
 //! calls outright.
 //!
 //! Resource ceilings bound what the child may consume where no rule applies: CPU
-//! time, writable data, produced file size, core dumps, and — at zero — new
-//! processes.
+//! time, writable data, produced file size, core dumps, and the number of tasks
+//! the child may hold.
+//!
+//! # Threads are not processes
+//!
+//! Refusing a new process is the filter's job, not a ceiling's. `RLIMIT_NPROC`
+//! counts tasks, and on Linux a thread is a task, so a ceiling of zero refuses
+//! the first `pthread_create` as surely as the first `fork`: Node's libuv pool
+//! and V8 platform threads never start, and the bridge dies inside the
+//! interpreter before it reads a request. The ceiling is therefore a thread
+//! budget — high enough for both bridges, low enough to bound a thread bomb —
+//! while `fork`, `vfork`, `clone` without `CLONE_THREAD` and `clone3` stay
+//! refused by the filter, which holds whatever user the service runs as.
+//!
+//! # The one writable path
+//!
+//! The scratch directory is the only path capture may write, so it has to exist
+//! on a writable filesystem. A service container is normally read-only, which
+//! makes the default temporary directory unwritable, so the root the
+//! per-capture directory is created under is
+//! [`CAPTURE_SCRATCH_DIR_VARIABLE`], and the service image declares a writable
+//! mount at its default. The root is created if it is absent, and
+//! [`capture_confinement_readiness`] reports it and whether it is writable, so
+//! an operator learns of a read-only mount before the first refused compile.
 //!
 //! # Fail closed
 //!
@@ -54,6 +76,7 @@
 
 #![allow(unsafe_code)]
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -63,6 +86,12 @@ use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 
 /// The operator flag that selects how a missing kernel feature is answered.
 pub const CONFINEMENT_MODE_VARIABLE: &str = "APXM_CAPTURE_CONFINEMENT";
+
+/// The operator flag that names the writable root every per-capture scratch
+/// directory is created under. Absent, the platform temporary directory is
+/// used, which is what a development host wants and what a read-only service
+/// container does not have.
+pub const CAPTURE_SCRATCH_DIR_VARIABLE: &str = "APXM_CAPTURE_SCRATCH_DIR";
 
 /// The stable identifier of the boundary this build applies.
 pub const CONFINEMENT_BOUNDARY: &str = "apxm.capture-confinement/1";
@@ -125,10 +154,25 @@ pub struct ConfinementReadiness {
     pub landlock_abi: Option<u32>,
     /// Whether the kernel accepts a seccomp filter.
     pub seccomp_filter: bool,
-    /// Whether the child is given CPU, memory, file-size and process ceilings.
+    /// Whether the child is given CPU, memory, file-size and task ceilings.
     pub resource_limits: bool,
+    /// The writable root every per-capture scratch directory is created under.
+    pub scratch_root: String,
+    /// Whether that root exists and accepts a directory. A read-only mount here
+    /// refuses every capture, so it is reported rather than discovered.
+    pub scratch_writable: bool,
     /// One sentence an operator can act on.
     pub detail: String,
+}
+
+/// The scratch root this host uses, and whether capture can write it.
+///
+/// The probe creates the root when it is absent, so a container whose declared
+/// mount arrives empty is usable without an operator step.
+fn scratch_readiness() -> (String, bool) {
+    let root = scratch_root();
+    let writable = CaptureScratch::create_in(&root).is_ok();
+    (root.display().to_string(), writable)
 }
 
 /// Report the capture boundary this host provides.
@@ -151,19 +195,24 @@ pub(crate) struct ResourceCeilings {
     pub(crate) data_bytes: u64,
     /// Largest file the child may produce, in bytes.
     pub(crate) file_size_bytes: u64,
-    /// Processes the child's user may hold. Zero denies every fork.
-    pub(crate) processes: u64,
+    /// Tasks the child's user may hold. `RLIMIT_NPROC` counts threads, so this
+    /// is a thread budget and not the refusal of a new process: that refusal is
+    /// the seccomp filter's, which holds whatever user the service runs as.
+    pub(crate) tasks: u64,
 }
 
 impl ResourceCeilings {
     /// The ceilings one capture runs under. The CPU ceiling is below the port's
     /// wall-clock capture timeout, so a program that only spins is ended by the
-    /// kernel rather than by the supervising thread.
+    /// kernel rather than by the supervising thread. The task ceiling clears
+    /// both bridges — Node's libuv pool and V8's platform threads, Python's
+    /// interpreter threads — by three orders of magnitude while still bounding
+    /// a program that only creates threads.
     pub(crate) const CAPTURE: Self = Self {
         cpu_seconds: 20,
         data_bytes: 2 * 1024 * 1024 * 1024,
         file_size_bytes: 64 * 1024 * 1024,
-        processes: 0,
+        tasks: 4096,
     };
 }
 
@@ -233,9 +282,17 @@ pub(crate) struct CaptureScratch {
 }
 
 impl CaptureScratch {
-    /// Create one scratch directory for one capture.
+    /// Create one scratch directory for one capture, under the declared root.
     pub(crate) fn create() -> Result<Self, SourceDiagnostic> {
-        let path = std::env::temp_dir().join(format!(
+        Self::create_in(&scratch_root())
+    }
+
+    /// Create one scratch directory under a named root, creating the root when
+    /// it is absent. A root that cannot hold a directory is the one deployment
+    /// mistake this boundary makes easy — a read-only container filesystem —
+    /// so the refusal names the root and the flag that moves it.
+    pub(crate) fn create_in(root: &Path) -> Result<Self, SourceDiagnostic> {
+        let path = root.join(format!(
             "apxm-capture-scratch-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -246,7 +303,12 @@ impl CaptureScratch {
         std::fs::create_dir_all(&path).map_err(|error| {
             SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendUnavailable,
-                format!("the capture scratch directory could not be created: {error}"),
+                format!(
+                    "the capture scratch directory could not be created under {}: {error}; \
+                     capture writes nowhere else, so this root must be a writable mount — \
+                     set {CAPTURE_SCRATCH_DIR_VARIABLE} to name another one",
+                    root.display()
+                ),
             )
         })?;
         Ok(Self { path })
@@ -261,6 +323,22 @@ impl CaptureScratch {
 impl Drop for CaptureScratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// The writable root every per-capture scratch directory is created under.
+#[must_use]
+pub fn scratch_root() -> PathBuf {
+    scratch_root_from(std::env::var_os(CAPTURE_SCRATCH_DIR_VARIABLE).as_deref())
+}
+
+/// A declared root is used exactly as written; an absent or empty value falls
+/// back to the platform temporary directory, which is what a development host
+/// has and a read-only container does not.
+fn scratch_root_from(value: Option<&OsStr>) -> PathBuf {
+    match value {
+        Some(named) if !named.is_empty() => PathBuf::from(named),
+        _ => std::env::temp_dir(),
     }
 }
 
@@ -281,10 +359,11 @@ mod platform {
 
     use super::{
         CONFINEMENT_BOUNDARY, CaptureGrants, ConfinementMode, ConfinementReadiness,
-        ConfinementStatus, ResourceCeilings, SourceDiagnostic,
+        ConfinementStatus, ResourceCeilings, SourceDiagnostic, scratch_readiness,
     };
 
     pub(super) fn readiness(mode: ConfinementMode) -> ConfinementReadiness {
+        let (scratch_root, scratch_writable) = scratch_readiness();
         ConfinementReadiness {
             boundary: CONFINEMENT_BOUNDARY,
             platform: std::env::consts::OS,
@@ -293,6 +372,8 @@ mod platform {
             landlock_abi: None,
             seccomp_filter: false,
             resource_limits: false,
+            scratch_root,
+            scratch_writable,
             detail: format!(
                 "{} provides no Landlock ruleset and no seccomp filter, so the capture \
                  boundary is a documented no-op here and capture runs behind \
@@ -324,7 +405,8 @@ mod platform {
 
     use super::{
         CONFINEMENT_BOUNDARY, CaptureGrants, ConfinementMode, ConfinementReadiness,
-        ConfinementStatus, ResourceCeilings, SourceDiagnostic, SourceDiagnosticCode, unavailable,
+        ConfinementStatus, ResourceCeilings, SourceDiagnostic, SourceDiagnosticCode,
+        scratch_readiness, unavailable,
     };
 
     const SYS_LANDLOCK_CREATE_RULESET: libc::c_long = 444;
@@ -748,10 +830,27 @@ mod platform {
         }
     }
 
+    /// Apply one ceiling, clamped to the hard limit the service already holds.
+    ///
+    /// A child that is not privileged cannot raise a hard limit, so a ceiling
+    /// stated above the one the host imposes would be refused outright and take
+    /// the whole capture with it. Clamping keeps the declared ceiling the
+    /// intent and the host's the bound, which is the direction that is safe.
     fn set_ceiling(resource: libc::__rlimit_resource_t, soft: u64, hard: u64) -> io::Result<()> {
+        let mut held = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        let bound = if unsafe { libc::getrlimit(resource, &mut held) } == 0
+            && held.rlim_max != libc::RLIM_INFINITY
+        {
+            held.rlim_max
+        } else {
+            u64::MAX
+        };
         let limit = libc::rlimit {
-            rlim_cur: soft,
-            rlim_max: hard,
+            rlim_cur: soft.min(bound),
+            rlim_max: hard.min(bound),
         };
         if unsafe { libc::setrlimit(resource, &limit) } == 0 {
             Ok(())
@@ -772,22 +871,30 @@ mod platform {
             ceilings.file_size_bytes,
             ceilings.file_size_bytes,
         )?;
-        set_ceiling(libc::RLIMIT_NPROC, ceilings.processes, ceilings.processes)?;
+        set_ceiling(libc::RLIMIT_NPROC, ceilings.tasks, ceilings.tasks)?;
         set_ceiling(libc::RLIMIT_CORE, 0, 0)
     }
 
     pub(super) fn readiness(mode: ConfinementMode) -> ConfinementReadiness {
         let abi = landlock_abi();
         let seccomp = seccomp_supported();
+        let (scratch_root, scratch_writable) = scratch_readiness();
         let complete = abi.is_some() && seccomp;
         let status = match (complete, mode) {
             (true, _) => ConfinementStatus::Enforced,
             (false, ConfinementMode::Permissive) => ConfinementStatus::Degraded,
             (false, ConfinementMode::Enforce) => ConfinementStatus::Unavailable,
         };
-        let detail = if complete {
+        let detail = if !scratch_writable {
+            format!(
+                "the capture scratch root {scratch_root} is not writable, so every capture \
+                 is refused; mount a writable filesystem there or name another root in \
+                 {}",
+                super::CAPTURE_SCRATCH_DIR_VARIABLE
+            )
+        } else if complete {
             "every capture child runs inside a Landlock ruleset, a seccomp filter, and \
-             CPU, memory, file-size and process ceilings"
+             CPU, memory, file-size and thread ceilings"
                 .to_owned()
         } else {
             let mut missing = Vec::new();
@@ -815,6 +922,8 @@ mod platform {
             landlock_abi: abi,
             seccomp_filter: seccomp,
             resource_limits: true,
+            scratch_root,
+            scratch_writable,
             detail,
         }
     }
@@ -915,6 +1024,55 @@ mod tests {
         }
     }
 
+    /// The scratch root is the declared one when there is one, and the
+    /// platform temporary directory otherwise. A read-only service container
+    /// has no writable temporary directory, so this is the flag that makes the
+    /// boundary deployable rather than a development convenience.
+    #[test]
+    fn the_scratch_root_follows_the_declared_mount() {
+        assert_eq!(
+            scratch_root_from(Some(OsStr::new("/var/lib/apxm/capture"))),
+            PathBuf::from("/var/lib/apxm/capture")
+        );
+        assert_eq!(scratch_root_from(None), std::env::temp_dir());
+        assert_eq!(scratch_root_from(Some(OsStr::new(""))), std::env::temp_dir());
+    }
+
+    /// A root that cannot hold a directory — the read-only container filesystem
+    /// this boundary makes easy to hit — is refused in the port's own closed
+    /// vocabulary, naming the root and the flag that moves it.
+    #[test]
+    fn a_scratch_root_that_cannot_be_written_names_itself_and_the_flag() {
+        let occupied = std::env::temp_dir().join(format!(
+            "apxm-scratch-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::write(&occupied, b"not a directory").expect("a regular file stands in the way");
+        let refusal = CaptureScratch::create_in(&occupied.join("beneath"))
+            .expect_err("a root that is not a directory cannot hold a scratch directory");
+        let _ = std::fs::remove_file(&occupied);
+
+        assert_eq!(refusal.code, SourceDiagnosticCode::FrontendUnavailable);
+        assert!(refusal.message.contains(CAPTURE_SCRATCH_DIR_VARIABLE));
+        assert!(refusal.message.contains(&occupied.display().to_string()));
+    }
+
+    /// Readiness answers the deployment question before the first request:
+    /// where capture writes, and whether it can.
+    #[test]
+    fn readiness_reports_the_scratch_root_it_will_write() {
+        let reported = platform::readiness(ConfinementMode::Enforce);
+        assert_eq!(reported.scratch_root, scratch_root().display().to_string());
+        assert!(
+            reported.scratch_writable,
+            "the platform temporary directory is writable on a development host"
+        );
+    }
+
     /// A kernel that cannot provide the boundary is refused in the port's own
     /// closed vocabulary, and the refusal names the one flag that changes it.
     #[test]
@@ -977,7 +1135,7 @@ mod tests {
             cpu_seconds: 1,
             data_bytes: 256 * 1024 * 1024,
             file_size_bytes: 4096,
-            processes: 0,
+            tasks: ResourceCeilings::CAPTURE.tasks,
         };
 
         const INTERPRETER: &str = "/usr/bin/python3";
@@ -1111,8 +1269,9 @@ mod tests {
             assert!(!reached.stdout.contains("escaped"));
         }
 
-        /// Spawning a shell. The process ceiling denies the fork even where a
-        /// binary could be reached.
+        /// Spawning a shell. The filter denies the fork even where a binary
+        /// could be reached, and denies it whatever the task ceiling is and
+        /// whatever user the service runs as.
         #[test]
         fn a_submitted_program_cannot_spawn_a_shell() {
             let Some(reached) = reach(
@@ -1181,7 +1340,6 @@ mod tests {
                 "RLIMIT_CPU 1",
                 "RLIMIT_DATA 268435456",
                 "RLIMIT_FSIZE 4096",
-                "RLIMIT_NPROC 0",
                 "RLIMIT_CORE 0",
             ] {
                 assert!(
@@ -1190,6 +1348,62 @@ mod tests {
                     reached.stdout
                 );
             }
+
+            // The task ceiling is clamped to the hard limit the host already
+            // holds, so what is asserted is the property and not one number: a
+            // budget that is stated, positive — a zero would refuse the first
+            // thread either bridge creates — and no wider than declared.
+            let reported: u64 = reached
+                .stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("RLIMIT_NPROC "))
+                .expect("the child reports its task ceiling")
+                .parse()
+                .expect("the task ceiling is a number");
+            assert!(
+                reported > 0 && reported <= TEST_CEILINGS.tasks,
+                "the task ceiling is {reported}, not a bounded positive budget"
+            );
+        }
+
+        /// The threads both bridges need. A ceiling of zero refuses the first
+        /// one, which is how the confined compiler reached a container and
+        /// killed Node before it read a request.
+        #[test]
+        fn a_submitted_program_creates_the_threads_an_interpreter_needs() {
+            let Some(reached) = reach(
+                "import threading\n\
+                 seen = []\n\
+                 workers = [threading.Thread(target=seen.append, args=(1,)) for _ in range(8)]\n\
+                 for worker in workers:\n\
+                 \x20   worker.start()\n\
+                 for worker in workers:\n\
+                 \x20   worker.join()\n\
+                 print('threads', len(seen), end='')\n",
+            ) else {
+                return;
+            };
+            assert!(reached.status.success(), "stderr: {}", reached.stderr);
+            assert_eq!(reached.stdout, "threads 8");
+        }
+
+        /// A thread is not a process. Every library route to a new process —
+        /// `posix_spawn` here, `fork` above — is still refused, and the
+        /// refusal is the filter's, so it holds where a task ceiling does not.
+        #[test]
+        fn a_submitted_program_cannot_start_a_process_through_posix_spawn() {
+            let Some(reached) = reach(
+                "import subprocess\n\
+                 try:\n\
+                 \x20   subprocess.run(['/bin/sh', '-c', 'echo escaped'], check=False)\n\
+                 \x20   print('spawned', end='')\n\
+                 except OSError as error:\n\
+                 \x20   print('denied', error.errno, end='')\n",
+            ) else {
+                return;
+            };
+            assert!(reached.stdout.starts_with("denied"), "{}", reached.stdout);
+            assert!(!reached.stdout.contains("escaped"));
         }
 
         /// Readiness on a kernel that has the features says the boundary is
@@ -1208,10 +1422,24 @@ mod tests {
         /// all, because it would be turned off.
         #[test]
         fn every_declared_interpreter_still_starts_inside_the_boundary() {
+            // Each program reaches the interpreter's own thread pool rather
+            // than only its main thread: Node's V8 platform threads start with
+            // the process and its libuv pool starts with the first asynchronous
+            // call, and a boundary that admits neither admits no TypeScript
+            // capture at all.
+            const NODE_USES_ITS_THREAD_POOL: &str =
+                "require('crypto').pbkdf2('a', 'b', 1, 8, 'sha256', \
+                 (error) => process.stdout.write(error ? 'failed' : 'alive'))";
+            const PYTHON_USES_A_THREAD: &str =
+                "import threading\n\
+                 worker = threading.Thread(target=lambda: None)\n\
+                 worker.start()\n\
+                 worker.join()\n\
+                 print('alive', end='')";
             for (driver, flag, program) in [
-                (INTERPRETER, "-c", "print('alive', end='')"),
-                ("/usr/bin/node", "-e", "process.stdout.write('alive')"),
-                ("/usr/local/bin/node", "-e", "process.stdout.write('alive')"),
+                (INTERPRETER, "-c", PYTHON_USES_A_THREAD),
+                ("/usr/bin/node", "-e", NODE_USES_ITS_THREAD_POOL),
+                ("/usr/local/bin/node", "-e", NODE_USES_ITS_THREAD_POOL),
             ] {
                 let driver = Path::new(driver);
                 if !driver.is_file() {

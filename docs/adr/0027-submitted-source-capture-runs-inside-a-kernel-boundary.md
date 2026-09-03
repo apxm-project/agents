@@ -63,13 +63,26 @@ before the interpreter execs.** On Linux the boundary is three things:
    and key-management calls are refused outright. `no_new_privs` is set, so
    nothing the child execs can regain privilege.
 
-3. **Resource ceilings.** CPU time, writable data, produced file size and core
-   dumps are bounded, and the new-process ceiling is zero, so every fork fails.
-   The CPU ceiling is below the port's own wall-clock capture timeout, so a
-   program that only spins is ended by the kernel rather than by the supervising
-   thread. The TypeScript bridge additionally carries Node's own old-space
-   ceiling on its command line, because Node has no interpreter resource limits
-   of its own and that ceiling therefore holds on every host.
+3. **Resource ceilings.** CPU time, writable data, produced file size, core
+   dumps and the number of tasks the child may hold are bounded. The CPU ceiling
+   is below the port's own wall-clock capture timeout, so a program that only
+   spins is ended by the kernel rather than by the supervising thread. The
+   TypeScript bridge additionally carries Node's own old-space ceiling on its
+   command line, because Node has no interpreter resource limits of its own and
+   that ceiling therefore holds on every host. Each ceiling is clamped to the
+   hard limit the service already holds, because a child that is not privileged
+   cannot raise one and a ceiling stated above the host's would be refused
+   outright and take the capture with it.
+
+   **`RLIMIT_NPROC` counts threads, so it is a thread budget and not a fork
+   refusal.** On Linux a thread is a task and every task is charged to the same
+   ceiling, so a ceiling of zero refuses the first `pthread_create` as surely as
+   the first `fork`: Node's V8 platform threads and libuv pool never start and
+   the bridge dies inside the interpreter before it reads a request. The ceiling
+   is therefore set high enough for both bridges and low enough to bound a
+   program that only creates threads, and refusing a new process is left
+   entirely to the filter in (2), which is the refusal that holds whatever user
+   the service runs as.
 
 The interpreter-level confinement stays exactly as it is. It is the inner wall,
 it is tighter than the kernel boundary in the places it can be, and neither wall
@@ -85,12 +98,37 @@ is answered.
 | unset, or anything but `permissive` | `enforce`. A Linux host without Landlock or without seccomp filtering refuses every capture with `frontend_unavailable`. |
 | `permissive` | Development only. Apply whatever the kernel offers and capture anyway. |
 
+`APXM_CAPTURE_SCRATCH_DIR` is the second flag, and it is a deployment input
+rather than a mode: it names the writable root described below. Unset, the
+platform temporary directory is used, which is what a development host has.
+
 A typo is `enforce`, so no misspelling opens the boundary. The Compilation
 Service prints its capture-confinement readiness to standard error before it
 serves its first request — the boundary identifier, the host, the mode, the
 status, the Landlock ABI the kernel reported, and one sentence an operator can
 act on — so a deployment onto a kernel without Landlock is visible at start
 rather than at the first refused compile.
+
+### The one writable path, and the container it runs in
+
+The scratch directory is the only path capture may write, so capture cannot
+start where that directory cannot be created. A service container normally runs
+with a read-only root filesystem, which makes the platform temporary directory
+unwritable, and the first compile then answers `frontend_unavailable` for a
+reason that has nothing to do with the submitted source.
+
+**The root the per-capture directory is created under is an operating
+requirement of the image, not of the consumer.** `APXM_CAPTURE_SCRATCH_DIR`
+names that root; the Compilation Service image sets it to
+`/var/lib/apxm/capture` and declares that path as a volume, so the mount is
+writable while the layer beneath it is not and a `--read-only` container
+compiles with nothing mounted by its consumer. The port creates the root when it
+is absent, so a mount that arrives empty needs no operator step. An operator who
+would rather keep scratch in memory mounts a tmpfs on the same path
+(`--tmpfs /var/lib/apxm/capture`), which needs no image change. A root that
+cannot hold a directory is refused with `frontend_unavailable` naming the root
+and this flag, and readiness reports the root and its writability before the
+first request, so the mistake is visible at start.
 
 ### A host that is not Linux
 
@@ -114,9 +152,17 @@ there. The conformance for the boundary is Linux conformance and runs on Linux.
 * A capture may write exactly one directory. A frontend that ever needs a
   temporary file has one, named the way an interpreter looks for one, and it
   disappears with the capture.
-* The service image must run on a kernel with Landlock and seccomp. That is the
-  common case for a hosted deployment and the reason the flag exists for the
-  case it is not.
+* Both bridges create the threads they need. A submitted program still cannot
+  reach a new process by any route — `fork`, `vfork`, `posix_spawn`, `clone`
+  without `CLONE_THREAD`, `clone3` — because that refusal moved entirely into
+  the filter, where it was already stated and where it does not depend on the
+  user the service runs as.
+* The service image must run on a kernel with Landlock and seccomp, and must
+  carry a writable mount at the scratch root it declares. Both are operating
+  requirements of the image, and the image states both: the volume is declared
+  in the Dockerfile and readiness reports the boundary and the root at start.
+  That is the common case for a hosted deployment and the reason the flags exist
+  for the cases it is not.
 * Shipping this boundary changes the service binary, so it reaches a consumer
   only in the next cohort, with the release manifest and image labels re-cut
   from these bytes.
