@@ -29,8 +29,8 @@ use apxm_source_port::{
 };
 
 pub use apxm_source_port::{
-    CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE, ConfinementMode, ConfinementReadiness,
-    ConfinementStatus, capture_confinement_readiness,
+    CAPTURE_SCRATCH_DIR_VARIABLE, CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE,
+    ConfinementMode, ConfinementReadiness, ConfinementStatus, capture_confinement_readiness,
 };
 
 /// In-memory artifact store used to prove commit versus crash reconciliation.
