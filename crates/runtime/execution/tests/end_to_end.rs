@@ -2077,8 +2077,8 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
         "the refusal names the reason and the layer that gave it: {refused}"
     );
 
-    // One decision, one fact — for every capability the program invokes, not
-    // only the refused one.
+    // The refusal is terminal, so the driver records exactly its decision and
+    // never advances to the later capability.
     let decided = commit
         .facts()
         .into_iter()
@@ -2087,7 +2087,11 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
                 .then(|| fact.runtime().expect("runtime fact").clone())
         })
         .collect::<Vec<_>>();
-    assert_eq!(decided.len(), 2, "one decision per capability invocation");
+    assert_eq!(
+        decided.len(),
+        1,
+        "execution stops at the refused capability"
+    );
     let refused_fact = decided
         .iter()
         .find(|fact| fact.capability_ref.as_deref() == Some("cap.search"))

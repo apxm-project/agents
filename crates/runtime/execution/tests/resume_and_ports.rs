@@ -30,7 +30,9 @@ use apxm_kernel::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
-use apxm_program::runtime_evidence::{PermissionDecision, PermissionLayer, ResolvedPermission};
+use apxm_program::runtime_evidence::{
+    Fact, PermissionDecision, PermissionLayer, ResolvedPermission,
+};
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
@@ -146,6 +148,17 @@ impl ModelInferencePort for Model {
             },
             output: request.authored_request().clone(),
         }
+    }
+}
+
+struct TerminalFailureModel;
+impl ModelInferencePort for TerminalFailureModel {
+    fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+        AttemptDisposition::DeliveredTypedFailure(TypedError {
+            category: apxm_inference::ErrorCategory::Validation,
+            code: "provider_refused_request".into(),
+            message: "the provider refused the request".into(),
+        })
     }
 }
 
@@ -273,6 +286,13 @@ impl ExecutionCommitPort for Commit {
 }
 
 fn ports(commit: Arc<Commit>) -> ExecutionPorts {
+    ports_with_model(commit, Arc::new(Model))
+}
+
+fn ports_with_model(
+    commit: Arc<Commit>,
+    model: Arc<dyn ModelInferencePort + Send + Sync>,
+) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
         digest: digest('e'),
@@ -301,7 +321,7 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
             ),
             (
                 binding(PortSlot::ModelInference, "apxm.model-inference"),
-                PortImplementation::ModelInference(Arc::new(Model)),
+                PortImplementation::ModelInference(model),
             ),
             (
                 binding(PortSlot::Capability, "apxm.capability-invocation"),
@@ -410,6 +430,93 @@ async fn crash_before_atomic_commit_leaves_no_context_or_continuation_to_replay(
     assert_eq!(*commit.version.lock().unwrap(), 0);
     assert!(commit.continuation.lock().unwrap().is_none());
     assert!(commit.tuples.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn terminal_model_failure_stops_before_a_later_structural_park() {
+    let commit = Arc::new(Commit::default());
+    let outcome = execute_resumable(
+        &ports_with_model(commit.clone(), Arc::new(TerminalFailureModel)),
+        request("instance.model-failure"),
+        json!({"iteration": 1}),
+    )
+    .await
+    .expect("a typed model failure commits terminal evidence");
+
+    let RunOutcome::Completed(report) = outcome else {
+        panic!("a terminal model failure must not park a later continuation");
+    };
+    assert_eq!(
+        report.terminal_status,
+        apxm_execution::RunTerminalStatus::Failed
+    );
+    assert_eq!(report.node_outcomes.len(), 1);
+    assert!(matches!(
+        &report.node_outcomes[0],
+        NodeOutcome::Model {
+            outcome: apxm_inference::ModelOutcome::TypedFailure { error },
+            ..
+        } if error.code == "provider_refused_request"
+    ));
+    assert!(commit.continuation.lock().unwrap().is_none());
+    let tuples = commit.tuples.lock().unwrap();
+    assert_eq!(tuples.len(), 1);
+    assert!(
+        tuples[0]
+            .evidence
+            .iter()
+            .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::InvocationFailed))
+    );
+}
+
+#[tokio::test]
+async fn restart_rejects_a_continuation_that_already_contains_terminal_evidence() {
+    let commit = Arc::new(Commit::default());
+    execute_resumable(
+        &ports(commit.clone()),
+        request("instance.terminal-continuation"),
+        json!({"iteration": 1}),
+    )
+    .await
+    .expect("initial run parks");
+
+    let mut continuation: Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("committed continuation"),
+    )
+    .expect("typed continuation");
+    let terminal = continuation
+        .evidence_batch
+        .iter()
+        .find_map(|fact| fact.runtime().cloned())
+        .map(Fact::InvocationFailed)
+        .expect("continuation carries runtime evidence");
+    continuation.evidence_batch.push(terminal);
+    *commit.continuation.lock().unwrap() =
+        Some(serde_json::to_value(continuation).expect("serialized continuation"));
+
+    let error = wake_from_event_application(
+        &ports(commit.clone()),
+        &ProgramInstanceRef::new("instance.terminal-continuation"),
+        EventRef::new("evt-atomic").expect("event ref"),
+        EventApplicationResult::Fulfilled,
+        json!({"iteration": 2}),
+    )
+    .await
+    .expect_err("terminal evidence cannot be resumed after restart");
+
+    assert!(matches!(
+        error,
+        apxm_execution::ExecutionError::Continuation(
+            apxm_execution::ContinuationError::InvalidCommittedState { message }
+        ) if message.contains("terminal execution evidence")
+    ));
+    assert_eq!(*commit.version.lock().unwrap(), 1);
+    assert_eq!(commit.tuples.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

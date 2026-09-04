@@ -906,6 +906,18 @@ struct DriveState {
     terminal_region_occurrence_id: Option<String>,
 }
 
+fn facts_have_terminal_non_success(facts: &[Fact]) -> bool {
+    facts.iter().any(|fact| {
+        fact.is_kind(FactKind::InvocationFailed)
+            || fact.is_kind(FactKind::InvocationCancelled)
+            || fact.is_kind(FactKind::EffectOutcomeUnknown)
+            || matches!(
+                fact.runtime().and_then(|runtime| runtime.invocation_state),
+                Some(InvocationState::Failed | InvocationState::Cancelled)
+            )
+    })
+}
+
 impl DriveState {
     fn note_terminal_coordinates(&mut self, node_execution_id: Option<&str>) {
         let Some(node_execution_id) = node_execution_id else {
@@ -969,18 +981,11 @@ impl DriveState {
     }
 
     fn has_terminal_non_success(&self) -> bool {
-        self.batch.iter().any(|fact| {
-            fact.is_kind(FactKind::InvocationFailed)
-                || fact.is_kind(FactKind::InvocationCancelled)
-                || fact.is_kind(FactKind::EffectOutcomeUnknown)
-                || matches!(
-                    fact.runtime().and_then(|runtime| runtime.invocation_state),
-                    Some(InvocationState::Failed | InvocationState::Cancelled)
-                )
-        }) || self
-            .node_outcomes
-            .iter()
-            .any(|outcome| node_outcome_terminal_status(outcome).is_some())
+        facts_have_terminal_non_success(&self.batch)
+            || self
+                .node_outcomes
+                .iter()
+                .any(|outcome| node_outcome_terminal_status(outcome).is_some())
     }
 
     fn has_unknown_outcome(&self) -> bool {
@@ -1836,6 +1841,15 @@ async fn drive_from(
 
     let mut schedule_position = start_schedule_position;
     while schedule_position < schedule.len() {
+        // Every terminal effect outcome is an execution barrier. In
+        // particular, a typed model failure must not advance into a later
+        // host capability and park a continuation whose prior evidence is
+        // already terminal.
+        if state.has_terminal_non_success() {
+            state.fail_active_loops();
+            enforce_runtime_limits(&state, resource_ceilings)?;
+            return Ok(DriveEnd::RanToEnd(state));
+        }
         if ports.cancellation.is_cancelled() {
             if !state.has_terminal_non_success() {
                 state.observe(
@@ -4749,7 +4763,7 @@ async fn resume_from_continuation(
         hook_target_snapshots,
         native_usage,
         external_agent_evidence,
-        evidence_batch: _,
+        evidence_batch,
         event_sequence,
         program_invocation_ref,
         program_instance_ref: committed_program_instance_ref,
@@ -4774,6 +4788,17 @@ async fn resume_from_continuation(
             ContinuationError::InstanceScopeMismatch {
                 requested: program_instance_ref.clone(),
                 committed: committed_program_instance_ref,
+            },
+        ));
+    }
+
+    // A terminal invocation cannot also be a resumable invocation. Reject a
+    // legacy or corrupted continuation that carries terminal evidence instead
+    // of dropping that evidence and manufacturing a successful tail run.
+    if facts_have_terminal_non_success(&evidence_batch) {
+        return Err(ExecutionError::Continuation(
+            ContinuationError::InvalidCommittedState {
+                message: "committed continuation contains terminal execution evidence".into(),
             },
         ));
     }
