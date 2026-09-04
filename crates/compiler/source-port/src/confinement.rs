@@ -1035,7 +1035,10 @@ mod tests {
             PathBuf::from("/var/lib/apxm/capture")
         );
         assert_eq!(scratch_root_from(None), std::env::temp_dir());
-        assert_eq!(scratch_root_from(Some(OsStr::new(""))), std::env::temp_dir());
+        assert_eq!(
+            scratch_root_from(Some(OsStr::new(""))),
+            std::env::temp_dir()
+        );
     }
 
     /// A root that cannot hold a directory — the read-only container filesystem
@@ -1427,11 +1430,9 @@ mod tests {
             // the process and its libuv pool starts with the first asynchronous
             // call, and a boundary that admits neither admits no TypeScript
             // capture at all.
-            const NODE_USES_ITS_THREAD_POOL: &str =
-                "require('crypto').pbkdf2('a', 'b', 1, 8, 'sha256', \
+            const NODE_USES_ITS_THREAD_POOL: &str = "require('crypto').pbkdf2('a', 'b', 1, 8, 'sha256', \
                  (error) => process.stdout.write(error ? 'failed' : 'alive'))";
-            const PYTHON_USES_A_THREAD: &str =
-                "import threading\n\
+            const PYTHON_USES_A_THREAD: &str = "import threading\n\
                  worker = threading.Thread(target=lambda: None)\n\
                  worker.start()\n\
                  worker.join()\n\

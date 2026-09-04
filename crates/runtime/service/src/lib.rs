@@ -57,6 +57,7 @@ use apxm_runtime_protocol::{
     RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
     RuntimeExecutionAdmissionRequest, RuntimeFailureCode, RuntimeHandshake, RuntimeHandshakeV2,
     RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2,
+    capability_fulfillment_is_well_formed,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -108,7 +109,8 @@ pub struct RuntimeStatePolicy {
     pub instances: StateQuota,
     /// Root event reservations and owner claims.
     pub reservations: StateQuota,
-    /// Fulfilled event applications keyed by exact idempotency key.
+    /// Fulfilled event applications and host Capability settlement replay
+    /// records.
     pub applications: StateQuota,
     /// Cancellation markers needed by an invocation while it is settling.
     pub cancellations: StateQuota,
@@ -146,6 +148,8 @@ pub struct RuntimeService {
     instance_bytes: u64,
     applications: BTreeMap<String, ApplicationState>,
     application_bytes: u64,
+    host_capability_settlements: BTreeMap<String, HostCapabilitySettlementState>,
+    host_capability_settlement_bytes: u64,
     reservations: BTreeMap<(String, u64), ReservationState>,
     reservation_bytes: u64,
     next_generation: u64,
@@ -354,6 +358,8 @@ impl RuntimeService {
             instance_bytes: 0,
             applications: BTreeMap::new(),
             application_bytes: 0,
+            host_capability_settlements: BTreeMap::new(),
+            host_capability_settlement_bytes: 0,
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
             next_generation: 0,
@@ -870,6 +876,13 @@ struct ApplicationState {
     state_entry: StateEntry,
 }
 
+struct HostCapabilitySettlementState {
+    program_instance_id: String,
+    owner_claim: RuntimeOwnerClaim,
+    settlement: HostCapabilitySettlement,
+    state_entry: StateEntry,
+}
+
 const RUNTIME_METADATA_SCHEMA: &str = "apxm.runtime-service.metadata.v1";
 
 /// Durable service-owned metadata. The commit-local adapter stores this as
@@ -884,6 +897,8 @@ struct DurableRuntimeMetadata {
     instances: BTreeMap<String, DurableInstanceState>,
     reservations: Vec<DurableReservationState>,
     applications: BTreeMap<String, DurableApplicationState>,
+    #[serde(default)]
+    host_capability_settlements: BTreeMap<String, DurableHostCapabilitySettlementState>,
     cancelled: BTreeSet<String>,
     next_generation: u64,
 }
@@ -946,6 +961,15 @@ struct DurableApplicationState {
     event_ref: CanonicalEventRef,
     occurrence_id: String,
     payload: Value,
+    state_entry: DurableStateEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableHostCapabilitySettlementState {
+    program_instance_id: String,
+    owner_claim: RuntimeOwnerClaim,
+    settlement: HostCapabilitySettlement,
     state_entry: DurableStateEntry,
 }
 
@@ -1108,6 +1132,21 @@ impl RuntimeService {
                             occurrence_id: application.occurrence_id.clone(),
                             payload: application.payload.clone(),
                             state_entry: Self::durable_entry(application.state_entry),
+                        },
+                    )
+                })
+                .collect(),
+            host_capability_settlements: self
+                .host_capability_settlements
+                .iter()
+                .map(|(capability_request_id, state)| {
+                    (
+                        capability_request_id.clone(),
+                        DurableHostCapabilitySettlementState {
+                            program_instance_id: state.program_instance_id.clone(),
+                            owner_claim: state.owner_claim.clone(),
+                            settlement: state.settlement.clone(),
+                            state_entry: Self::durable_entry(state.state_entry),
                         },
                     )
                 })
@@ -1355,6 +1394,42 @@ impl RuntimeService {
                 return Err("runtime metadata contains a duplicate event application".to_owned());
             }
         }
+        let mut host_capability_settlements = BTreeMap::new();
+        let mut host_capability_settlement_bytes = 0_u64;
+        for (capability_request_id, durable) in metadata.host_capability_settlements {
+            if capability_request_id != durable.settlement.capability_request_id
+                || !durable.settlement.is_well_formed()
+                || durable.owner_claim.validate().is_err()
+                || durable.program_instance_id.trim().is_empty()
+                || instances
+                    .get(&durable.program_instance_id)
+                    .is_some_and(|instance| instance.owner_claim != durable.owner_claim)
+            {
+                return Err(
+                    "runtime metadata contains an invalid host capability settlement".to_owned(),
+                );
+            }
+            let state_entry =
+                Self::restore_entry(durable.state_entry, self.state_policy.applications.ttl);
+            host_capability_settlement_bytes =
+                host_capability_settlement_bytes.saturating_add(state_entry.bytes);
+            if host_capability_settlements
+                .insert(
+                    capability_request_id,
+                    HostCapabilitySettlementState {
+                        program_instance_id: durable.program_instance_id,
+                        owner_claim: durable.owner_claim,
+                        settlement: durable.settlement,
+                        state_entry,
+                    },
+                )
+                .is_some()
+            {
+                return Err(
+                    "runtime metadata contains a duplicate host capability settlement".to_owned(),
+                );
+            }
+        }
         let cancellation_bytes = metadata
             .cancelled
             .iter()
@@ -1373,8 +1448,13 @@ impl RuntimeService {
             || instance_bytes > self.state_policy.instances.max_bytes
             || reservations.len() > self.state_policy.reservations.max_entries
             || reservation_bytes > self.state_policy.reservations.max_bytes
-            || applications.len() > self.state_policy.applications.max_entries
-            || application_bytes > self.state_policy.applications.max_bytes
+            || applications
+                .len()
+                .checked_add(host_capability_settlements.len())
+                .is_none_or(|entries| entries > self.state_policy.applications.max_entries)
+            || application_bytes
+                .checked_add(host_capability_settlement_bytes)
+                .is_none_or(|bytes| bytes > self.state_policy.applications.max_bytes)
             || metadata.cancelled.len() > self.state_policy.cancellations.max_entries
             || cancellation_bytes > self.state_policy.cancellations.max_bytes
         {
@@ -1409,6 +1489,8 @@ impl RuntimeService {
         self.reservation_bytes = reservation_bytes;
         self.applications = applications;
         self.application_bytes = application_bytes;
+        self.host_capability_settlements = host_capability_settlements;
+        self.host_capability_settlement_bytes = host_capability_settlement_bytes;
         self.cancelled = metadata
             .cancelled
             .into_iter()
@@ -1449,8 +1531,19 @@ impl RuntimeService {
         u64::try_from(total).ok()
     }
 
+    fn host_capability_settlement_size(
+        program_instance_id: &str,
+        owner_claim: &RuntimeOwnerClaim,
+        settlement: &HostCapabilitySettlement,
+    ) -> Option<u64> {
+        serde_json::to_vec(&(program_instance_id, owner_claim, settlement))
+            .ok()
+            .and_then(|bytes| u64::try_from(bytes.len()).ok())
+    }
+
     /// Remove only entries whose typed TTL has elapsed. No live owner claim,
-    /// invocation idempotency record, or event application is evicted.
+    /// invocation idempotency record, event application, or settlement is
+    /// evicted.
     pub fn cleanup_expired(&mut self) {
         let now = Self::now();
 
@@ -1555,6 +1648,23 @@ impl RuntimeService {
         self.application_bytes = self
             .application_bytes
             .saturating_sub(expired_application_bytes);
+
+        let live_instances = self.instances.keys().cloned().collect::<BTreeSet<_>>();
+        let mut expired_settlement_bytes = 0_u64;
+        self.host_capability_settlements.retain(|_, settlement| {
+            if settlement.state_entry.expired(now)
+                && !live_instances.contains(&settlement.program_instance_id)
+            {
+                expired_settlement_bytes =
+                    expired_settlement_bytes.saturating_add(settlement.state_entry.bytes);
+                false
+            } else {
+                true
+            }
+        });
+        self.host_capability_settlement_bytes = self
+            .host_capability_settlement_bytes
+            .saturating_sub(expired_settlement_bytes);
 
         self.cancelled.retain(|_, entry| {
             if entry.expired(now) {
@@ -1958,29 +2068,49 @@ impl RuntimeService {
                 output,
                 receipt_ref,
                 message,
-            } => Ok(self.settle_host_capability(
-                request_id,
-                owner_claim,
-                capability_request_id,
-                outcome,
-                output,
-                receipt_ref,
-                message,
-            )),
+            } => {
+                if !capability_fulfillment_is_well_formed(
+                    &capability_request_id,
+                    outcome,
+                    output.as_deref(),
+                ) {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_request".to_owned(),
+                    });
+                }
+                Ok(self.settle_host_capability(
+                    request_id,
+                    owner_claim,
+                    capability_request_id,
+                    outcome,
+                    output,
+                    receipt_ref,
+                    message,
+                ))
+            }
             RuntimeRequest::CapabilityCancel {
                 request_id,
                 owner_claim,
                 capability_request_id,
                 message,
-            } => Ok(self.settle_host_capability(
-                request_id,
-                owner_claim,
-                capability_request_id,
-                HostCapabilityOutcomeKind::Cancelled,
-                None,
-                None,
-                message,
-            )),
+            } => {
+                if !is_host_capability_request_id(&capability_request_id) {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_request".to_owned(),
+                    });
+                }
+                Ok(self.settle_host_capability(
+                    request_id,
+                    owner_claim,
+                    capability_request_id,
+                    HostCapabilityOutcomeKind::Cancelled,
+                    None,
+                    None,
+                    message,
+                ))
+            }
             RuntimeRequest::ProgramInvocationCancel {
                 request_id,
                 owner_claim,
@@ -2679,8 +2809,11 @@ impl RuntimeService {
             .ok_or(ProtocolError::ForbiddenEventMethod)?;
         if !Self::quota_available(
             self.state_policy.applications,
-            self.applications.len(),
-            self.application_bytes,
+            self.applications
+                .len()
+                .saturating_add(self.host_capability_settlements.len()),
+            self.application_bytes
+                .saturating_add(self.host_capability_settlement_bytes),
             application_bytes,
         ) {
             return Ok(RuntimeResult::EventApplied {
@@ -2741,10 +2874,9 @@ impl RuntimeService {
 
     /// Settle one outstanding host-fulfilled Capability request.
     ///
-    /// There is no request registry to consult: the park itself is the record.
-    /// A parked continuation whose event identity is this request id *is* the
-    /// outstanding request, so a settlement cannot name a request that never
-    /// existed, and a restart loses nothing it would have had to remember.
+    /// The settlement is durably recorded before the continuation resumes.
+    /// That closes both crash windows: a retry can resume a still-parked node,
+    /// or return the same terminal result after the node already advanced.
     #[allow(clippy::too_many_arguments)]
     fn settle_host_capability(
         &mut self,
@@ -2762,25 +2894,50 @@ impl RuntimeService {
                 code: "invalid_owner_claim".to_owned(),
             };
         }
-        if !is_host_capability_request_id(&capability_request_id) {
-            return RuntimeResult::Failed {
-                request_id,
-                code: "unknown_capability_request".to_owned(),
-            };
-        }
-        // `cancelled` is APXM's own record of a withdrawn request. A host that
-        // wants to withdraw one says so with `capability_cancel`, which is the
-        // only caller that reaches this with that outcome.
-        if outcome == HostCapabilityOutcomeKind::Ok && output.is_none() {
-            return RuntimeResult::Failed {
-                request_id,
-                code: "invalid_request".to_owned(),
-            };
-        }
-        if outcome != HostCapabilityOutcomeKind::Ok && output.is_some() {
+        let settlement = HostCapabilitySettlement::new(
+            capability_request_id.clone(),
+            outcome,
+            output,
+            receipt_ref,
+            message,
+        );
+        if !settlement.is_well_formed() {
             return RuntimeResult::Failed {
                 request_id,
                 code: "invalid_request".to_owned(),
+            };
+        }
+        if let Some(prior) = self.host_capability_settlements.get(&capability_request_id) {
+            if prior.owner_claim != owner_claim {
+                return RuntimeResult::Failed {
+                    request_id,
+                    code: "owner_mismatch".to_owned(),
+                };
+            }
+            if prior.settlement != settlement {
+                return RuntimeResult::Failed {
+                    request_id,
+                    code: "invalid_request".to_owned(),
+                };
+            }
+            let program_instance_id = prior.program_instance_id.clone();
+            let prior_settlement = prior.settlement.clone();
+            if let Some(parked_instance_id) =
+                self.parked_host_capability_instance(&capability_request_id)
+                && (parked_instance_id != program_instance_id
+                    || self
+                        .resume_host_capability_settlement(&prior_settlement)
+                        .is_err())
+            {
+                return RuntimeResult::Failed {
+                    request_id,
+                    code: "capability_settlement_failed".to_owned(),
+                };
+            }
+            return RuntimeResult::CapabilitySettled {
+                request_id,
+                capability_request_id,
+                outcome,
             };
         }
         let Some(instance_id) = self.parked_host_capability_instance(&capability_request_id) else {
@@ -2801,30 +2958,75 @@ impl RuntimeService {
                 code: "owner_mismatch".to_owned(),
             };
         }
-        let settlement = HostCapabilitySettlement::new(
-            capability_request_id.clone(),
-            outcome,
-            output,
-            receipt_ref,
-            message,
-        );
-        let Ok(payload) = serde_json::to_string(&settlement) else {
+        let Some(settlement_bytes) =
+            Self::host_capability_settlement_size(&instance_id, &owner_claim, &settlement)
+        else {
             return RuntimeResult::Failed {
                 request_id,
                 code: "internal_error".to_owned(),
             };
         };
-        match self.resume_fulfilled_event(&capability_request_id, Value::String(payload)) {
-            Ok(()) => RuntimeResult::CapabilitySettled {
+        if !Self::quota_available(
+            self.state_policy.applications,
+            self.applications
+                .len()
+                .saturating_add(self.host_capability_settlements.len()),
+            self.application_bytes
+                .saturating_add(self.host_capability_settlement_bytes),
+            settlement_bytes,
+        ) {
+            return RuntimeResult::Failed {
                 request_id,
-                capability_request_id,
-                outcome,
+                code: Self::quota_code("capability_settlement"),
+            };
+        }
+        let mut state_entry = Self::entry(settlement_bytes, self.state_policy.applications.ttl);
+        if state_entry.expires_at < instance.state_entry.expires_at {
+            state_entry.expires_at = instance.state_entry.expires_at;
+        }
+        self.host_capability_settlements.insert(
+            capability_request_id.clone(),
+            HostCapabilitySettlementState {
+                program_instance_id: instance_id,
+                owner_claim,
+                settlement: settlement.clone(),
+                state_entry,
             },
-            Err(_) => RuntimeResult::Failed {
+        );
+        self.host_capability_settlement_bytes = self
+            .host_capability_settlement_bytes
+            .saturating_add(settlement_bytes);
+        if self.persist_runtime_state().is_err() {
+            self.host_capability_settlements
+                .remove(&capability_request_id);
+            self.host_capability_settlement_bytes = self
+                .host_capability_settlement_bytes
+                .saturating_sub(settlement_bytes);
+            return RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            };
+        }
+        if self.resume_host_capability_settlement(&settlement).is_err() {
+            return RuntimeResult::Failed {
                 request_id,
                 code: "capability_settlement_failed".to_owned(),
-            },
+            };
         }
+        RuntimeResult::CapabilitySettled {
+            request_id,
+            capability_request_id,
+            outcome,
+        }
+    }
+
+    fn resume_host_capability_settlement(
+        &mut self,
+        settlement: &HostCapabilitySettlement,
+    ) -> Result<(), String> {
+        let payload = serde_json::to_string(settlement)
+            .map_err(|error| format!("host capability settlement encode failed: {error}"))?;
+        self.resume_fulfilled_event(&settlement.capability_request_id, Value::String(payload))
     }
 
     /// The instance whose parked continuation is waiting on this request.
@@ -2864,21 +3066,19 @@ impl RuntimeService {
                 let continuation: Continuation = serde_json::from_value(committed.payload).ok()?;
                 let event_ref = continuation.event_ref?;
                 is_host_capability_request_id(event_ref.as_str())
-                    .then(|| event_ref.as_str().to_owned())
+                    .then(|| (event_ref.as_str().to_owned(), instance.owner_claim.clone()))
             })
             .collect::<Vec<_>>();
-        for capability_request_id in outstanding {
-            let settlement = HostCapabilitySettlement::new(
-                capability_request_id.clone(),
+        for (capability_request_id, owner_claim) in outstanding {
+            let _ = self.settle_host_capability(
+                "invocation.cancel.host-capability".to_owned(),
+                owner_claim,
+                capability_request_id,
                 HostCapabilityOutcomeKind::Cancelled,
                 None,
                 None,
                 Some("the Program Invocation was cancelled".to_owned()),
             );
-            let Ok(payload) = serde_json::to_string(&settlement) else {
-                continue;
-            };
-            let _ = self.resume_fulfilled_event(&capability_request_id, Value::String(payload));
         }
     }
 
