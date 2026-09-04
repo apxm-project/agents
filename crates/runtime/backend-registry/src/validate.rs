@@ -463,6 +463,7 @@ mod tests {
             endpoint: Some("env:APXM_TEST_ANTHROPIC_BASE_URL".to_string()),
             api_key: Some("env:APXM_TEST_ANTHROPIC_API_KEY".to_string()),
             headers: HashMap::new(),
+            options: HashMap::new(),
             models: vec![ModelConfig {
                 id: "claude-sonnet-4-6".to_string(),
                 context_window: 0,

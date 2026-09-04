@@ -539,3 +539,24 @@ struct OllamaTags {
 struct OllamaModel {
     name: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn textual_integer_options_become_native_ollama_values() {
+        let backend = OllamaBackend::new(
+            "",
+            Some(json!({
+                MODEL: "fixture-model",
+                BASE_URL: "http://ollama:11434",
+                "num_ctx": "2048"
+            })),
+        )
+        .await
+        .expect("Ollama backend configuration");
+
+        assert_eq!(backend.ollama_options["num_ctx"], json!(2048));
+    }
+}

@@ -66,6 +66,12 @@ pub struct BackendConfig {
     /// Custom HTTP headers.
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// Provider-specific adapter options.
+    ///
+    /// Values stay textual in the roster and are converted to provider-native
+    /// scalar types by the selected adapter.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub options: HashMap<String, String>,
     /// Models hosted on this backend.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelConfig>,

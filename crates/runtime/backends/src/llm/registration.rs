@@ -185,7 +185,7 @@ impl BackendRegistration {
             default_model: Some(default_model),
             models,
             endpoint,
-            options: HashMap::new(),
+            options: backend.options.clone(),
             extra_headers,
             auto_tool_choice: backend.auto_tool_choice,
             supports_structured_outputs: backend.supports_structured_outputs,
@@ -411,6 +411,7 @@ mod tests {
             endpoint: Some("https://api.openai.com/v1".to_string()),
             api_key: api_key.map(str::to_string),
             headers: extra_headers,
+            options: HashMap::new(),
             models: vec![crate::llm::ModelConfig {
                 id: "fixture-model".to_string(),
                 context_window: 0,
@@ -546,5 +547,23 @@ mod tests {
         assert_eq!(model[config_keys::USES_REASONING_TOKEN_FIELDS], true);
         assert_eq!(model[config_keys::SUPPORTS_CUSTOM_TEMPERATURE], false);
         assert_eq!(model[config_keys::SUPPORTS_STRUCTURED_OUTPUTS], true);
+    }
+
+    #[test]
+    fn backend_registration_forwards_provider_options() {
+        let mut configured_backend = backend(None, HashMap::new());
+        configured_backend.backend_type = BackendType::Local;
+        configured_backend.protocol = ProviderProtocol::Ollama;
+        configured_backend
+            .options
+            .insert("num_ctx".to_owned(), "2048".to_owned());
+
+        let registration = BackendRegistration::from_backend_config(&configured_backend)
+            .expect("registered backend config");
+        let config = registration
+            .backend_config_json()
+            .expect("adapter configuration");
+
+        assert_eq!(config["num_ctx"], "2048");
     }
 }

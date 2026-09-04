@@ -367,6 +367,7 @@ mod tests {
             endpoint: Some("https://api.openai.com/v1".to_string()),
             api_key: api_key.map(str::to_string),
             headers,
+            options: HashMap::new(),
             models: vec![ModelConfig {
                 id: "fixture-model".to_string(),
                 context_window: 0,
@@ -419,6 +420,42 @@ mod tests {
         headers.insert("X-Trace".to_string(), "trace-id".to_string());
         let backend = backend_with_secret_fields(Some("env:OPENAI_API_KEY"), headers);
         validate_backend_references(&backend).unwrap();
+    }
+
+    #[test]
+    fn reads_provider_options_from_the_backend_roster() {
+        let directory = tempfile::tempdir().expect("backend home");
+        let config_path = directory.path().join(CONFIG_FILENAME);
+        fs::write(
+            &config_path,
+            r#"
+[[backends]]
+name = "ollama"
+type = "local"
+protocol = "ollama"
+endpoint = "http://ollama:11434"
+options = { num_ctx = "2048" }
+
+[[backends.models]]
+id = "fixture-model"
+"#,
+        )
+        .expect("backend roster");
+        fs::set_permissions(&config_path, fs::Permissions::from_mode(FILE_PERMISSIONS))
+            .expect("private roster permissions");
+        let store = BackendStore {
+            config_path,
+            dir: directory.path().to_path_buf(),
+        };
+
+        let backend = store
+            .get("ollama")
+            .expect("read backend roster")
+            .expect("Ollama backend");
+        assert_eq!(
+            backend.options.get("num_ctx").map(String::as_str),
+            Some("2048")
+        );
     }
 
     #[test]
