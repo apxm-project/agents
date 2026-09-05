@@ -30,6 +30,7 @@ pub const MAX_FRAMES_PER_CONNECTION: usize = 256;
 /// Maximum concurrently active local Unix connections, including streams.
 pub const MAX_ACTIVE_UNIX_CONNECTIONS: usize = 64;
 const INVOCATION_WORKERS: usize = 4;
+const RECOVERY_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SOCKET_MODE: u32 = 0o600;
 
 struct UnixConnectionPermit(Arc<AtomicUsize>);
@@ -141,25 +142,12 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
     let endpoint = UnixEndpoint::new(path)?;
     let listener = bind_secure_unix(&endpoint.path)?;
     let shared = Arc::new(Mutex::new(service));
+    shared
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?
+        .reconcile_recovery_state()?;
     let dispatcher = InvocationDispatcher::new(shared.clone());
-    let recovered = shared
-        .lock()
-        .map_err(|_| "runtime service lock poisoned")?
-        .recover_invocations()?;
-    for prepared in recovered {
-        let gate = StartGate::new();
-        gate.release();
-        dispatcher.enqueue(InvocationWork::Start(Box::new(prepared)), gate)?;
-    }
-    let recovered_resumes = shared
-        .lock()
-        .map_err(|_| "runtime service lock poisoned")?
-        .recover_host_capability_resumes()?;
-    for prepared in recovered_resumes {
-        let gate = StartGate::new();
-        gate.release();
-        dispatcher.enqueue(InvocationWork::Resume(Box::new(prepared)), gate)?;
-    }
+    dispatcher.recover_available()?;
     let active_connections = Arc::new(AtomicUsize::new(0));
     for incoming in listener.incoming() {
         let stream = incoming.map_err(|error| error.to_string())?;
@@ -188,11 +176,21 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
 struct InvocationDispatcher {
     service: Arc<Mutex<RuntimeService>>,
     sender: SyncSender<QueuedInvocation>,
+    recovery_preference: Arc<Mutex<bool>>,
 }
 
 struct QueuedInvocation {
     work: InvocationWork,
     gate: StartGate,
+}
+
+impl QueuedInvocation {
+    fn invocation_id(&self) -> String {
+        match &self.work {
+            InvocationWork::Start(prepared) => prepared.invocation_id.clone(),
+            InvocationWork::Resume(prepared) => prepared.invocation_id.clone(),
+        }
+    }
 }
 
 enum InvocationWork {
@@ -229,76 +227,155 @@ impl StartGate {
     }
 }
 
+fn claim_recovery_work(
+    service: &Arc<Mutex<RuntimeService>>,
+    recovery_preference: &Arc<Mutex<bool>>,
+) -> Result<Option<QueuedInvocation>, String> {
+    let mut prefer_resume = recovery_preference
+        .lock()
+        .map_err(|_| "runtime recovery preference lock poisoned")?;
+    let mut guard = service
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?;
+    let work = if *prefer_resume {
+        match guard.claim_next_host_capability_resume()? {
+            Some(resume) => Some(InvocationWork::Resume(Box::new(resume))),
+            None => guard
+                .claim_next_pending_invocation()?
+                .map(|start| InvocationWork::Start(Box::new(start))),
+        }
+    } else {
+        match guard.claim_next_pending_invocation()? {
+            Some(start) => Some(InvocationWork::Start(Box::new(start))),
+            None => guard
+                .claim_next_host_capability_resume()?
+                .map(|resume| InvocationWork::Resume(Box::new(resume))),
+        }
+    };
+    let Some(work) = work else {
+        return Ok(None);
+    };
+    *prefer_resume = matches!(work, InvocationWork::Start(_));
+    let gate = StartGate::new();
+    gate.release();
+    Ok(Some(QueuedInvocation { work, gate }))
+}
+
+fn execute_invocation_work(service: &Arc<Mutex<RuntimeService>>, queued: QueuedInvocation) {
+    queued.gate.wait();
+    match queued.work {
+        InvocationWork::Start(prepared) => {
+            let begin = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned".to_owned())
+                .and_then(|mut guard| guard.begin_invocation(&prepared.invocation_id));
+            if !matches!(begin, Ok(true)) {
+                if let Ok(mut guard) = service.lock() {
+                    guard.release_invocation_claim(&prepared.invocation_id);
+                }
+                return;
+            }
+            let execution =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepared.execute()))
+                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
+            if let Ok(mut guard) = service.lock() {
+                guard.finish_invocation(&prepared, execution);
+            }
+        }
+        InvocationWork::Resume(prepared) => {
+            let begin = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned".to_owned())
+                .and_then(|mut guard| guard.begin_host_capability_resume(&prepared));
+            if !matches!(begin, Ok(true)) {
+                if let Ok(mut guard) = service.lock() {
+                    guard.release_invocation_claim(&prepared.invocation_id);
+                }
+                return;
+            }
+            let execution =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepared.execute()))
+                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
+            if let Ok(mut guard) = service.lock() {
+                guard.finish_host_capability_resume(&prepared, execution);
+            }
+        }
+    }
+}
+
 impl InvocationDispatcher {
     fn new(service: Arc<Mutex<RuntimeService>>) -> Self {
         let (sender, receiver) = sync_channel::<QueuedInvocation>(MAX_ACTIVE_INVOCATIONS);
         let receiver = Arc::new(Mutex::new(receiver));
+        let recovery_preference = Arc::new(Mutex::new(false));
         for worker in 0..INVOCATION_WORKERS {
             let receiver = receiver.clone();
             let service = service.clone();
+            let recovery_preference = recovery_preference.clone();
             std::thread::Builder::new()
                 .name(format!("apxm-invocation-{worker}"))
                 .spawn(move || {
                     loop {
-                        let queued = {
-                            let guard = receiver.lock().expect("invocation queue lock");
-                            match guard.recv() {
-                                Ok(queued) => queued,
-                                Err(_) => return,
+                        let queued = loop {
+                            let received = receiver
+                                .lock()
+                                .expect("invocation queue lock")
+                                .recv_timeout(RECOVERY_POLL_INTERVAL);
+                            match received {
+                                Ok(queued) => break queued,
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                    if let Ok(Some(recovered)) =
+                                        claim_recovery_work(&service, &recovery_preference)
+                                    {
+                                        break recovered;
+                                    }
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                    match claim_recovery_work(&service, &recovery_preference) {
+                                        Ok(Some(recovered)) => break recovered,
+                                        Ok(None) | Err(_) => return,
+                                    }
+                                }
                             }
                         };
-                        queued.gate.wait();
-                        match queued.work {
-                            InvocationWork::Start(prepared) => {
-                                let begin = service
-                                    .lock()
-                                    .map_err(|_| "runtime service lock poisoned".to_owned())
-                                    .and_then(|mut guard| {
-                                        guard.begin_invocation(&prepared.invocation_id)
-                                    });
-                                if !matches!(begin, Ok(true)) {
-                                    if let Ok(mut guard) = service.lock() {
-                                        guard.release_invocation_claim(&prepared.invocation_id);
-                                    }
-                                    continue;
-                                }
-                                let execution =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        prepared.execute()
-                                    }))
-                                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
-                                if let Ok(mut guard) = service.lock() {
-                                    guard.finish_invocation(&prepared, execution);
-                                }
-                            }
-                            InvocationWork::Resume(prepared) => {
-                                let begin = service
-                                    .lock()
-                                    .map_err(|_| "runtime service lock poisoned".to_owned())
-                                    .and_then(|mut guard| {
-                                        guard.begin_host_capability_resume(&prepared)
-                                    });
-                                if !matches!(begin, Ok(true)) {
-                                    if let Ok(mut guard) = service.lock() {
-                                        guard.release_invocation_claim(&prepared.invocation_id);
-                                    }
-                                    continue;
-                                }
-                                let execution =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        prepared.execute()
-                                    }))
-                                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
-                                if let Ok(mut guard) = service.lock() {
-                                    guard.finish_host_capability_resume(&prepared, execution);
-                                }
-                            }
-                        }
+                        execute_invocation_work(&service, queued);
                     }
                 })
                 .expect("bounded invocation worker starts");
         }
-        Self { service, sender }
+        Self {
+            service,
+            sender,
+            recovery_preference,
+        }
+    }
+
+    fn recover_available(&self) -> Result<(), String> {
+        for _ in 0..MAX_ACTIVE_INVOCATIONS {
+            let Some(queued) = claim_recovery_work(&self.service, &self.recovery_preference)?
+            else {
+                break;
+            };
+            let invocation_id = queued.invocation_id();
+            match self.sender.try_send(queued) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    self.service
+                        .lock()
+                        .map_err(|_| "runtime service lock poisoned")?
+                        .release_invocation_claim(&invocation_id);
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    self.service
+                        .lock()
+                        .map_err(|_| "runtime service lock poisoned")?
+                        .release_invocation_claim(&invocation_id);
+                    return Err("invocation_workers_unavailable".to_owned());
+                }
+            }
+        }
+        Ok(())
     }
 
     fn schedule(&self, invocation_id: &str) -> Result<Option<StartGate>, String> {
@@ -316,11 +393,17 @@ impl InvocationDispatcher {
     }
 
     fn schedule_resume(&self, capability_request_id: &str) -> Result<Option<StartGate>, String> {
-        let prepared = self
+        let prepared = match self
             .service
             .lock()
             .map_err(|_| "runtime service lock poisoned")?
-            .claim_host_capability_resume(capability_request_id)?;
+            .claim_host_capability_resume(capability_request_id)
+        {
+            Err(error) if error == "invocation_capacity_exhausted" => {
+                return Ok(None);
+            }
+            other => other?,
+        };
         let Some(prepared) = prepared else {
             return Ok(None);
         };
@@ -988,6 +1071,121 @@ mod tests {
             .expect("fixture artifact JSON")
     }
 
+    fn create_bound_instance(
+        service: &mut RuntimeService,
+        artifact: &[u8],
+        label: &str,
+    ) -> (String, apxm_runtime_protocol::RuntimeOwnerClaim) {
+        let digest = service
+            .try_admit_artifact(artifact.to_vec())
+            .expect("artifact admission");
+        let created = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: format!("{label}.create"),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("instance creation");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("instance creation failed: {created:?}");
+        };
+        service
+            .bind_admission(
+                &program_instance_id,
+                crate::materials_for_artifact(
+                    artifact,
+                    format!("{program_instance_id}:admission"),
+                    b"{}".to_vec(),
+                    b"{}".to_vec(),
+                ),
+            )
+            .expect("invocation admission");
+        (program_instance_id, owner_claim)
+    }
+
+    fn park_and_settle_host_capability(
+        service: &mut RuntimeService,
+        artifact: &[u8],
+        label: &str,
+    ) -> String {
+        let (program_instance_id, owner_claim) = create_bound_instance(service, artifact, label);
+        let started = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: format!("{label}.start"),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: serde_json::Value::Null,
+                },
+            )
+            .expect("host invocation start");
+        assert!(matches!(
+            started,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
+        let continuation = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(program_instance_id))
+            .expect("host continuation");
+        let continuation: Continuation =
+            serde_json::from_value(continuation.payload).expect("host continuation JSON");
+        let capability_request_id = continuation
+            .event_ref
+            .expect("host request")
+            .as_str()
+            .to_owned();
+        let settled = service.settle_host_capability(
+            format!("{label}.fulfill"),
+            owner_claim,
+            capability_request_id.clone(),
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"matches\":1}".to_owned()),
+            Some(format!("receipt.{label}")),
+            None,
+            false,
+        );
+        assert!(matches!(settled, RuntimeResult::CapabilitySettled { .. }));
+        capability_request_id
+    }
+
+    fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + timeout;
+        while !predicate() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "condition was not reached before the test deadline"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn rehydrate_in_memory(service: RuntimeService) -> RuntimeService {
+        let backend = match &service.execution_backend {
+            crate::RuntimeExecutionBackend::Memory(commit) => {
+                crate::RuntimeExecutionBackend::Memory(commit.clone())
+            }
+            _ => panic!("test service must use the durable in-memory commit adapter"),
+        };
+        let mut reopened = RuntimeService::in_memory();
+        reopened.execution_backend = backend;
+        reopened
+            .rehydrate_runtime_state()
+            .expect("rehydrate durable runtime state");
+        reopened
+    }
+
     #[test]
     fn jsonl_round_trips() {
         let frame = StdioFrame {
@@ -1040,6 +1238,151 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("disconnect must not strand accepted work");
         worker.join().expect("worker joins");
+    }
+
+    #[test]
+    fn recovery_drains_more_host_resumes_than_process_capacity() {
+        let artifact = host_capability_artifact_bytes();
+        let execution_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let mut service = RuntimeService::in_memory();
+        for index in 0..=MAX_ACTIVE_INVOCATIONS {
+            park_and_settle_host_capability(
+                &mut service,
+                &artifact,
+                &format!("capacity.resume.{index}"),
+            );
+        }
+
+        let mut reopened = rehydrate_in_memory(service);
+        reopened.resume_test_gate = Some(execution_gate.clone());
+        reopened
+            .reconcile_recovery_state()
+            .expect("reconcile durable recovery markers");
+        let shared = Arc::new(Mutex::new(reopened));
+        let dispatcher = InvocationDispatcher::new(shared.clone());
+        dispatcher
+            .recover_available()
+            .expect("bounded startup recovery remains available");
+
+        wait_until(Duration::from_secs(2), || {
+            shared
+                .lock()
+                .expect("runtime service")
+                .active_cancellations
+                .len()
+                == MAX_ACTIVE_INVOCATIONS
+        });
+        {
+            let mut service = shared.lock().expect("runtime service");
+            let unclaimed = service
+                .host_capability_settlements
+                .values()
+                .filter(|state| !state.resume_started)
+                .filter(|state| {
+                    service
+                        .instances
+                        .get(&state.program_instance_id)
+                        .and_then(|instance| instance.invocation.as_ref())
+                        .is_some_and(|invocation| {
+                            !service
+                                .active_cancellations
+                                .contains_key(&invocation.program_invocation_id)
+                        })
+                })
+                .count();
+            assert_eq!(unclaimed, 1, "overflow remains durably pending");
+            let claimed = service
+                .host_capability_settlements
+                .iter()
+                .filter_map(|(capability_request_id, state)| {
+                    service
+                        .instances
+                        .get(&state.program_instance_id)
+                        .and_then(|instance| instance.invocation.as_ref())
+                        .filter(|invocation| {
+                            service
+                                .active_cancellations
+                                .contains_key(&invocation.program_invocation_id)
+                        })
+                        .map(|_| capability_request_id.clone())
+                })
+                .collect::<Vec<_>>();
+            for capability_request_id in claimed {
+                service
+                    .host_capability_settlements
+                    .get_mut(&capability_request_id)
+                    .expect("claimed settlement")
+                    .resume_started = true;
+            }
+        }
+
+        {
+            let (released, signal) = execution_gate.as_ref();
+            *released.lock().expect("execution gate") = true;
+            signal.notify_all();
+        }
+        wait_until(Duration::from_secs(5), || {
+            let service = shared.lock().expect("runtime service");
+            service.active_cancellations.is_empty()
+                && service
+                    .host_capability_settlements
+                    .values()
+                    .all(|state| state.resume_started)
+        });
+    }
+
+    #[test]
+    fn recovery_fairly_claims_host_resume_among_pending_starts() {
+        let artifact = host_capability_artifact_bytes();
+        let start_artifact = fixture_artifact_bytes();
+        let execution_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let mut service = RuntimeService::in_memory();
+        let capability_request_id =
+            park_and_settle_host_capability(&mut service, &artifact, "mixed.resume");
+        for index in 0..MAX_ACTIVE_INVOCATIONS {
+            let label = format!("mixed.start.{index}");
+            let (program_instance_id, owner_claim) =
+                create_bound_instance(&mut service, &start_artifact, &label);
+            let prepared = service
+                .prepare_invocation(
+                    format!("{label}.invoke"),
+                    program_instance_id,
+                    owner_claim,
+                    serde_json::Value::Null,
+                )
+                .expect("durable pending invocation");
+            service.release_invocation_claim(&prepared.invocation_id);
+        }
+        let mut service = rehydrate_in_memory(service);
+        service.resume_test_gate = Some(execution_gate.clone());
+        service
+            .reconcile_recovery_state()
+            .expect("reconcile durable recovery markers");
+        let shared = Arc::new(Mutex::new(service));
+        let dispatcher = InvocationDispatcher::new(shared.clone());
+        dispatcher
+            .recover_available()
+            .expect("mixed startup recovery remains available");
+
+        wait_until(Duration::from_secs(2), || {
+            shared
+                .lock()
+                .expect("runtime service")
+                .host_capability_settlements[&capability_request_id]
+                .resume_started
+        });
+        {
+            let (released, signal) = execution_gate.as_ref();
+            *released.lock().expect("execution gate") = true;
+            signal.notify_all();
+        }
+        wait_until(Duration::from_secs(5), || {
+            shared
+                .lock()
+                .expect("runtime service")
+                .active_cancellations
+                .is_empty()
+        });
     }
 
     #[test]

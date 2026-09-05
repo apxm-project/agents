@@ -3135,15 +3135,27 @@ impl RuntimeService {
     /// If a started resume still points at the same continuation, execution
     /// may have reached an external effect and is made uncertain instead of
     /// being sent again.
+    #[cfg(test)]
     pub(crate) fn recover_host_capability_resumes(
         &mut self,
     ) -> Result<Vec<PreparedResume>, String> {
+        self.reconcile_started_host_capability_resumes()?;
+        let mut pending = Vec::new();
+        while let Some(prepared) = self.claim_next_host_capability_resume()? {
+            pending.push(prepared);
+        }
+        Ok(pending)
+    }
+
+    /// Reconcile a resume whose durable start marker was crossed before the
+    /// previous process stopped. Such work may already have reached an
+    /// external effect, so it becomes uncertain and is never redispatched.
+    fn reconcile_started_host_capability_resumes(&mut self) -> Result<(), String> {
         let capability_request_ids = self
             .host_capability_settlements
             .keys()
             .cloned()
             .collect::<Vec<_>>();
-        let mut pending = Vec::new();
         let mut uncertain = Vec::new();
         for capability_request_id in capability_request_ids {
             let Some(state) = self.host_capability_settlements.get(&capability_request_id) else {
@@ -3162,10 +3174,6 @@ impl RuntimeService {
             }
             if state.resume_started {
                 uncertain.push(state.program_instance_id.clone());
-            } else if let Some(prepared) =
-                self.claim_host_capability_resume(&capability_request_id)?
-            {
-                pending.push(prepared);
             }
         }
         let mut changed = false;
@@ -3192,7 +3200,32 @@ impl RuntimeService {
         if changed {
             self.persist_runtime_state()?;
         }
-        Ok(pending)
+        Ok(())
+    }
+
+    /// Claim one durable host settlement for bounded recovery. Reaching the
+    /// process-local execution limit is ordinary backpressure: the settlement
+    /// remains pending and a later dispatcher drain retries it.
+    pub(crate) fn claim_next_host_capability_resume(
+        &mut self,
+    ) -> Result<Option<PreparedResume>, String> {
+        if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
+            return Ok(None);
+        }
+        let capability_request_ids = self
+            .host_capability_settlements
+            .keys()
+            .filter(|capability_request_id| {
+                !self.host_capability_settlements[*capability_request_id].resume_started
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for capability_request_id in capability_request_ids {
+            if let Some(prepared) = self.claim_host_capability_resume(&capability_request_id)? {
+                return Ok(Some(prepared));
+            }
+        }
+        Ok(None)
     }
 
     /// Convert a durably pending invocation into a durable refusal when the
@@ -3266,7 +3299,20 @@ impl RuntimeService {
     /// Pending work was never allowed to reach an effect and may be queued.
     /// Running work is never resent: a terminal commit is replayed, a parked
     /// continuation remains parked, and every other case becomes uncertain.
+    #[cfg(test)]
     pub(crate) fn recover_invocations(&mut self) -> Result<Vec<PreparedInvocation>, String> {
+        self.reconcile_started_invocations()?;
+        let mut pending = Vec::new();
+        while let Some(prepared) = self.claim_next_pending_invocation()? {
+            pending.push(prepared);
+        }
+        Ok(pending)
+    }
+
+    /// Reconcile running invocations without claiming pending work. This is
+    /// separated from bounded dispatch so startup can become responsive even
+    /// when more durable work exists than the in-process execution limit.
+    fn reconcile_started_invocations(&mut self) -> Result<(), String> {
         let candidates = self
             .instances
             .values()
@@ -3274,7 +3320,6 @@ impl RuntimeService {
             .filter(|invocation| invocation.result.is_none())
             .map(|invocation| invocation.program_invocation_id.clone())
             .collect::<Vec<_>>();
-        let mut pending = Vec::new();
         let mut changed = false;
         for invocation_id in candidates {
             let instance_id = self
@@ -3296,9 +3341,6 @@ impl RuntimeService {
                 .map(|invocation| invocation.phase)
                 .ok_or_else(|| "unknown_invocation".to_owned())?;
             if phase == InvocationExecutionPhase::Pending {
-                if let Some(prepared) = self.claim_pending_invocation(&invocation_id)? {
-                    pending.push(prepared);
-                }
                 continue;
             }
             let request_id = self
@@ -3343,7 +3385,54 @@ impl RuntimeService {
         if changed {
             self.persist_runtime_state()?;
         }
-        Ok(pending)
+        Ok(())
+    }
+
+    /// Reconcile all possible-send markers before the recovery dispatcher is
+    /// allowed to claim safe pending work.
+    pub(crate) fn reconcile_recovery_state(&mut self) -> Result<(), String> {
+        self.reconcile_started_invocations()?;
+        self.reconcile_started_host_capability_resumes()
+    }
+
+    /// Claim one durably admitted invocation for bounded recovery. Capacity
+    /// exhaustion leaves every remaining invocation pending for the recovery
+    /// dispatcher rather than making service startup fail.
+    pub(crate) fn claim_next_pending_invocation(
+        &mut self,
+    ) -> Result<Option<PreparedInvocation>, String> {
+        if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
+            return Ok(None);
+        }
+        let invocation_ids = self
+            .instances
+            .values()
+            .filter_map(|instance| instance.invocation.as_ref())
+            .filter(|invocation| {
+                invocation.result.is_none()
+                    && invocation.phase == InvocationExecutionPhase::Pending
+                    && !self
+                        .active_cancellations
+                        .contains_key(&invocation.program_invocation_id)
+            })
+            .map(|invocation| invocation.program_invocation_id.clone())
+            .collect::<Vec<_>>();
+        for invocation_id in invocation_ids {
+            let Some(instance_id) = self.invocation_index.get(&invocation_id).cloned() else {
+                return Err("unknown_invocation".to_owned());
+            };
+            if self
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id))
+                .is_some()
+            {
+                continue;
+            }
+            if let Some(prepared) = self.claim_pending_invocation(&invocation_id)? {
+                return Ok(Some(prepared));
+            }
+        }
+        Ok(None)
     }
 
     fn cancel_invocation(
