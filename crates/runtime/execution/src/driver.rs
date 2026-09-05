@@ -4908,6 +4908,80 @@ async fn resume_from_continuation(
             .map(|frame| frame.dynamic_occurrence_id.clone())
     });
 
+    // An explicit cancellation may own a parked host capability before any
+    // resume dispatch is allowed to send its settlement through the node. Keep
+    // the host settlement observation, then commit the canonical invocation
+    // cancellation directly. Applying the cancelled host value first would
+    // intentionally translate it to an uncertain external effect and publish
+    // OutcomeUnknown before the cancellation boundary can win.
+    if ports.cancellation.is_cancelled() {
+        if let Some(capability_ref) = host_capability_ref.as_deref() {
+            let capability_request_id = event_ref.as_ref().map_or_else(
+                || host_capability_request_id(&state.program_invocation_id, &continuation_id),
+                |reference| reference.as_str().to_owned(),
+            );
+            let delivered_settlement = match &delivered {
+                Value::String(text) => serde_json::from_str::<HostCapabilitySettlement>(text).ok(),
+                value => serde_json::from_value::<HostCapabilitySettlement>(value.clone()).ok(),
+            };
+            state.pending_host_capability =
+                Some(apxm_runtime_protocol::HostCapabilityObservation {
+                    capability_request_id,
+                    capability_ref: capability_ref.to_owned(),
+                    input: None,
+                    authored_permission: None,
+                    outcome: Some(
+                        delivered_settlement
+                            .as_ref()
+                            .map_or(HostCapabilityOutcomeKind::Cancelled, |settlement| {
+                                settlement.outcome
+                            }),
+                    ),
+                    receipt_ref: delivered_settlement
+                        .as_ref()
+                        .and_then(|settlement| settlement.receipt_ref.clone()),
+                });
+            state.observe(
+                ports,
+                apxm_runtime_protocol::ObservationKind::CapabilitySettled,
+                apxm_runtime_protocol::Commitment::Provisional,
+                parked_node_execution_id.as_deref(),
+                Some(&resumed_occurrence),
+                None,
+                resumed_region_occurrence.as_deref(),
+                None,
+                None,
+                None,
+                None,
+            )?;
+        }
+        state.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+            apxm_runtime_protocol::Commitment::Provisional,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        state.append_invocation_cancelled(None);
+        let parts = CommitParts {
+            air,
+            hook_bindings,
+            model_admission,
+            capability_invocations,
+            program_invocation_ref,
+            program_instance_ref: committed_program_instance_ref,
+            commit_id,
+            write_set,
+        };
+        return finish(ports, parts, DriveEnd::RanToEnd(state)).await;
+    }
+
     let mut bound_value = delivered.clone();
     if let Some(capability_ref) = host_capability_ref.clone() {
         let capability_request_id = event_ref.as_ref().map_or_else(

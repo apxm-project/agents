@@ -53,7 +53,7 @@ use apxm_kernel::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_runtime_protocol::{
-    EventInspection, EventStatus, ExecutionObservation, ProtocolError,
+    EventInspection, EventStatus, ExecutionObservation, ProgramInvocationStatus, ProtocolError,
     RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
     RuntimeExecutionAdmissionRequest, RuntimeFailureCode, RuntimeHandshake, RuntimeHandshakeV2,
     RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2,
@@ -1093,6 +1093,13 @@ fn invocation_result_from_execution_output(
     program_invocation_id: String,
     output: &Value,
 ) -> RuntimeResult {
+    // A committed report carries the commit transport status separately from
+    // the execution terminal status. A cancelled execution therefore has a
+    // committed commit record but must remain Cancelled at the service result
+    // boundary; looking only at `commit.status` would mislabel it as started.
+    if output.get("status").and_then(Value::as_str) == Some("cancelled") {
+        return RuntimeResult::Cancelled { request_id };
+    }
     match output
         .get("commit")
         .and_then(|commit| commit.get("status"))
@@ -3103,6 +3110,27 @@ impl RuntimeService {
                 prepared.invocation_id.clone(),
                 &output,
             ),
+            Err(_)
+                if self.invocation_is_cancelled(
+                    &prepared.program_instance_id,
+                    &prepared.invocation_id,
+                ) && self
+                    .host_capability_settlements
+                    .get(&prepared.capability_request_id)
+                    .is_some_and(|state| {
+                        state.settlement.outcome == HostCapabilityOutcomeKind::Cancelled
+                            && !state.resume_started
+                    })
+                    && matches!(
+                        self.execution_backend
+                            .invocation_status(&prepared.invocation_id),
+                        Some(ProgramInvocationStatus::Cancelled),
+                    ) =>
+            {
+                RuntimeResult::Cancelled {
+                    request_id: prepared.invocation_request_id.clone(),
+                }
+            }
             Err(_) => RuntimeResult::Failed {
                 request_id: prepared.invocation_request_id.clone(),
                 code: "outcome_unknown".to_owned(),
@@ -3392,7 +3420,74 @@ impl RuntimeService {
     /// allowed to claim safe pending work.
     pub(crate) fn reconcile_recovery_state(&mut self) -> Result<(), String> {
         self.reconcile_started_invocations()?;
+        self.reconcile_cancelled_parked_invocations()?;
         self.reconcile_started_host_capability_resumes()
+    }
+
+    /// Complete the cancellation transition for a parked invocation after a
+    /// restart. The cancellation marker is durable before host withdrawal is
+    /// attempted, so a crash in that window must recreate the synthetic host
+    /// settlement instead of leaving the continuation parked forever.
+    fn reconcile_cancelled_parked_invocations(&mut self) -> Result<(), String> {
+        let candidates = self
+            .instances
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                let invocation = instance.invocation.as_ref()?;
+                if invocation.result.is_some()
+                    || !self
+                        .cancelled
+                        .contains_key(&invocation.program_invocation_id)
+                {
+                    return None;
+                }
+                let committed = self
+                    .execution_backend
+                    .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))?;
+                let continuation: Continuation = serde_json::from_value(committed.payload).ok()?;
+                let capability_request_id = continuation.event_ref?.as_str().to_owned();
+                if self
+                    .host_capability_settlements
+                    .get(&capability_request_id)
+                    .is_some_and(|state| state.resume_started)
+                {
+                    // A crossed resume marker is a possible external send;
+                    // the uncertainty reconciler below owns that case.
+                    return None;
+                }
+                is_host_capability_request_id(&capability_request_id).then(|| {
+                    (
+                        instance.owner_claim.clone(),
+                        capability_request_id,
+                        invocation.request_id.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for (owner_claim, capability_request_id, request_id) in candidates {
+            match self.settle_host_capability(
+                format!("{request_id}.cancel.recovery"),
+                owner_claim,
+                capability_request_id,
+                HostCapabilityOutcomeKind::Cancelled,
+                None,
+                None,
+                Some("the Program Invocation was cancelled".to_owned()),
+                true,
+            ) {
+                RuntimeResult::CapabilitySettled { .. } => {}
+                RuntimeResult::Failed { code, .. } => {
+                    return Err(format!("cancelled host recovery failed: {code}"));
+                }
+                other => {
+                    return Err(format!(
+                        "cancelled host recovery returned unexpected result: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Claim one durably admitted invocation for bounded recovery. Capacity
@@ -3466,6 +3561,11 @@ impl RuntimeService {
             };
         }
         if self.cancelled.contains_key(&program_invocation_id) {
+            // Cancellation markers are durable owner intent. A prior attempt
+            // may have been interrupted while withdrawing a parked host
+            // request, so an idempotent retry must repair that transition
+            // rather than merely acknowledge the marker forever.
+            self.cancel_outstanding_host_capabilities(&program_invocation_id);
             return RuntimeResult::Cancelled { request_id };
         }
         let marker_bytes = u64::try_from(program_invocation_id.len()).unwrap_or(u64::MAX);
@@ -3740,6 +3840,25 @@ impl RuntimeService {
                 code: "invalid_request".to_owned(),
             };
         }
+        // Once the durable invocation cancellation marker exists, a late
+        // host fulfillment cannot replace the cancellation-owned outcome.
+        // The cancellation path (and recovery) still uses the synthetic
+        // Cancelled settlement below to close the parked continuation.
+        if outcome != HostCapabilityOutcomeKind::Cancelled
+            && let Some(instance_id) = self.parked_host_capability_instance(&capability_request_id)
+            && self
+                .instances
+                .get(&instance_id)
+                .and_then(|instance| instance.invocation.as_ref())
+                .is_some_and(|invocation| {
+                    self.invocation_is_cancelled(&instance_id, &invocation.program_invocation_id)
+                })
+        {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
         if let Some(prior) = self.host_capability_settlements.get(&capability_request_id) {
             if prior.owner_claim != owner_claim {
                 return RuntimeResult::Failed {
@@ -3748,6 +3867,40 @@ impl RuntimeService {
                 };
             }
             if prior.settlement != settlement {
+                // A host settlement may already be durably recorded while its
+                // resume is still unstarted. Explicit invocation cancellation
+                // wins that pre-dispatch race, but preserves the exact host
+                // settlement document for the canonical cancellation commit.
+                if outcome == HostCapabilityOutcomeKind::Cancelled
+                    && !prior.resume_started
+                    && let Some(instance_id) =
+                        self.parked_host_capability_instance(&capability_request_id)
+                    && let Some(invocation) = self
+                        .instances
+                        .get(&instance_id)
+                        .and_then(|instance| instance.invocation.as_ref())
+                    && self.invocation_is_cancelled(&instance_id, &invocation.program_invocation_id)
+                {
+                    let program_instance_id = prior.program_instance_id.clone();
+                    let prior_settlement = prior.settlement.clone();
+                    if resume_now
+                        && (self.parked_host_capability_instance(&capability_request_id)
+                            != Some(program_instance_id.clone())
+                            || self
+                                .resume_host_capability_settlement(&prior_settlement)
+                                .is_err())
+                    {
+                        return RuntimeResult::Failed {
+                            request_id,
+                            code: "capability_settlement_failed".to_owned(),
+                        };
+                    }
+                    return RuntimeResult::CapabilitySettled {
+                        request_id,
+                        capability_request_id,
+                        outcome: prior_settlement.outcome,
+                    };
+                }
                 return RuntimeResult::Failed {
                     request_id,
                     code: "invalid_request".to_owned(),
@@ -3859,6 +4012,40 @@ impl RuntimeService {
         &mut self,
         settlement: &HostCapabilitySettlement,
     ) -> Result<(), String> {
+        // An invocation cancellation owns a still-parked continuation before
+        // any resume worker has crossed its durable start marker. Complete the
+        // invocation directly instead of executing the synthetic cancelled
+        // host value: executing it can commit an outcome_unknown continuation
+        // before the service gets a chance to publish cancellation.
+        if let Some(instance_id) =
+            self.parked_host_capability_instance(&settlement.capability_request_id)
+            && let Some(invocation_id) = self
+                .instances
+                .get(&instance_id)
+                .and_then(|instance| instance.invocation.as_ref())
+                .map(|invocation| invocation.program_invocation_id.clone())
+            && self.invocation_is_cancelled(&instance_id, &invocation_id)
+            && self
+                .host_capability_settlements
+                .get(&settlement.capability_request_id)
+                .is_some_and(|state| !state.resume_started)
+        {
+            let Some(prepared) =
+                self.claim_host_capability_resume(&settlement.capability_request_id)?
+            else {
+                return Ok(());
+            };
+            // This is a cancellation-owned pre-dispatch path: do not cross
+            // the resume_started marker, but do run the canonical execution
+            // cancellation path so it commits InvocationCancelled facts and
+            // observations. A restart can safely retry this same cancellation
+            // while the marker remains unstarted, preserving any exact host
+            // settlement document that was already durable.
+            prepared.cancellation.cancel();
+            let output = prepared.execute();
+            self.finish_host_capability_resume(&prepared, output);
+            return Ok(());
+        }
         let Some(prepared) =
             self.claim_host_capability_resume(&settlement.capability_request_id)?
         else {
@@ -4558,6 +4745,182 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_parked_invocation_repairs_the_marker_window_after_restart() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (invocation_id, capability_request_id, owner_claim) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, host_capability_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "host.cancel.marker-window".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: owner_claim.clone(),
+                        input: Value::Null,
+                    },
+                )
+                .expect("host invocation starts");
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } = started
+            else {
+                panic!("host invocation did not park: {started:?}");
+            };
+            let continuation = service
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id))
+                .expect("host continuation is durable");
+            let continuation: Continuation =
+                serde_json::from_value(continuation.payload).expect("host continuation");
+            let capability_request_id = continuation
+                .event_ref
+                .expect("host request")
+                .as_str()
+                .to_owned();
+            let marker_bytes = u64::try_from(program_invocation_id.len()).unwrap_or(u64::MAX);
+            service.cancelled.insert(
+                program_invocation_id.clone(),
+                RuntimeService::entry(marker_bytes, service.state_policy.cancellations.ttl),
+            );
+            service.cancellation_bytes = service.cancellation_bytes.saturating_add(marker_bytes);
+            service
+                .persist_runtime_state()
+                .expect("durable cancellation marker");
+            assert!(service.host_capability_settlements.is_empty());
+            (program_invocation_id, capability_request_id, owner_claim)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        reopened
+            .reconcile_recovery_state()
+            .expect("repair cancelled parked invocation");
+        assert_eq!(
+            reopened.execution_backend.invocation_status(&invocation_id),
+            Some(ProgramInvocationStatus::Cancelled)
+        );
+        assert!(matches!(
+            reopened
+                .instances
+                .values()
+                .find_map(|instance| instance.invocation.as_ref())
+                .and_then(|invocation| invocation.result.as_ref()),
+            Some(RuntimeResult::Cancelled { .. })
+        ));
+        assert_eq!(
+            reopened
+                .host_capability_settlements
+                .get(&capability_request_id)
+                .map(|state| state.settlement.outcome),
+            Some(HostCapabilityOutcomeKind::Cancelled)
+        );
+        assert!(matches!(
+            reopened.handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "host.cancel.marker-window.replay".to_owned(),
+                    owner_claim,
+                    program_invocation_id: invocation_id,
+                },
+            ),
+            Ok(RuntimeResult::Cancelled { .. })
+        ));
+    }
+
+    #[test]
+    fn explicit_cancel_wins_before_a_durable_ok_resume_starts() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (invocation_id, capability_request_id, owner_claim) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, host_capability_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "host.cancel.ok-race".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: owner_claim.clone(),
+                        input: Value::Null,
+                    },
+                )
+                .expect("host invocation starts");
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } = started
+            else {
+                panic!("host invocation did not park: {started:?}");
+            };
+            let continuation = service
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id))
+                .expect("host continuation is durable");
+            let continuation: Continuation =
+                serde_json::from_value(continuation.payload).expect("host continuation");
+            let capability_request_id = continuation
+                .event_ref
+                .expect("host request")
+                .as_str()
+                .to_owned();
+            assert!(matches!(
+                service.settle_host_capability(
+                    "host.cancel.ok-race.settle".to_owned(),
+                    owner_claim.clone(),
+                    capability_request_id.clone(),
+                    HostCapabilityOutcomeKind::Ok,
+                    Some("{}".to_owned()),
+                    Some("receipt.host.cancel.ok-race".to_owned()),
+                    None,
+                    false,
+                ),
+                RuntimeResult::CapabilitySettled { .. }
+            ));
+            let marker_bytes = u64::try_from(program_invocation_id.len()).unwrap_or(u64::MAX);
+            service.cancelled.insert(
+                program_invocation_id.clone(),
+                RuntimeService::entry(marker_bytes, service.state_policy.cancellations.ttl),
+            );
+            service.cancellation_bytes = service.cancellation_bytes.saturating_add(marker_bytes);
+            service
+                .persist_runtime_state()
+                .expect("durable cancellation marker");
+            (program_invocation_id, capability_request_id, owner_claim)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        reopened
+            .reconcile_recovery_state()
+            .expect("repair cancellation around pending host settlement");
+        assert_eq!(
+            reopened.execution_backend.invocation_status(&invocation_id),
+            Some(ProgramInvocationStatus::Cancelled)
+        );
+        assert_eq!(
+            reopened
+                .host_capability_settlements
+                .get(&capability_request_id)
+                .map(|state| state.settlement.outcome),
+            Some(HostCapabilityOutcomeKind::Ok)
+        );
+        assert!(matches!(
+            reopened.handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "host.cancel.ok-race.replay".to_owned(),
+                    owner_claim,
+                    program_invocation_id: invocation_id,
+                },
+            ),
+            Ok(RuntimeResult::Cancelled { .. })
+        ));
+    }
+
+    #[test]
     fn started_host_resume_becomes_unknown_after_restart_without_resend() {
         let directory = tempfile::tempdir().expect("runtime state directory");
         let path = directory.path().to_path_buf();
@@ -4627,6 +4990,15 @@ mod tests {
                 false,
             );
             assert!(matches!(replay, RuntimeResult::CapabilitySettled { .. }));
+            let marker_bytes = u64::try_from(program_invocation_id.len()).unwrap_or(u64::MAX);
+            service.cancelled.insert(
+                program_invocation_id.clone(),
+                RuntimeService::entry(marker_bytes, service.state_policy.cancellations.ttl),
+            );
+            service.cancellation_bytes = service.cancellation_bytes.saturating_add(marker_bytes);
+            service
+                .persist_runtime_state()
+                .expect("durable cancellation marker");
             assert!(
                 service
                     .claim_host_capability_resume(&capability_request_id)
@@ -4638,6 +5010,9 @@ mod tests {
         };
 
         let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        reopened
+            .reconcile_recovery_state()
+            .expect("reconcile started host resume");
         assert!(reopened.recover_invocations().unwrap().is_empty());
         assert!(
             reopened
@@ -4659,6 +5034,71 @@ mod tests {
             inspection.status,
             apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
         );
+    }
+
+    fn claimed_host_resume_for_finish_test(service: &mut RuntimeService) -> PreparedResume {
+        let instance_id = create_started(service, host_capability_air_bytes());
+        let owner_claim = owner_claim(service, &instance_id);
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "host.resume.error".to_owned(),
+                    program_instance_id: instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .expect("host invocation starts");
+        let RuntimeResult::ProgramInvocationStarted { .. } = started else {
+            panic!("host invocation did not park: {started:?}");
+        };
+        let continuation = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(instance_id))
+            .expect("host continuation is durable");
+        let continuation: Continuation =
+            serde_json::from_value(continuation.payload).expect("host continuation");
+        let capability_request_id = continuation
+            .event_ref
+            .expect("host request")
+            .as_str()
+            .to_owned();
+        assert!(matches!(
+            service.settle_host_capability(
+                "host.resume.error.settle".to_owned(),
+                owner_claim,
+                capability_request_id.clone(),
+                HostCapabilityOutcomeKind::Ok,
+                Some("{}".to_owned()),
+                Some("receipt.host.resume.error".to_owned()),
+                None,
+                false,
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        let prepared = service
+            .claim_host_capability_resume(&capability_request_id)
+            .expect("claim host resume")
+            .expect("pending host resume");
+        assert!(
+            service
+                .begin_host_capability_resume(&prepared)
+                .expect("resume marker")
+        );
+        prepared
+    }
+
+    #[test]
+    fn unmarked_host_resume_error_remains_unknown() {
+        let mut service = RuntimeService::default();
+        let prepared = claimed_host_resume_for_finish_test(&mut service);
+        let result =
+            service.finish_host_capability_resume(&prepared, Err("resume failed".to_owned()));
+        assert!(matches!(
+            result,
+            RuntimeResult::Failed { ref code, .. } if code == "outcome_unknown"
+        ));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use apxm_core::types::host_capability::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_runtime_protocol::{
-    AuthoredPermission, ExecutionObservation, GrantRef, ObservationKind, PrincipalRef,
+    AuthoredPermission, Commitment, ExecutionObservation, GrantRef, ObservationKind, PrincipalRef,
     ProgramInvocationId, RUNTIME_PROTOCOL_VERSION, ReadContext, ReadPurpose, RequestId,
     RuntimeHandshake, RuntimeHandshakeV2, RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2,
     RuntimeResult, RuntimeResultV2, ScopeRef,
@@ -148,6 +148,35 @@ fn observations(service: &mut RuntimeService, invocation: &str) -> Vec<Execution
         panic!("observation subscribe returned {result:?}");
     };
     page.items
+}
+
+fn invocation_status(
+    service: &mut RuntimeService,
+    invocation: &str,
+) -> apxm_runtime_protocol::ProgramInvocationStatus {
+    let result = service
+        .handle_v2(
+            &RuntimeHandshakeV2::server(),
+            RuntimeRequestV2::ProgramInvocationInspect {
+                context: ReadContext {
+                    request_id: RequestId::new("read.invocation").expect("request id"),
+                    scope_ref: ScopeRef::new("scope.host-capability").expect("scope"),
+                    principal_ref: PrincipalRef::new("principal.host-capability")
+                        .expect("principal"),
+                    grant_ref: GrantRef::new("grant.host-capability").expect("grant"),
+                    correlation_id: None,
+                    purpose: ReadPurpose::Inspection,
+                },
+                program_invocation_id: ProgramInvocationId::new(invocation.to_owned())
+                    .expect("invocation id"),
+                node_execution_id: None,
+            },
+        )
+        .expect("the invocation inspection is readable");
+    let RuntimeResultV2::ProgramInvocationInspection { inspection, .. } = result else {
+        panic!("invocation inspection returned {result:?}");
+    };
+    inspection.status
 }
 
 fn of_kind(
@@ -593,7 +622,129 @@ fn cancelling_the_invocation_cancels_the_request_it_is_parked_on() {
         ),
         "{late:?}"
     );
+    assert_eq!(
+        invocation_status(&mut parked.service, &parked.invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::Cancelled,
+        "explicit invocation cancellation owns a parked, undispatched host request"
+    );
+    let stream = observations(&mut parked.service, &parked.invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled)
+            .iter()
+            .any(|observation| observation.commitment == Commitment::Committed),
+        "explicit invocation cancellation has a committed terminal observation"
+    );
+    assert!(
+        of_kind(&stream, ObservationKind::OutcomeUnknown).is_empty(),
+        "a parked host request has not crossed an external effect"
+    );
     let _ = parked.instance;
+}
+
+#[test]
+fn a_host_withdrawal_without_invocation_cancel_remains_unknown() {
+    let mut parked = start_fixture("invocation.host.withdraw-unknown");
+    let (first, _) = published_request(&mut parked);
+    let cancelled = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::CapabilityCancel {
+                request_id: "withdraw.unknown".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                capability_request_id: first,
+                message: Some("the host withdrew the request".to_owned()),
+            },
+        )
+        .expect("a well-formed request");
+    assert!(
+        matches!(
+            cancelled,
+            RuntimeResult::CapabilitySettled {
+                outcome: HostCapabilityOutcomeKind::Cancelled,
+                ..
+            }
+        ),
+        "{cancelled:?}"
+    );
+    assert_eq!(
+        invocation_status(&mut parked.service, &parked.invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown,
+        "an unmarked host withdrawal cannot claim invocation cancellation"
+    );
+    let stream = observations(&mut parked.service, &parked.invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled).is_empty(),
+        "host withdrawal alone does not emit invocation cancellation"
+    );
+    assert_eq!(
+        of_kind(&stream, ObservationKind::OutcomeUnknown).len(),
+        1,
+        "the cancelled host settlement remains effect-uncertain at the invocation boundary"
+    );
+}
+
+#[test]
+fn explicit_invocation_cancellation_survives_restart() {
+    let directory = tempfile::tempdir().expect("runtime state directory");
+    let path = directory.path().to_path_buf();
+    let mut parked = start_fixture_with_service(
+        "invocation.host.cancel-restart",
+        RuntimeService::in_memory()
+            .with_runtime_state_dir(path.clone())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned()),
+    );
+    let (first, _) = published_request(&mut parked);
+    let cancelled = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::ProgramInvocationCancel {
+                request_id: "cancel.restart".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                program_invocation_id: parked.invocation.clone(),
+            },
+        )
+        .expect("a well-formed request");
+    assert!(matches!(cancelled, RuntimeResult::Cancelled { .. }));
+    let Parked {
+        service,
+        instance: _,
+        owner_claim: _,
+        invocation,
+    } = parked;
+    drop(service);
+
+    let mut reopened = RuntimeService::in_memory()
+        .with_runtime_state_dir(path)
+        .with_embedded_read_access()
+        .with_output_access_scope_ref("scope.host-capability".to_owned());
+    assert!(reopened.startup_error().is_none());
+    assert_eq!(
+        invocation_status(&mut reopened, &invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
+    );
+    let stream = observations(&mut reopened, &invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled)
+            .iter()
+            .any(|observation| observation.commitment == Commitment::Committed)
+    );
+    assert_eq!(
+        of_kind(&stream, ObservationKind::CapabilitySettled)
+            .iter()
+            .filter(|observation| {
+                observation
+                    .host_capability
+                    .as_ref()
+                    .map(|host| host.capability_request_id.as_str())
+                    == Some(first.as_str())
+            })
+            .count(),
+        1,
+        "the withdrawn host request remains durably settled exactly once"
+    );
 }
 
 #[test]
