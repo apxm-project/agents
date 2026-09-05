@@ -74,6 +74,9 @@ pub struct ModelExecution {
     /// successful attempt always supplies this value; non-success outcomes do
     /// not manufacture one.
     pub output: Option<Value>,
+    /// The provider error that made an after-send result uncertain. This is
+    /// diagnostic evidence only and never authorizes a retry.
+    pub outcome_unknown_error: Option<TypedError>,
 }
 
 /// Runtime-generated identity and exact admission facts for one model effect.
@@ -480,6 +483,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                     outcome: ModelOutcome::CommittedSuccess { usage },
                     committed_attempt: Some(attempt),
                     output: Some(output),
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::DeliveredTypedFailure(error) => {
@@ -487,6 +491,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                     outcome: ModelOutcome::TypedFailure { error },
                     committed_attempt: None,
                     output: None,
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::Cancelled => {
@@ -494,6 +499,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                     outcome: ModelOutcome::Cancelled,
                     committed_attempt: None,
                     output: None,
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::FailedBeforeSend(error) => {
@@ -502,6 +508,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                         outcome: ModelOutcome::TypedFailure { error },
                         committed_attempt: None,
                         output: None,
+                        outcome_unknown_error: None,
                     };
                 }
                 // Safe to retry: nothing was sent.
@@ -513,6 +520,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                             outcome: ModelOutcome::TypedFailure { error },
                             committed_attempt: None,
                             output: None,
+                            outcome_unknown_error: None,
                         };
                     }
                     // Reconcilable: retry the same identity.
@@ -524,6 +532,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                         },
                         committed_attempt: None,
                         output: None,
+                        outcome_unknown_error: Some(error),
                     };
                 }
             }
@@ -536,6 +545,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
         },
         committed_attempt: None,
         output: None,
+        outcome_unknown_error: None,
     }
 }
 
@@ -569,6 +579,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                     outcome: ModelOutcome::CommittedSuccess { usage },
                     committed_attempt: Some(attempt),
                     output: Some(output),
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::DeliveredTypedFailure(error) => {
@@ -576,6 +587,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                     outcome: ModelOutcome::TypedFailure { error },
                     committed_attempt: None,
                     output: None,
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::Cancelled => {
@@ -583,6 +595,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                     outcome: ModelOutcome::Cancelled,
                     committed_attempt: None,
                     output: None,
+                    outcome_unknown_error: None,
                 };
             }
             AttemptDisposition::FailedBeforeSend(error) => {
@@ -591,6 +604,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                         outcome: ModelOutcome::TypedFailure { error },
                         committed_attempt: None,
                         output: None,
+                        outcome_unknown_error: None,
                     };
                 }
             }
@@ -601,6 +615,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                             outcome: ModelOutcome::TypedFailure { error },
                             committed_attempt: None,
                             output: None,
+                            outcome_unknown_error: None,
                         };
                     }
                 } else {
@@ -610,6 +625,7 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
                         },
                         committed_attempt: None,
                         output: None,
+                        outcome_unknown_error: Some(error),
                     };
                 }
             }
@@ -621,5 +637,6 @@ pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
         },
         committed_attempt: None,
         output: None,
+        outcome_unknown_error: None,
     }
 }

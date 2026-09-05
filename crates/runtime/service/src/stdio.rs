@@ -5,16 +5,18 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::RuntimeService;
+use crate::{MAX_ACTIVE_INVOCATIONS, PreparedInvocation, PreparedResume, RuntimeService};
 use apxm_runtime_protocol::{
     RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
     RuntimeExecutionAdmissionHandshake, RuntimeExecutionAdmissionRequest, RuntimeHandshake,
-    RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2,
+    RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2, RuntimeResult,
+    capability_fulfillment_is_well_formed,
 };
 
 /// Maximum encoded JSONL frame, including its line terminator.
@@ -27,6 +29,7 @@ pub const UNIX_IO_TIMEOUT_MS: u64 = 5_000;
 pub const MAX_FRAMES_PER_CONNECTION: usize = 256;
 /// Maximum concurrently active local Unix connections, including streams.
 pub const MAX_ACTIVE_UNIX_CONNECTIONS: usize = 64;
+const INVOCATION_WORKERS: usize = 4;
 const SOCKET_MODE: u32 = 0o600;
 
 struct UnixConnectionPermit(Arc<AtomicUsize>);
@@ -138,6 +141,25 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
     let endpoint = UnixEndpoint::new(path)?;
     let listener = bind_secure_unix(&endpoint.path)?;
     let shared = Arc::new(Mutex::new(service));
+    let dispatcher = InvocationDispatcher::new(shared.clone());
+    let recovered = shared
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?
+        .recover_invocations()?;
+    for prepared in recovered {
+        let gate = StartGate::new();
+        gate.release();
+        dispatcher.enqueue(InvocationWork::Start(Box::new(prepared)), gate)?;
+    }
+    let recovered_resumes = shared
+        .lock()
+        .map_err(|_| "runtime service lock poisoned")?
+        .recover_host_capability_resumes()?;
+    for prepared in recovered_resumes {
+        let gate = StartGate::new();
+        gate.release();
+        dispatcher.enqueue(InvocationWork::Resume(Box::new(prepared)), gate)?;
+    }
     let active_connections = Arc::new(AtomicUsize::new(0));
     for incoming in listener.incoming() {
         let stream = incoming.map_err(|error| error.to_string())?;
@@ -153,12 +175,183 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
         let reader =
             std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
         let shared = shared.clone();
+        let dispatcher = dispatcher.clone();
         std::thread::spawn(move || {
             let _permit = permit;
-            let _ = serve_shared_frames(reader, stream, shared);
+            let _ = serve_shared_frames(reader, stream, shared, dispatcher);
         });
     }
     Ok(())
+}
+
+#[derive(Clone)]
+struct InvocationDispatcher {
+    service: Arc<Mutex<RuntimeService>>,
+    sender: SyncSender<QueuedInvocation>,
+}
+
+struct QueuedInvocation {
+    work: InvocationWork,
+    gate: StartGate,
+}
+
+enum InvocationWork {
+    Start(Box<PreparedInvocation>),
+    Resume(Box<PreparedResume>),
+}
+
+/// Prevent a queued worker from crossing the durable running marker until the
+/// service has attempted to flush the admission acknowledgement. A failed
+/// flush still releases accepted work so a disconnected client cannot strand
+/// a durable pending invocation.
+#[derive(Clone)]
+struct StartGate(Arc<(Mutex<bool>, Condvar)>);
+
+impl StartGate {
+    fn new() -> Self {
+        Self(Arc::new((Mutex::new(false), Condvar::new())))
+    }
+
+    fn release(&self) {
+        let (released, signal) = self.0.as_ref();
+        if let Ok(mut released) = released.lock() {
+            *released = true;
+            signal.notify_one();
+        }
+    }
+
+    fn wait(&self) {
+        let (released, signal) = self.0.as_ref();
+        let mut released = released.lock().expect("invocation start gate lock");
+        while !*released {
+            released = signal.wait(released).expect("invocation start gate lock");
+        }
+    }
+}
+
+impl InvocationDispatcher {
+    fn new(service: Arc<Mutex<RuntimeService>>) -> Self {
+        let (sender, receiver) = sync_channel::<QueuedInvocation>(MAX_ACTIVE_INVOCATIONS);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for worker in 0..INVOCATION_WORKERS {
+            let receiver = receiver.clone();
+            let service = service.clone();
+            std::thread::Builder::new()
+                .name(format!("apxm-invocation-{worker}"))
+                .spawn(move || {
+                    loop {
+                        let queued = {
+                            let guard = receiver.lock().expect("invocation queue lock");
+                            match guard.recv() {
+                                Ok(queued) => queued,
+                                Err(_) => return,
+                            }
+                        };
+                        queued.gate.wait();
+                        match queued.work {
+                            InvocationWork::Start(prepared) => {
+                                let begin = service
+                                    .lock()
+                                    .map_err(|_| "runtime service lock poisoned".to_owned())
+                                    .and_then(|mut guard| {
+                                        guard.begin_invocation(&prepared.invocation_id)
+                                    });
+                                if !matches!(begin, Ok(true)) {
+                                    if let Ok(mut guard) = service.lock() {
+                                        guard.release_invocation_claim(&prepared.invocation_id);
+                                    }
+                                    continue;
+                                }
+                                let execution =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        prepared.execute()
+                                    }))
+                                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
+                                if let Ok(mut guard) = service.lock() {
+                                    guard.finish_invocation(&prepared, execution);
+                                }
+                            }
+                            InvocationWork::Resume(prepared) => {
+                                let begin = service
+                                    .lock()
+                                    .map_err(|_| "runtime service lock poisoned".to_owned())
+                                    .and_then(|mut guard| {
+                                        guard.begin_host_capability_resume(&prepared)
+                                    });
+                                if !matches!(begin, Ok(true)) {
+                                    if let Ok(mut guard) = service.lock() {
+                                        guard.release_invocation_claim(&prepared.invocation_id);
+                                    }
+                                    continue;
+                                }
+                                let execution =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        prepared.execute()
+                                    }))
+                                    .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
+                                if let Ok(mut guard) = service.lock() {
+                                    guard.finish_host_capability_resume(&prepared, execution);
+                                }
+                            }
+                        }
+                    }
+                })
+                .expect("bounded invocation worker starts");
+        }
+        Self { service, sender }
+    }
+
+    fn schedule(&self, invocation_id: &str) -> Result<Option<StartGate>, String> {
+        let prepared = self
+            .service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?
+            .claim_pending_invocation(invocation_id)?;
+        let Some(prepared) = prepared else {
+            return Ok(None);
+        };
+        let gate = StartGate::new();
+        self.enqueue(InvocationWork::Start(Box::new(prepared)), gate.clone())?;
+        Ok(Some(gate))
+    }
+
+    fn schedule_resume(&self, capability_request_id: &str) -> Result<Option<StartGate>, String> {
+        let prepared = self
+            .service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?
+            .claim_host_capability_resume(capability_request_id)?;
+        let Some(prepared) = prepared else {
+            return Ok(None);
+        };
+        let gate = StartGate::new();
+        self.enqueue(InvocationWork::Resume(Box::new(prepared)), gate.clone())?;
+        Ok(Some(gate))
+    }
+
+    fn enqueue(&self, work: InvocationWork, gate: StartGate) -> Result<(), String> {
+        let invocation_id = match &work {
+            InvocationWork::Start(prepared) => prepared.invocation_id.clone(),
+            InvocationWork::Resume(prepared) => prepared.invocation_id.clone(),
+        };
+        match self.sender.try_send(QueuedInvocation { work, gate }) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.service
+                    .lock()
+                    .map_err(|_| "runtime service lock poisoned")?
+                    .release_invocation_claim(&invocation_id);
+                Err("invocation_capacity_exhausted".to_owned())
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.service
+                    .lock()
+                    .map_err(|_| "runtime service lock poisoned")?
+                    .release_invocation_claim(&invocation_id);
+                Err("invocation_workers_unavailable".to_owned())
+            }
+        }
+    }
 }
 
 fn serve_frames<R: BufRead, W: Write>(
@@ -245,6 +438,18 @@ fn write_result<W: Write>(writer: &mut W, result: serde_json::Value) -> Result<(
     writer.flush().map_err(|error| error.to_string())
 }
 
+fn write_result_and_release<W: Write>(
+    writer: &mut W,
+    result: serde_json::Value,
+    gate: Option<StartGate>,
+) -> Result<(), String> {
+    let written = write_result(writer, result);
+    if let Some(gate) = gate {
+        gate.release();
+    }
+    written
+}
+
 fn is_observation_stream(payload: &serde_json::Value) -> bool {
     payload
         .get("handshake")
@@ -270,6 +475,7 @@ fn serve_shared_frames(
     mut reader: std::io::BufReader<UnixStream>,
     mut writer: UnixStream,
     service: Arc<Mutex<RuntimeService>>,
+    dispatcher: InvocationDispatcher,
 ) -> Result<(), String> {
     let mut frame_count = 0;
     while let Some(line) = read_limited_line(&mut reader)? {
@@ -289,8 +495,60 @@ fn serve_shared_frames(
         if is_observation_stream(&payload) {
             return serve_observation_stream(payload, &mut writer, service);
         }
-        let result = process_shared_payload(payload, service.clone())?;
-        write_result(&mut writer, result)?;
+        let mut result = process_shared_payload(payload, service.clone())?;
+        let invocation_id = result
+            .get("program_invocation_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|_| {
+                result.get("kind").and_then(serde_json::Value::as_str)
+                    == Some("program_invocation_started")
+            })
+            .map(str::to_owned);
+        let capability_request_id = result
+            .get("capability_request_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|_| {
+                result.get("kind").and_then(serde_json::Value::as_str) == Some("capability_settled")
+            })
+            .map(str::to_owned);
+        let gate = if let Some(invocation_id) = invocation_id {
+            match dispatcher.schedule(&invocation_id) {
+                Ok(gate) => gate,
+                Err(error) => {
+                    let code = match error.as_str() {
+                        "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
+                        _ => "runtime_state_unavailable".to_owned(),
+                    };
+                    let failure = service
+                        .lock()
+                        .map_err(|_| "runtime service lock poisoned")?
+                        .fail_pending_invocation(&invocation_id, &code);
+                    result = serde_json::to_value(failure).map_err(|error| error.to_string())?;
+                    None
+                }
+            }
+        } else if let Some(capability_request_id) = capability_request_id {
+            match dispatcher.schedule_resume(&capability_request_id) {
+                Ok(gate) => gate,
+                Err(error) => {
+                    let code = match error.as_str() {
+                        "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
+                        _ => "runtime_state_unavailable".to_owned(),
+                    };
+                    let request_id = result
+                        .get("request_id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    result = serde_json::to_value(RuntimeResult::Failed { request_id, code })
+                        .map_err(|error| error.to_string())?;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        write_result_and_release(&mut writer, result, gate)?;
     }
     Ok(())
 }
@@ -327,14 +585,49 @@ fn process_shared_payload(
     }
 
     let envelope: Envelope = serde_json::from_value(payload).map_err(|error| error.to_string())?;
-    if let RuntimeRequest::ProgramInvocationStart {
-        request_id,
-        program_instance_id,
-        owner_claim,
-        input,
-    } = envelope.request
-    {
-        let prepared = {
+    match envelope.request {
+        RuntimeRequest::ProgramInvocationStart {
+            request_id,
+            program_instance_id,
+            owner_claim,
+            input,
+        } => {
+            let prepared = {
+                let mut guard = service
+                    .lock()
+                    .map_err(|_| "runtime service lock poisoned")?;
+                guard.cleanup_expired();
+                envelope
+                    .handshake
+                    .admit()
+                    .map_err(|error| format!("{error:?}"))?;
+                guard.prepare_invocation(request_id, program_instance_id, owner_claim, input)
+            };
+            let prepared = match prepared {
+                Ok(prepared) => prepared,
+                Err(result) => {
+                    return serde_json::to_value(result).map_err(|error| error.to_string());
+                }
+            };
+            let mut guard = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned")?;
+            guard.release_invocation_claim(&prepared.invocation_id);
+            serde_json::to_value(RuntimeResult::ProgramInvocationStarted {
+                request_id: prepared.request_id.clone(),
+                program_invocation_id: prepared.invocation_id.clone(),
+            })
+            .map_err(|error| error.to_string())
+        }
+        RuntimeRequest::CapabilityFulfill {
+            request_id,
+            owner_claim,
+            capability_request_id,
+            outcome,
+            output,
+            receipt_ref,
+            message,
+        } => {
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
@@ -343,31 +636,78 @@ fn process_shared_payload(
                 .handshake
                 .admit()
                 .map_err(|error| format!("{error:?}"))?;
-            guard.prepare_invocation(request_id, program_instance_id, owner_claim, input)
-        };
-        let prepared = match prepared {
-            Ok(prepared) => prepared,
-            Err(result) => return serde_json::to_value(result).map_err(|error| error.to_string()),
-        };
-        let execution = prepared.execute();
-        let result = {
+            let result = if request_id.trim().is_empty()
+                || !capability_fulfillment_is_well_formed(
+                    &capability_request_id,
+                    outcome,
+                    output.as_deref(),
+                ) {
+                RuntimeResult::Failed {
+                    request_id,
+                    code: "invalid_request".to_owned(),
+                }
+            } else {
+                guard.settle_host_capability(
+                    request_id,
+                    owner_claim,
+                    capability_request_id,
+                    outcome,
+                    output,
+                    receipt_ref,
+                    message,
+                    false,
+                )
+            };
+            serde_json::to_value(result).map_err(|error| error.to_string())
+        }
+        RuntimeRequest::CapabilityCancel {
+            request_id,
+            owner_claim,
+            capability_request_id,
+            message,
+        } => {
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
-            guard.finish_invocation(&prepared, execution)
-        };
-        return serde_json::to_value(result).map_err(|error| error.to_string());
+            guard.cleanup_expired();
+            envelope
+                .handshake
+                .admit()
+                .map_err(|error| format!("{error:?}"))?;
+            let result = if request_id.trim().is_empty()
+                || !apxm_core::types::host_capability::is_host_capability_request_id(
+                    &capability_request_id,
+                ) {
+                RuntimeResult::Failed {
+                    request_id,
+                    code: "invalid_request".to_owned(),
+                }
+            } else {
+                guard.settle_host_capability(
+                    request_id,
+                    owner_claim,
+                    capability_request_id,
+                    apxm_core::types::host_capability::HostCapabilityOutcomeKind::Cancelled,
+                    None,
+                    None,
+                    message,
+                    false,
+                )
+            };
+            serde_json::to_value(result).map_err(|error| error.to_string())
+        }
+        request => {
+            let mut guard = service
+                .lock()
+                .map_err(|_| "runtime service lock poisoned")?;
+            serde_json::to_value(
+                guard
+                    .handle(&envelope.handshake, request)
+                    .map_err(|error| format!("{error:?}"))?,
+            )
+            .map_err(|error| error.to_string())
+        }
     }
-
-    let mut guard = service
-        .lock()
-        .map_err(|_| "runtime service lock poisoned")?;
-    serde_json::to_value(
-        guard
-            .handle(&envelope.handshake, envelope.request)
-            .map_err(|error| format!("{error:?}"))?,
-    )
-    .map_err(|error| error.to_string())
 }
 
 fn validate_frame(frame: &StdioFrame) -> Result<(), String> {
@@ -589,11 +929,30 @@ pub fn handshake_cross_wired(other_protocol: &str) -> bool {
 mod tests {
     use super::*;
     use crate::RuntimeService;
+    use apxm_core::types::host_capability::HostCapabilityOutcomeKind;
+    use apxm_execution::Continuation;
+    use apxm_kernel::ProgramInstanceRef;
     use apxm_program::air::AirModule;
     use apxm_program::artifact::ExecutableArtifact;
     use apxm_runtime_protocol::{
         RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
     };
+    use std::sync::mpsc;
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "client disconnected",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn fixture_artifact_bytes() -> Vec<u8> {
         let air: AirModule = serde_json::from_value(serde_json::json!({
@@ -609,6 +968,20 @@ mod tests {
             }
         }))
         .expect("fixture AIR");
+        ExecutableArtifact::from_air(&air)
+            .expect("fixture artifact")
+            .encode()
+            .expect("fixture artifact JSON")
+    }
+
+    fn host_capability_artifact_bytes() -> Vec<u8> {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("runtime-service repository root")
+            .join("tools/tests/fixtures/canonical-host-capability-execute.air.json");
+        let air: AirModule = serde_json::from_slice(&std::fs::read(fixture).expect("fixture AIR"))
+            .expect("fixture AIR JSON");
         ExecutableArtifact::from_air(&air)
             .expect("fixture artifact")
             .encode()
@@ -643,6 +1016,222 @@ mod tests {
         assert!(UnixConnectionPermit::try_acquire(active.clone()).is_none());
         drop(permits.pop());
         assert!(UnixConnectionPermit::try_acquire(active.clone()).is_some());
+    }
+
+    #[test]
+    fn failed_acknowledgement_releases_reserved_execution() {
+        let gate = StartGate::new();
+        let worker_gate = gate.clone();
+        let (sent, received) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            worker_gate.wait();
+            sent.send(()).expect("worker completion");
+        });
+
+        assert!(
+            write_result_and_release(
+                &mut BrokenWriter,
+                serde_json::json!({"kind": "program_invocation_started"}),
+                Some(gate),
+            )
+            .is_err()
+        );
+        received
+            .recv_timeout(Duration::from_secs(1))
+            .expect("disconnect must not strand accepted work");
+        worker.join().expect("worker joins");
+    }
+
+    #[test]
+    fn unix_capability_settlement_is_acknowledged_before_async_resume() {
+        let artifact = host_capability_artifact_bytes();
+        let mut service = RuntimeService::default().with_embedded_read_access();
+        let digest = service
+            .try_admit_artifact(artifact.clone())
+            .expect("host artifact admission");
+        let created = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "unix.host.create".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("host instance creation");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("host instance creation failed: {created:?}");
+        };
+        service
+            .bind_admission(
+                &program_instance_id,
+                crate::materials_for_artifact(
+                    &artifact,
+                    format!("{program_instance_id}:admission"),
+                    b"{}".to_vec(),
+                    b"{}".to_vec(),
+                ),
+            )
+            .expect("host invocation admission");
+        let started = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+                },
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "unix.host.start".to_owned(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: serde_json::Value::Null,
+                },
+            )
+            .expect("host invocation start");
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = started
+        else {
+            panic!("host invocation did not start: {started:?}");
+        };
+        let continuation = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(program_instance_id))
+            .expect("host continuation");
+        let continuation: Continuation =
+            serde_json::from_value(continuation.payload).expect("host continuation JSON");
+        let capability_request_id = continuation
+            .event_ref
+            .expect("host request")
+            .as_str()
+            .to_owned();
+
+        let resume_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        service.resume_test_gate = Some(resume_gate.clone());
+        let shared = Arc::new(Mutex::new(service));
+        let dispatcher = InvocationDispatcher::new(shared.clone());
+        let cancellation_dispatcher = dispatcher.clone();
+        let cancellation_service = shared.clone();
+        let (mut client, server) = UnixStream::pair().expect("Unix stream pair");
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("client deadline");
+        let reader = std::io::BufReader::new(server.try_clone().expect("server reader"));
+        let server_task =
+            std::thread::spawn(move || serve_shared_frames(reader, server, shared, dispatcher));
+        let payload = serde_json::json!({
+            "handshake": {"protocol_version": RUNTIME_PROTOCOL_VERSION},
+            "request": {
+                "method": "capability_fulfill",
+                "request_id": "unix.host.fulfill",
+                "owner_claim": owner_claim.clone(),
+                "capability_request_id": capability_request_id,
+                "outcome": HostCapabilityOutcomeKind::Ok,
+                "output": "{\"matches\":1}",
+                "receipt_ref": "receipt.unix.host"
+            }
+        });
+        let frame = StdioFrame {
+            channel: RUNTIME_CHANNEL.to_owned(),
+            payload: payload.to_string(),
+        };
+        client
+            .write_all(encode_jsonl(&frame).as_bytes())
+            .expect("write fulfillment");
+        client.flush().expect("flush fulfillment");
+        let mut response = String::new();
+        std::io::BufReader::new(client.try_clone().expect("client reader"))
+            .read_line(&mut response)
+            .expect("the durable settlement is acknowledged within the Unix deadline");
+        let response = decode_jsonl(&response).expect("response frame");
+        let result: RuntimeResult =
+            serde_json::from_str(&response.payload).expect("runtime response");
+        assert!(matches!(
+            result,
+            RuntimeResult::CapabilitySettled { request_id, .. }
+                if request_id == "unix.host.fulfill"
+        ));
+        assert!(
+            !*resume_gate.0.lock().expect("resume test gate"),
+            "the fulfillment acknowledgement must precede resumed execution"
+        );
+
+        let (mut cancellation_client, cancellation_server) =
+            UnixStream::pair().expect("cancellation Unix stream pair");
+        cancellation_client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("cancellation deadline");
+        let cancellation_reader = std::io::BufReader::new(
+            cancellation_server
+                .try_clone()
+                .expect("cancellation server reader"),
+        );
+        let cancellation_task = std::thread::spawn(move || {
+            serve_shared_frames(
+                cancellation_reader,
+                cancellation_server,
+                cancellation_service,
+                cancellation_dispatcher,
+            )
+        });
+        let cancellation_payload = serde_json::json!({
+            "handshake": {"protocol_version": RUNTIME_PROTOCOL_VERSION},
+            "request": {
+                "method": "program_invocation_cancel",
+                "request_id": "unix.host.cancel",
+                "owner_claim": owner_claim,
+                "program_invocation_id": program_invocation_id
+            }
+        });
+        let cancellation_frame = StdioFrame {
+            channel: RUNTIME_CHANNEL.to_owned(),
+            payload: cancellation_payload.to_string(),
+        };
+        cancellation_client
+            .write_all(encode_jsonl(&cancellation_frame).as_bytes())
+            .expect("write cancellation");
+        cancellation_client.flush().expect("flush cancellation");
+        let mut cancellation_response = String::new();
+        std::io::BufReader::new(
+            cancellation_client
+                .try_clone()
+                .expect("cancellation client reader"),
+        )
+        .read_line(&mut cancellation_response)
+        .expect("cancellation remains responsive while resume is blocked");
+        let cancellation_response =
+            decode_jsonl(&cancellation_response).expect("cancellation response frame");
+        let cancellation_result: RuntimeResult =
+            serde_json::from_str(&cancellation_response.payload)
+                .expect("cancellation runtime response");
+        assert!(matches!(
+            cancellation_result,
+            RuntimeResult::Cancelled { request_id } if request_id == "unix.host.cancel"
+        ));
+
+        {
+            let (released, signal) = resume_gate.as_ref();
+            *released.lock().expect("resume test gate") = true;
+            signal.notify_one();
+        }
+        client
+            .shutdown(std::net::Shutdown::Both)
+            .expect("close client");
+        assert!(server_task.join().expect("server task").is_ok());
+        cancellation_client
+            .shutdown(std::net::Shutdown::Both)
+            .expect("close cancellation client");
+        assert!(
+            cancellation_task
+                .join()
+                .expect("cancellation server task")
+                .is_ok()
+        );
     }
 
     #[test]

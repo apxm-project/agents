@@ -932,6 +932,57 @@ pub struct EvidenceRecord {
     pub node_execution_id: Option<NodeExecutionId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub occurrence_id: Option<OccurrenceId>,
+    /// The bounded typed error carried by a terminal runtime fact. This keeps
+    /// failure classification inspectable without exposing the raw fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typed_error: Option<EvidenceTypedError>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceErrorCategory {
+    Validation,
+    Admission,
+    Authority,
+    Configuration,
+    Unavailable,
+    Conflict,
+    OutcomeUnknown,
+    Internal,
+}
+
+/// Public projection of the runtime's existing typed-error envelope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceTypedError {
+    pub error_id: String,
+    pub category: EvidenceErrorCategory,
+    pub code_ref: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details_digest: Option<String>,
+}
+
+impl EvidenceTypedError {
+    fn validate(&self) -> Result<(), ContractValidationError> {
+        if self.error_id.len() > MAX_REF_BYTES || !is_identifier(&self.error_id) {
+            return Err(ContractValidationError::InvalidRef { kind: "error_id" });
+        }
+        if self.code_ref.len() > MAX_REF_BYTES || !is_identifier(&self.code_ref) {
+            return Err(ContractValidationError::InvalidRef { kind: "code_ref" });
+        }
+        if self.message.is_empty() || self.message.len() > 4096 {
+            return Err(ContractValidationError::InvalidReadRequest);
+        }
+        if self
+            .details_digest
+            .as_ref()
+            .is_some_and(|value| !is_digest(value))
+        {
+            return Err(ContractValidationError::InvalidDigest);
+        }
+        Ok(())
+    }
 }
 
 impl EvidenceRecord {
@@ -951,6 +1002,8 @@ impl EvidenceRecord {
             node_execution_id: &'a Option<NodeExecutionId>,
             #[serde(skip_serializing_if = "Option::is_none")]
             occurrence_id: &'a Option<OccurrenceId>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            typed_error: &'a Option<EvidenceTypedError>,
         }
         let envelope = EvidenceEnvelope {
             evidence_ref: &self.evidence_ref,
@@ -959,6 +1012,7 @@ impl EvidenceRecord {
             fact_kind: self.fact_kind,
             node_execution_id: &self.node_execution_id,
             occurrence_id: &self.occurrence_id,
+            typed_error: &self.typed_error,
         };
         let bytes = serde_json::to_vec(&envelope).expect("typed evidence envelope serializes");
         let mut hasher = Sha256::new();
@@ -972,6 +1026,15 @@ impl EvidenceRecord {
         }
         if self.occurrence_id.is_some() && self.node_execution_id.is_none() {
             return Err(ContractValidationError::InvalidReadRequest);
+        }
+        if let Some(error) = &self.typed_error {
+            if !matches!(
+                self.fact_kind,
+                EvidenceFactKind::InvocationFailed | EvidenceFactKind::EffectOutcomeUnknown
+            ) {
+                return Err(ContractValidationError::InvalidReadRequest);
+            }
+            error.validate()?;
         }
         if self.evidence_digest != self.computed_digest() {
             return Err(ContractValidationError::InvalidDigest);

@@ -25,14 +25,15 @@ pub mod execution_contracts;
 pub use execution_contracts::{
     AttemptId, AuthoredPermission, Commitment, ContentReadResult, ContentRef,
     ContractValidationError, CorrelationId, EXECUTION_OBSERVATION_CONTRACT,
-    EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceFactKind, EvidenceRecord, EvidenceRef,
-    ExecutionCursor, ExecutionObservation, ExecutionPage, ExecutionReadRequest,
-    ExecutionReadResult, GrantRef, HostCapabilityObservation, HostCapabilityOutcomeKind,
-    NODE_EXECUTION_INSPECTION_CONTRACT, NodeExecutionId, NodeExecutionInspection,
-    NodeExecutionStatus, ObservationId, ObservationKind, ObservationTiming, OutputRef,
-    OutputVisibility, PrincipalRef, ProgramInstanceId, ProgramInvocationId,
-    ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef, ReadContext, ReadPurpose,
-    RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef, SessionOutputRef,
+    EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceErrorCategory, EvidenceFactKind,
+    EvidenceRecord, EvidenceRef, EvidenceTypedError, ExecutionCursor, ExecutionObservation,
+    ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, HostCapabilityObservation,
+    HostCapabilityOutcomeKind, NODE_EXECUTION_INSPECTION_CONTRACT, NodeExecutionId,
+    NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
+    ObservationTiming, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
+    ProgramInvocationId, ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef,
+    ReadContext, ReadPurpose, RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef,
+    SessionOutputRef,
 };
 
 /// Authoritative lifecycle state for one reserved EventRef.
@@ -68,7 +69,7 @@ pub const EXECUTION_ADMISSION_CONTRACT: &str = "apxm.runtime.execution-admission
 /// silently widened; clients opt into this separately negotiated surface.
 pub const RUNTIME_PROTOCOL_V2_VERSION: &str = "apxm.runtime.protocol/2";
 pub const EXECUTION_READ_SCHEMA_DIGEST: &str =
-    "sha256:e168df958f22f2f7c488aa6b4f5fa39d26a1b21822eeb502e9e6ccf7d13f651b";
+    "sha256:18a60760ac119570c3ef0e0facba4b7c8030035bb2a93f38430b128a8f5c375a";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

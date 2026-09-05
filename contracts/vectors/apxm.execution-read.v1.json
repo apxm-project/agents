@@ -329,6 +329,64 @@
     "expected_valid": false
   },
   {
+    "name": "evidence-page-exposes-terminal-typed-error",
+    "input": {
+      "kind": "evidence_page",
+      "request_id": "request.6",
+      "page": {
+        "items": [
+          {
+            "evidence_ref": "evidence.1",
+            "program_invocation_id": "invocation.1",
+            "sequence": 1,
+            "fact_kind": "invocation.failed",
+            "evidence_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "typed_error": {
+              "error_id": "model-failure.node.1",
+              "category": "unavailable",
+              "code_ref": "model_reported_timeout",
+              "message": "the provider reported a terminal timeout"
+            }
+          }
+        ],
+        "item_cursors": [{"position": 1, "token": "scope.cursor"}],
+        "high_watermark": {"position": 1, "token": "scope.cursor"},
+        "retention_floor": {"position": 1, "token": "scope.cursor"},
+        "has_more": false
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "non-terminal-evidence-rejects-typed-error",
+    "input": {
+      "kind": "evidence_page",
+      "request_id": "request.6",
+      "page": {
+        "items": [
+          {
+            "evidence_ref": "evidence.1",
+            "program_invocation_id": "invocation.1",
+            "sequence": 1,
+            "fact_kind": "invocation.admitted",
+            "evidence_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "typed_error": {
+              "error_id": "failure.node.1",
+              "category": "unavailable",
+              "code_ref": "unexpected_error",
+              "message": "invalid placement"
+            }
+          }
+        ],
+        "item_cursors": [{"position": 1, "token": "scope.cursor"}],
+        "high_watermark": {"position": 1, "token": "scope.cursor"},
+        "retention_floor": {"position": 1, "token": "scope.cursor"},
+        "has_more": false
+      }
+    },
+    "expected_valid": false
+  },
+  {
     "name": "typed-unavailable-failure",
     "input": {
       "kind": "failed",

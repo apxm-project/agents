@@ -23,6 +23,30 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "EvidenceTypedError": {
+      "type": "object",
+      "required": ["error_id", "category", "code_ref", "message"],
+      "properties": {
+        "error_id": { "$ref": "#/$defs/OpaqueRef" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "validation",
+            "admission",
+            "authority",
+            "configuration",
+            "unavailable",
+            "conflict",
+            "outcome_unknown",
+            "internal"
+          ]
+        },
+        "code_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "details_digest": { "$ref": "#/$defs/Digest" }
+      },
+      "additionalProperties": false
+    },
     "Cursor": {
       "type": "object",
       "required": ["position", "token"],
@@ -183,8 +207,21 @@
           "description": "SHA-256 over the canonical persisted evidence envelope with this field omitted."
         },
         "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
-        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" }
+        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+        "typed_error": { "$ref": "#/$defs/EvidenceTypedError" }
       },
+      "allOf": [
+        {
+          "if": { "required": ["typed_error"] },
+          "then": {
+            "properties": {
+              "fact_kind": {
+                "enum": ["invocation.failed", "effect.outcome_unknown"]
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "EvidencePage": {

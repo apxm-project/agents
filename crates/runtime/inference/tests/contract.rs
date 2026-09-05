@@ -364,13 +364,14 @@ fn post_send_non_idempotent_failure_is_outcome_unknown_without_duplicate() {
         ],
         false,
     );
-    let outcome = execute(&backend, &request(), RetryPolicy { max_attempts: 3 });
+    let execution = execute_with_attempt(&backend, &request(), RetryPolicy { max_attempts: 3 });
     assert_eq!(
-        outcome,
+        execution.outcome,
         ModelOutcome::ModelOutcomeUnknown {
             uncertain_usage: None
         }
     );
+    assert_eq!(execution.outcome_unknown_error, Some(error()));
     assert_eq!(
         backend.sends.get(),
         1,

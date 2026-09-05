@@ -183,7 +183,13 @@ pub struct RuntimeService {
     /// Runtime-owned immutable admission carriers. When absent, invocation
     /// admission remains fail-closed.
     admission_profile: Option<RuntimeAdmissionProfile>,
+    #[cfg(test)]
+    resume_test_gate: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
+
+/// Maximum admitted invocations that may be queued or executing effects in
+/// one service process. Parked continuations do not consume this capacity.
+pub(crate) const MAX_ACTIVE_INVOCATIONS: usize = 64;
 
 /// Process-local wakeup for owner-side observation subscribers.  The durable
 /// commit adapter remains the source of truth; this signal only avoids polling
@@ -382,6 +388,8 @@ impl RuntimeService {
             startup_error: None,
             observation_signal,
             admission_profile: None,
+            #[cfg(test)]
+            resume_test_gate: None,
         }
     }
 
@@ -657,6 +665,17 @@ impl RuntimeExecutionBackend {
         }
     }
 
+    fn invocation_status(
+        &self,
+        invocation: &str,
+    ) -> Option<apxm_runtime_protocol::ProgramInvocationStatus> {
+        match self {
+            Self::Memory(commit) => commit.invocation_status(invocation),
+            Self::Filesystem(commit) => commit.invocation_status(invocation),
+            Self::Unavailable(_) => None,
+        }
+    }
+
     fn load_continuation(
         &self,
         program_instance_ref: &ProgramInstanceRef,
@@ -764,9 +783,25 @@ struct InstanceState {
 struct InvocationState {
     request_id: String,
     input_fingerprint: String,
+    /// Exact bounded input retained until the invocation settles, so a process
+    /// restart can continue an admitted invocation under the same identity.
+    input: Option<Value>,
     program_invocation_id: String,
+    phase: InvocationExecutionPhase,
     /// `None` while the owner is executing outside the service mutex.
     result: Option<RuntimeResult>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum InvocationExecutionPhase {
+    /// The invocation identity and input are durable, but no worker has been
+    /// allowed to reach an effect boundary.
+    #[default]
+    Pending,
+    /// A worker crossed its durable start marker. A restart must reconcile or
+    /// mark uncertainty; it must never redispatch this invocation blindly.
+    Running,
 }
 
 /// All immutable/materialized inputs needed to execute one invocation after
@@ -861,6 +896,56 @@ impl PreparedInvocation {
     }
 }
 
+/// Immutable lease for resuming one durably settled host capability outside
+/// the service mutex. The settlement and the resume-start marker are persisted
+/// separately so restart can distinguish safe pending work from uncertainty.
+pub(crate) struct PreparedResume {
+    capability_request_id: String,
+    invocation_request_id: String,
+    program_instance_id: String,
+    invocation_id: String,
+    delivered: Value,
+    continuation: Continuation,
+    artifact_bytes: Vec<u8>,
+    materials: InvocationMaterials,
+    handlers: Option<AdmittedPackageHandlers>,
+    package_root: Option<PathBuf>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    execution_backend: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Arc<ObservationRecorder>,
+    cancellation: CancellationToken,
+    #[cfg(test)]
+    test_gate: Option<Arc<(Mutex<bool>, Condvar)>>,
+}
+
+impl PreparedResume {
+    pub(crate) fn execute(&self) -> Result<Value, String> {
+        #[cfg(test)]
+        if let Some(gate) = &self.test_gate {
+            let (released, signal) = gate.as_ref();
+            let mut released = released.lock().expect("resume test gate lock");
+            while !*released {
+                released = signal.wait(released).expect("resume test gate lock");
+            }
+        }
+        block_on(resume_admitted_artifact_with_runtime_ports(
+            self.continuation.air.clone(),
+            &self.artifact_bytes,
+            &self.materials,
+            self.handlers.as_ref(),
+            self.package_root.as_deref(),
+            self.sandbox_registry.clone(),
+            self.execution_backend.clone(),
+            Some(self.observation_sink.clone()),
+            Some(self.cancellation.clone()),
+            ProgramInstanceRef::new(self.program_instance_id.clone()),
+            apxm_kernel::EventRef::new(self.capability_request_id.clone())
+                .map_err(|error| error.to_string())?,
+            self.delivered.clone(),
+        ))
+    }
+}
+
 struct ReservationState {
     owner_claim: RuntimeOwnerClaim,
     type_id: String,
@@ -880,6 +965,9 @@ struct HostCapabilitySettlementState {
     program_instance_id: String,
     owner_claim: RuntimeOwnerClaim,
     settlement: HostCapabilitySettlement,
+    /// Set durably immediately before a worker resumes the parked
+    /// continuation. Once true, restart may reconcile but must not resend.
+    resume_started: bool,
     state_entry: StateEntry,
 }
 
@@ -921,25 +1009,29 @@ struct DurableInstanceState {
 struct DurableInvocationState {
     request_id: String,
     input_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input: Option<Value>,
+    /// JSON `null` is a valid invocation input but deserializes as `None` for
+    /// `Option<Value>`. This presence bit preserves that distinction while
+    /// retaining compatibility with metadata written before inputs were kept.
+    #[serde(default)]
+    input_present: bool,
     program_invocation_id: String,
-    result: RuntimeResult,
+    #[serde(default)]
+    phase: InvocationExecutionPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<RuntimeResult>,
 }
 
 fn durable_invocation(invocation: &InvocationState) -> DurableInvocationState {
     DurableInvocationState {
         request_id: invocation.request_id.clone(),
         input_fingerprint: invocation.input_fingerprint.clone(),
+        input: invocation.input.clone(),
+        input_present: invocation.input.is_some(),
         program_invocation_id: invocation.program_invocation_id.clone(),
-        // A running invocation cannot survive a process restart. Persist its
-        // durable projection as uncertain so a cancellation marker never
-        // becomes an orphan and callers can reconcile it.
-        result: invocation
-            .result
-            .clone()
-            .unwrap_or_else(|| RuntimeResult::Failed {
-                request_id: invocation.request_id.clone(),
-                code: "outcome_unknown".to_owned(),
-            }),
+        phase: invocation.phase,
+        result: invocation.result.clone(),
     }
 }
 
@@ -970,6 +1062,8 @@ struct DurableHostCapabilitySettlementState {
     program_instance_id: String,
     owner_claim: RuntimeOwnerClaim,
     settlement: HostCapabilitySettlement,
+    #[serde(default)]
+    resume_started: bool,
     state_entry: DurableStateEntry,
 }
 
@@ -1146,6 +1240,7 @@ impl RuntimeService {
                             program_instance_id: state.program_instance_id.clone(),
                             owner_claim: state.owner_claim.clone(),
                             settlement: state.settlement.clone(),
+                            resume_started: state.resume_started,
                             state_entry: Self::durable_entry(state.state_entry),
                         },
                     )
@@ -1219,9 +1314,20 @@ impl RuntimeService {
             }
             let mut invocation_history = durable.invocation_history;
             for (request_id, invocation) in &invocation_history {
+                let restored_input = if invocation.input_present {
+                    Some(invocation.input.clone().unwrap_or(Value::Null))
+                } else {
+                    invocation.input.clone()
+                };
+                let input_matches = restored_input.as_ref().is_none_or(|input| {
+                    serde_json::to_string(input).ok().as_deref()
+                        == Some(invocation.input_fingerprint.as_str())
+                });
                 if request_id.trim().is_empty()
                     || invocation.request_id != *request_id
                     || invocation.program_invocation_id.trim().is_empty()
+                    || !input_matches
+                    || (invocation.result.is_none() && restored_input.is_none())
                     || !invocation
                         .program_invocation_id
                         .starts_with(&format!("{instance_id}:"))
@@ -1254,14 +1360,23 @@ impl RuntimeService {
                     let state = InvocationState {
                         request_id: invocation.request_id,
                         input_fingerprint: invocation.input_fingerprint,
+                        input: if invocation.input_present {
+                            Some(invocation.input.unwrap_or(Value::Null))
+                        } else {
+                            invocation.input
+                        },
                         program_invocation_id: invocation.program_invocation_id,
-                        result: Some(invocation.result),
+                        phase: invocation.phase,
+                        result: invocation.result,
                     };
                     let durable_state = DurableInvocationState {
                         request_id: state.request_id.clone(),
                         input_fingerprint: state.input_fingerprint.clone(),
+                        input: state.input.clone(),
+                        input_present: state.input.is_some(),
                         program_invocation_id: state.program_invocation_id.clone(),
-                        result: state.result.clone().expect("rehydrated result"),
+                        phase: state.phase,
+                        result: state.result.clone(),
                     };
                     if let Some(existing) = invocation_history.get(&state.request_id) {
                         if existing.program_invocation_id != state.program_invocation_id
@@ -1286,8 +1401,14 @@ impl RuntimeService {
                         InvocationState {
                             request_id: invocation.request_id,
                             input_fingerprint: invocation.input_fingerprint,
+                            input: if invocation.input_present {
+                                Some(invocation.input.unwrap_or(Value::Null))
+                            } else {
+                                invocation.input
+                            },
                             program_invocation_id: invocation.program_invocation_id,
-                            result: Some(invocation.result),
+                            phase: invocation.phase,
+                            result: invocation.result,
                         },
                     )
                 })
@@ -1420,6 +1541,7 @@ impl RuntimeService {
                         program_instance_id: durable.program_instance_id,
                         owner_claim: durable.owner_claim,
                         settlement: durable.settlement,
+                        resume_started: durable.resume_started,
                         state_entry,
                     },
                 )
@@ -1910,6 +2032,22 @@ impl RuntimeService {
                 ..
             }
         );
+        let service_terminal_inspection = match &request {
+            RuntimeRequestV2::ProgramInvocationInspect {
+                program_invocation_id,
+                node_execution_id: None,
+                ..
+            } => self
+                .service_invocation_inspection(program_invocation_id.as_str())
+                .filter(|inspection| {
+                    matches!(
+                        inspection.status,
+                        apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
+                            | apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
+                    )
+                }),
+            _ => None,
+        };
         if !negotiated.contains(&feature) {
             return Ok(RuntimeResultV2::Failed {
                 request_id,
@@ -1939,7 +2077,7 @@ impl RuntimeService {
                 inspection,
             }) if !node_requested => Ok(RuntimeResultV2::ProgramInvocationInspection {
                 request_id,
-                inspection,
+                inspection: service_terminal_inspection.unwrap_or(inspection),
             }),
             Ok(apxm_runtime_protocol::ExecutionReadResult::ProgramInvocationInspection {
                 ..
@@ -1983,11 +2121,79 @@ impl RuntimeService {
             Ok(apxm_runtime_protocol::ExecutionReadResult::EvidencePage { page }) => {
                 Ok(RuntimeResultV2::EvidencePage { request_id, page })
             }
+            Err(CommitLocalError::InvalidRead(_))
+                if !node_requested
+                    && matches!(&request, RuntimeRequestV2::ProgramInvocationInspect { .. }) =>
+            {
+                let RuntimeRequestV2::ProgramInvocationInspect {
+                    program_invocation_id,
+                    ..
+                } = &request
+                else {
+                    unreachable!()
+                };
+                match self.service_invocation_inspection(program_invocation_id.as_str()) {
+                    Some(inspection) => Ok(RuntimeResultV2::ProgramInvocationInspection {
+                        request_id,
+                        inspection,
+                    }),
+                    None => Ok(RuntimeResultV2::Failed {
+                        request_id,
+                        code: RuntimeFailureCode::NotFound,
+                    }),
+                }
+            }
             Err(error) => Ok(RuntimeResultV2::Failed {
                 request_id,
                 code: runtime_failure_code(&error),
             }),
         }
+    }
+
+    fn service_invocation_inspection(
+        &self,
+        invocation_id: &str,
+    ) -> Option<apxm_runtime_protocol::ProgramInvocationInspection> {
+        let instance_id = self.invocation_index.get(invocation_id)?;
+        let invocation = self
+            .instances
+            .get(instance_id)?
+            .invocation_history
+            .values()
+            .find(|value| value.program_invocation_id == invocation_id)?;
+        let status = match &invocation.result {
+            None if invocation.phase == InvocationExecutionPhase::Pending => {
+                apxm_runtime_protocol::ProgramInvocationStatus::AdmissionPending
+            }
+            None => apxm_runtime_protocol::ProgramInvocationStatus::Running,
+            Some(RuntimeResult::ProgramInvocationStarted { .. }) => self
+                .execution_backend
+                .invocation_status(invocation_id)
+                .unwrap_or(apxm_runtime_protocol::ProgramInvocationStatus::Running),
+            Some(RuntimeResult::Cancelled { .. }) => {
+                apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
+            }
+            Some(RuntimeResult::Failed { code, .. }) if code == "outcome_unknown" => {
+                apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
+            }
+            Some(RuntimeResult::Failed { .. }) => {
+                apxm_runtime_protocol::ProgramInvocationStatus::Failed
+            }
+            Some(_) => apxm_runtime_protocol::ProgramInvocationStatus::Failed,
+        };
+        Some(apxm_runtime_protocol::ProgramInvocationInspection {
+            program_invocation_id: apxm_runtime_protocol::ProgramInvocationId::new(invocation_id)
+                .ok()?,
+            status,
+            node_execution_refs: Vec::new(),
+            output_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            cursor: apxm_runtime_protocol::ExecutionCursor::new(
+                0,
+                format!("service-state.{invocation_id}"),
+            )
+            .ok()?,
+        })
     }
 
     /// Record a client disconnect. This does not fabricate `finish_reason: stop`.
@@ -2081,12 +2287,13 @@ impl RuntimeService {
                 }
                 Ok(self.settle_host_capability(
                     request_id,
-                    owner_claim,
+                    owner_claim.clone(),
                     capability_request_id,
                     outcome,
                     output,
                     receipt_ref,
                     message,
+                    true,
                 ))
             }
             RuntimeRequest::CapabilityCancel {
@@ -2109,6 +2316,7 @@ impl RuntimeService {
                     None,
                     None,
                     message,
+                    true,
                 ))
             }
             RuntimeRequest::ProgramInvocationCancel {
@@ -2317,6 +2525,13 @@ impl RuntimeService {
                 Ok(prepared) => prepared,
                 Err(result) => return result,
             };
+        if !matches!(self.begin_invocation(&prepared.invocation_id), Ok(true)) {
+            self.release_invocation_claim(&prepared.invocation_id);
+            return RuntimeResult::Failed {
+                request_id: prepared.request_id.clone(),
+                code: "runtime_state_unavailable".to_owned(),
+            };
+        }
         let execution = prepared.execute();
         self.finish_invocation(&prepared, execution)
     }
@@ -2386,13 +2601,12 @@ impl RuntimeService {
             if self.cancelled.contains_key(&prior.program_invocation_id) {
                 return Err(RuntimeResult::Cancelled { request_id });
             }
-            return Err(prior
-                .result
-                .clone()
-                .unwrap_or_else(|| RuntimeResult::Failed {
+            return Err(prior.result.clone().unwrap_or_else(|| {
+                RuntimeResult::ProgramInvocationStarted {
                     request_id,
-                    code: "invocation_in_progress".to_owned(),
-                }));
+                    program_invocation_id: prior.program_invocation_id.clone(),
+                }
+            }));
         }
         if let Some(prior) = instance.invocation.as_ref() {
             if prior.request_id == request_id {
@@ -2400,13 +2614,12 @@ impl RuntimeService {
                     return Err(RuntimeResult::Cancelled { request_id });
                 }
                 if prior.input_fingerprint == input_fingerprint {
-                    return Err(prior
-                        .result
-                        .clone()
-                        .unwrap_or_else(|| RuntimeResult::Failed {
+                    return Err(prior.result.clone().unwrap_or_else(|| {
+                        RuntimeResult::ProgramInvocationStarted {
                             request_id: request_id.clone(),
-                            code: "invocation_in_progress".to_owned(),
-                        }));
+                            program_invocation_id: prior.program_invocation_id.clone(),
+                        }
+                    }));
                 }
                 return Err(RuntimeResult::Failed {
                     request_id,
@@ -2419,6 +2632,24 @@ impl RuntimeService {
                     code: "invocation_already_started".to_owned(),
                 });
             }
+        }
+        let owned_work = self
+            .instances
+            .values()
+            .filter_map(|instance| instance.invocation.as_ref())
+            .filter(|invocation| {
+                invocation.result.is_none()
+                    && (invocation.phase == InvocationExecutionPhase::Pending
+                        || self
+                            .active_cancellations
+                            .contains_key(&invocation.program_invocation_id))
+            })
+            .count();
+        if owned_work >= MAX_ACTIVE_INVOCATIONS {
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "invocation_capacity_exhausted".to_owned(),
+            });
         }
         let instance_base_bytes = instance.state_entry.bytes;
         let request_bytes = u64::try_from(request_id.len()).unwrap_or(u64::MAX);
@@ -2506,7 +2737,9 @@ impl RuntimeService {
             let invocation = InvocationState {
                 request_id: request_id.clone(),
                 input_fingerprint: input_fingerprint.clone(),
+                input: Some(input),
                 program_invocation_id: invocation_id.clone(),
+                phase: InvocationExecutionPhase::Pending,
                 result: None,
             };
             instance
@@ -2601,6 +2834,516 @@ impl RuntimeService {
             };
         }
         result
+    }
+
+    /// Rebuild the immutable execution lease for one durably admitted pending
+    /// invocation. The active cancellation token is the process-local worker
+    /// claim, so concurrent identical starts cannot enqueue a duplicate.
+    pub(crate) fn claim_pending_invocation(
+        &mut self,
+        invocation_id: &str,
+    ) -> Result<Option<PreparedInvocation>, String> {
+        if self.active_cancellations.contains_key(invocation_id) {
+            return Ok(None);
+        }
+        if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
+            return Err("invocation_capacity_exhausted".to_owned());
+        }
+        let instance_id = self
+            .invocation_index
+            .get(invocation_id)
+            .cloned()
+            .ok_or_else(|| "unknown_invocation".to_owned())?;
+        if self
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let (request_id, input, artifact_digest, bound_materials) = {
+            let instance = self
+                .instances
+                .get(&instance_id)
+                .ok_or_else(|| "unknown_instance".to_owned())?;
+            let invocation = instance
+                .invocation
+                .as_ref()
+                .filter(|value| value.program_invocation_id == invocation_id)
+                .ok_or_else(|| "unknown_invocation".to_owned())?;
+            if invocation.result.is_some() || invocation.phase != InvocationExecutionPhase::Pending
+            {
+                return Ok(None);
+            }
+            (
+                invocation.request_id.clone(),
+                invocation
+                    .input
+                    .clone()
+                    .ok_or_else(|| "pending_invocation_input_unavailable".to_owned())?,
+                instance.artifact_digest.clone(),
+                instance
+                    .materials
+                    .clone()
+                    .ok_or_else(|| "missing_invocation_admission".to_owned())?,
+            )
+        };
+        let artifact_bytes = self
+            .artifacts
+            .get(&artifact_digest)
+            .ok_or_else(|| "unknown_artifact".to_owned())?
+            .to_vec();
+        let artifact = ExecutableArtifact::decode_for_execution(&artifact_bytes, &artifact_digest)
+            .map_err(|_| "invalid_artifact".to_owned())?;
+        validate_package_permission_resolution(&artifact.air, self.package_root.as_deref())?;
+        let mut materials = bound_materials;
+        invocation_id.clone_into(&mut materials.admission.invocation_id);
+        let cancellation = CancellationToken::new();
+        self.active_cancellations
+            .insert(invocation_id.to_owned(), cancellation.clone());
+        Ok(Some(PreparedInvocation {
+            request_id,
+            program_instance_id: instance_id,
+            invocation_id: invocation_id.to_owned(),
+            input,
+            air: artifact.air,
+            artifact_bytes,
+            materials,
+            handlers: self.handlers.clone(),
+            package_root: self.package_root.clone(),
+            sandbox_registry: self.sandbox_registry.clone(),
+            execution_backend: self.execution_backend.commit_port(),
+            observation_sink: self.observation_sink.clone(),
+            broker: self.broker.clone(),
+            approval_policy: self.approval_policy,
+            cancellation,
+            resumable: self.resumable_invocations,
+        }))
+    }
+
+    /// Cross the durable worker-start marker immediately before execution.
+    /// Once this succeeds, restart recovery may not safely redispatch.
+    pub(crate) fn begin_invocation(&mut self, invocation_id: &str) -> Result<bool, String> {
+        let instance_id = self
+            .invocation_index
+            .get(invocation_id)
+            .cloned()
+            .ok_or_else(|| "unknown_invocation".to_owned())?;
+        let instance = self
+            .instances
+            .get_mut(&instance_id)
+            .ok_or_else(|| "unknown_instance".to_owned())?;
+        let Some(invocation) = instance.invocation.as_mut() else {
+            return Ok(false);
+        };
+        if invocation.program_invocation_id != invocation_id
+            || invocation.result.is_some()
+            || invocation.phase != InvocationExecutionPhase::Pending
+        {
+            return Ok(false);
+        }
+        invocation.phase = InvocationExecutionPhase::Running;
+        if let Some(history) = instance.invocation_history.get_mut(&invocation.request_id) {
+            history.phase = InvocationExecutionPhase::Running;
+        }
+        if let Err(error) = self.persist_runtime_state() {
+            if let Some(instance) = self.instances.get_mut(&instance_id)
+                && let Some(invocation) = instance.invocation.as_mut()
+            {
+                invocation.phase = InvocationExecutionPhase::Pending;
+                if let Some(history) = instance.invocation_history.get_mut(&invocation.request_id) {
+                    history.phase = InvocationExecutionPhase::Pending;
+                }
+            }
+            self.active_cancellations.remove(invocation_id);
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn release_invocation_claim(&mut self, invocation_id: &str) {
+        self.active_cancellations.remove(invocation_id);
+    }
+
+    /// Claim the still-parked continuation for a durably accepted host
+    /// settlement. The returned lease can execute without holding the service
+    /// mutex; a duplicate settlement observes the process-local claim and
+    /// cannot enqueue another resume.
+    pub(crate) fn claim_host_capability_resume(
+        &mut self,
+        capability_request_id: &str,
+    ) -> Result<Option<PreparedResume>, String> {
+        let settlement_state = self
+            .host_capability_settlements
+            .get(capability_request_id)
+            .ok_or_else(|| "unknown_capability_request".to_owned())?;
+        if settlement_state.resume_started {
+            return Ok(None);
+        }
+        let instance_id = settlement_state.program_instance_id.clone();
+        let settlement = settlement_state.settlement.clone();
+        let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
+        let Some(committed) = self
+            .execution_backend
+            .load_continuation(&program_instance_ref)
+        else {
+            return Ok(None);
+        };
+        let continuation: Continuation = serde_json::from_value(committed.payload)
+            .map_err(|error| format!("invalid committed continuation: {error}"))?;
+        if continuation.event_ref.as_ref().map(|value| value.as_str())
+            != Some(capability_request_id)
+        {
+            return Ok(None);
+        }
+        let instance = self
+            .instances
+            .get(&instance_id)
+            .ok_or_else(|| "unknown_instance".to_owned())?;
+        let invocation = instance
+            .invocation
+            .as_ref()
+            .ok_or_else(|| "parked continuation has no invocation state".to_owned())?;
+        let invocation_id = continuation.program_invocation_ref.as_str().to_owned();
+        if invocation.program_invocation_id != invocation_id {
+            return Err("parked continuation invocation mismatch".to_owned());
+        }
+        if invocation.result.is_some() || self.active_cancellations.contains_key(&invocation_id) {
+            return Ok(None);
+        }
+        if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
+            return Err("invocation_capacity_exhausted".to_owned());
+        }
+        let artifact_bytes = self
+            .artifacts
+            .get(&instance.artifact_digest)
+            .ok_or_else(|| "parked invocation artifact is unavailable".to_owned())?
+            .to_vec();
+        let mut materials = instance
+            .materials
+            .clone()
+            .ok_or_else(|| "parked invocation admission is unavailable".to_owned())?;
+        materials.admission.invocation_id.clone_from(&invocation_id);
+        let cancellation = CancellationToken::new();
+        self.active_cancellations
+            .insert(invocation_id.clone(), cancellation.clone());
+        let delivered = Value::String(
+            serde_json::to_string(&settlement)
+                .map_err(|error| format!("host capability settlement encode failed: {error}"))?,
+        );
+        Ok(Some(PreparedResume {
+            capability_request_id: capability_request_id.to_owned(),
+            invocation_request_id: invocation.request_id.clone(),
+            program_instance_id: instance_id,
+            invocation_id,
+            delivered,
+            continuation,
+            artifact_bytes,
+            materials,
+            handlers: self.handlers.clone(),
+            package_root: self.package_root.clone(),
+            sandbox_registry: self.sandbox_registry.clone(),
+            execution_backend: self.execution_backend.commit_port(),
+            observation_sink: self.observation_sink.clone(),
+            cancellation,
+            #[cfg(test)]
+            test_gate: self.resume_test_gate.clone(),
+        }))
+    }
+
+    /// Persist the resume-start marker immediately before a worker may call a
+    /// provider or capability. Restart treats this marker as a possible send.
+    pub(crate) fn begin_host_capability_resume(
+        &mut self,
+        prepared: &PreparedResume,
+    ) -> Result<bool, String> {
+        let Some(state) = self
+            .host_capability_settlements
+            .get_mut(&prepared.capability_request_id)
+        else {
+            return Ok(false);
+        };
+        if state.resume_started
+            || state.program_instance_id != prepared.program_instance_id
+            || !self
+                .active_cancellations
+                .contains_key(&prepared.invocation_id)
+        {
+            return Ok(false);
+        }
+        state.resume_started = true;
+        if let Err(error) = self.persist_runtime_state() {
+            if let Some(state) = self
+                .host_capability_settlements
+                .get_mut(&prepared.capability_request_id)
+            {
+                state.resume_started = false;
+            }
+            self.active_cancellations.remove(&prepared.invocation_id);
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn finish_host_capability_resume(
+        &mut self,
+        prepared: &PreparedResume,
+        output: Result<Value, String>,
+    ) -> RuntimeResult {
+        self.active_cancellations.remove(&prepared.invocation_id);
+        let suspended = output
+            .as_ref()
+            .ok()
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            == Some("suspended");
+        let result = match output {
+            Ok(output) => invocation_result_from_execution_output(
+                prepared.invocation_request_id.clone(),
+                prepared.invocation_id.clone(),
+                &output,
+            ),
+            Err(_) => RuntimeResult::Failed {
+                request_id: prepared.invocation_request_id.clone(),
+                code: "outcome_unknown".to_owned(),
+            },
+        };
+        if !suspended
+            && let Some(instance) = self.instances.get_mut(&prepared.program_instance_id)
+            && let Some(invocation) = instance.invocation.as_mut()
+            && invocation.program_invocation_id == prepared.invocation_id
+        {
+            invocation.result = Some(result.clone());
+            if let Some(history) = instance
+                .invocation_history
+                .get_mut(&prepared.invocation_request_id)
+            {
+                history.result = Some(result.clone());
+            }
+        }
+        self.observation_signal.notify();
+        if self.persist_runtime_state().is_err() {
+            return RuntimeResult::Failed {
+                request_id: prepared.invocation_request_id.clone(),
+                code: "runtime_state_unavailable".to_owned(),
+            };
+        }
+        result
+    }
+
+    /// Recover only settlements whose resume-start marker was never crossed.
+    /// If a started resume still points at the same continuation, execution
+    /// may have reached an external effect and is made uncertain instead of
+    /// being sent again.
+    pub(crate) fn recover_host_capability_resumes(
+        &mut self,
+    ) -> Result<Vec<PreparedResume>, String> {
+        let capability_request_ids = self
+            .host_capability_settlements
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut pending = Vec::new();
+        let mut uncertain = Vec::new();
+        for capability_request_id in capability_request_ids {
+            let Some(state) = self.host_capability_settlements.get(&capability_request_id) else {
+                continue;
+            };
+            let same_continuation = self
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(state.program_instance_id.clone()))
+                .and_then(|committed| {
+                    serde_json::from_value::<Continuation>(committed.payload).ok()
+                })
+                .and_then(|continuation| continuation.event_ref)
+                .is_some_and(|event_ref| event_ref.as_str() == capability_request_id);
+            if !same_continuation {
+                continue;
+            }
+            if state.resume_started {
+                uncertain.push(state.program_instance_id.clone());
+            } else if let Some(prepared) =
+                self.claim_host_capability_resume(&capability_request_id)?
+            {
+                pending.push(prepared);
+            }
+        }
+        let mut changed = false;
+        for instance_id in uncertain {
+            let Some(instance) = self.instances.get_mut(&instance_id) else {
+                continue;
+            };
+            let Some(invocation) = instance.invocation.as_mut() else {
+                continue;
+            };
+            if invocation.result.is_some() {
+                continue;
+            }
+            let result = RuntimeResult::Failed {
+                request_id: invocation.request_id.clone(),
+                code: "outcome_unknown".to_owned(),
+            };
+            invocation.result = Some(result.clone());
+            if let Some(history) = instance.invocation_history.get_mut(&invocation.request_id) {
+                history.result = Some(result);
+            }
+            changed = true;
+        }
+        if changed {
+            self.persist_runtime_state()?;
+        }
+        Ok(pending)
+    }
+
+    /// Convert a durably pending invocation into a durable refusal when the
+    /// bounded dispatcher cannot reserve execution capacity. This keeps the
+    /// replay identity authoritative: an identical retry observes the same
+    /// refusal and cannot create a second invocation.
+    pub(crate) fn fail_pending_invocation(
+        &mut self,
+        invocation_id: &str,
+        code: &str,
+    ) -> RuntimeResult {
+        self.active_cancellations.remove(invocation_id);
+        let Some(instance_id) = self.invocation_index.get(invocation_id).cloned() else {
+            return RuntimeResult::Failed {
+                request_id: "unknown".to_owned(),
+                code: "unknown_invocation".to_owned(),
+            };
+        };
+        let Some(instance) = self.instances.get_mut(&instance_id) else {
+            return RuntimeResult::Failed {
+                request_id: "unknown".to_owned(),
+                code: "unknown_instance".to_owned(),
+            };
+        };
+        let Some(invocation) = instance
+            .invocation
+            .as_mut()
+            .filter(|value| value.program_invocation_id == invocation_id)
+        else {
+            return RuntimeResult::Failed {
+                request_id: "unknown".to_owned(),
+                code: "unknown_invocation".to_owned(),
+            };
+        };
+        let request_id = invocation.request_id.clone();
+        if let Some(result) = invocation.result.clone() {
+            return result;
+        }
+        if invocation.phase != InvocationExecutionPhase::Pending {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "outcome_unknown".to_owned(),
+            };
+        }
+        let result = RuntimeResult::Failed {
+            request_id: request_id.clone(),
+            code: code.to_owned(),
+        };
+        invocation.result = Some(result.clone());
+        if let Some(history) = instance.invocation_history.get_mut(&request_id) {
+            history.result = Some(result.clone());
+        }
+        if self.persist_runtime_state().is_err() {
+            if let Some(instance) = self.instances.get_mut(&instance_id) {
+                if let Some(invocation) = instance.invocation.as_mut() {
+                    invocation.result = None;
+                }
+                if let Some(history) = instance.invocation_history.get_mut(&request_id) {
+                    history.result = None;
+                }
+            }
+            return RuntimeResult::Failed {
+                request_id,
+                code: "runtime_state_unavailable".to_owned(),
+            };
+        }
+        result
+    }
+
+    /// Reconcile durable pending/running invocations at process startup.
+    /// Pending work was never allowed to reach an effect and may be queued.
+    /// Running work is never resent: a terminal commit is replayed, a parked
+    /// continuation remains parked, and every other case becomes uncertain.
+    pub(crate) fn recover_invocations(&mut self) -> Result<Vec<PreparedInvocation>, String> {
+        let candidates = self
+            .instances
+            .values()
+            .filter_map(|instance| instance.invocation.as_ref())
+            .filter(|invocation| invocation.result.is_none())
+            .map(|invocation| invocation.program_invocation_id.clone())
+            .collect::<Vec<_>>();
+        let mut pending = Vec::new();
+        let mut changed = false;
+        for invocation_id in candidates {
+            let instance_id = self
+                .invocation_index
+                .get(&invocation_id)
+                .cloned()
+                .ok_or_else(|| "unknown_invocation".to_owned())?;
+            if self
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
+                .is_some()
+            {
+                continue;
+            }
+            let phase = self
+                .instances
+                .get(&instance_id)
+                .and_then(|instance| instance.invocation.as_ref())
+                .map(|invocation| invocation.phase)
+                .ok_or_else(|| "unknown_invocation".to_owned())?;
+            if phase == InvocationExecutionPhase::Pending {
+                if let Some(prepared) = self.claim_pending_invocation(&invocation_id)? {
+                    pending.push(prepared);
+                }
+                continue;
+            }
+            let request_id = self
+                .instances
+                .get(&instance_id)
+                .and_then(|instance| instance.invocation.as_ref())
+                .map(|invocation| invocation.request_id.clone())
+                .ok_or_else(|| "unknown_invocation".to_owned())?;
+            let result = match self.execution_backend.invocation_status(&invocation_id) {
+                Some(apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn) => {
+                    RuntimeResult::ProgramInvocationStarted {
+                        request_id: request_id.clone(),
+                        program_invocation_id: invocation_id.clone(),
+                    }
+                }
+                Some(apxm_runtime_protocol::ProgramInvocationStatus::Failed) => {
+                    RuntimeResult::Failed {
+                        request_id: request_id.clone(),
+                        code: "invocation_failed".to_owned(),
+                    }
+                }
+                Some(apxm_runtime_protocol::ProgramInvocationStatus::Cancelled) => {
+                    RuntimeResult::Cancelled {
+                        request_id: request_id.clone(),
+                    }
+                }
+                _ => RuntimeResult::Failed {
+                    request_id: request_id.clone(),
+                    code: "outcome_unknown".to_owned(),
+                },
+            };
+            if let Some(instance) = self.instances.get_mut(&instance_id)
+                && let Some(invocation) = instance.invocation.as_mut()
+            {
+                invocation.result = Some(result.clone());
+                if let Some(history) = instance.invocation_history.get_mut(&request_id) {
+                    history.result = Some(result);
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_runtime_state()?;
+        }
+        Ok(pending)
     }
 
     fn cancel_invocation(
@@ -2887,6 +3630,7 @@ impl RuntimeService {
         output: Option<String>,
         receipt_ref: Option<String>,
         message: Option<String>,
+        resume_now: bool,
     ) -> RuntimeResult {
         if owner_claim.validate().is_err() {
             return RuntimeResult::Failed {
@@ -2922,8 +3666,9 @@ impl RuntimeService {
             }
             let program_instance_id = prior.program_instance_id.clone();
             let prior_settlement = prior.settlement.clone();
-            if let Some(parked_instance_id) =
-                self.parked_host_capability_instance(&capability_request_id)
+            if resume_now
+                && let Some(parked_instance_id) =
+                    self.parked_host_capability_instance(&capability_request_id)
                 && (parked_instance_id != program_instance_id
                     || self
                         .resume_host_capability_settlement(&prior_settlement)
@@ -2990,6 +3735,7 @@ impl RuntimeService {
                 program_instance_id: instance_id,
                 owner_claim,
                 settlement: settlement.clone(),
+                resume_started: false,
                 state_entry,
             },
         );
@@ -3007,7 +3753,7 @@ impl RuntimeService {
                 code: "runtime_state_unavailable".to_owned(),
             };
         }
-        if self.resume_host_capability_settlement(&settlement).is_err() {
+        if resume_now && self.resume_host_capability_settlement(&settlement).is_err() {
             return RuntimeResult::Failed {
                 request_id,
                 code: "capability_settlement_failed".to_owned(),
@@ -3024,9 +3770,18 @@ impl RuntimeService {
         &mut self,
         settlement: &HostCapabilitySettlement,
     ) -> Result<(), String> {
-        let payload = serde_json::to_string(settlement)
-            .map_err(|error| format!("host capability settlement encode failed: {error}"))?;
-        self.resume_fulfilled_event(&settlement.capability_request_id, Value::String(payload))
+        let Some(prepared) =
+            self.claim_host_capability_resume(&settlement.capability_request_id)?
+        else {
+            return Ok(());
+        };
+        if !self.begin_host_capability_resume(&prepared)? {
+            self.release_invocation_claim(&prepared.invocation_id);
+            return Ok(());
+        }
+        let output = prepared.execute();
+        self.finish_host_capability_resume(&prepared, output);
+        Ok(())
     }
 
     /// The instance whose parked continuation is waiting on this request.
@@ -3078,6 +3833,7 @@ impl RuntimeService {
                 None,
                 None,
                 Some("the Program Invocation was cancelled".to_owned()),
+                true,
             );
         }
     }
@@ -3139,6 +3895,7 @@ impl RuntimeService {
             self.sandbox_registry.clone(),
             self.execution_backend.commit_port(),
             Some(self.observation_sink.clone()),
+            None,
             ProgramInstanceRef::new(instance_id.clone()),
             apxm_kernel::EventRef::new(event_id.to_owned()).map_err(|error| error.to_string())?,
             delivered,
@@ -3404,6 +4161,16 @@ mod tests {
             .expect("canonical skill fixture artifact JSON")
     }
 
+    fn host_capability_air_bytes() -> Vec<u8> {
+        let raw = fs::read(fixture_dir().join("canonical-host-capability-execute.air.json"))
+            .expect("host capability fixture AIR");
+        let air: AirModule = serde_json::from_slice(&raw).expect("host capability fixture JSON");
+        ExecutableArtifact::from_air(&air)
+            .expect("canonical host capability fixture artifact")
+            .encode()
+            .expect("canonical host capability fixture artifact JSON")
+    }
+
     fn read_context(purpose: ReadPurpose) -> ReadContext {
         ReadContext {
             request_id: RequestId::new("read.request").expect("request id"),
@@ -3449,6 +4216,360 @@ mod tests {
 
         let second = RuntimeService::in_memory().with_runtime_state_dir(path);
         assert!(second.startup_error().is_none());
+    }
+
+    #[test]
+    fn pending_invocation_reopens_with_the_same_identity_and_input() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (instance_id, owner_claim, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, fixture_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let prepared = service
+                .prepare_invocation(
+                    "pending.start".to_owned(),
+                    instance_id.clone(),
+                    owner_claim.clone(),
+                    serde_json::json!({"prompt": "same"}),
+                )
+                .expect("durable pending invocation");
+            let invocation_id = prepared.invocation_id.clone();
+            service.release_invocation_claim(&invocation_id);
+            (instance_id, owner_claim, invocation_id)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        let recovered = reopened
+            .recover_invocations()
+            .expect("recover pending work");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].invocation_id, invocation_id);
+        assert_eq!(recovered[0].input, serde_json::json!({"prompt": "same"}));
+        reopened.release_invocation_claim(&invocation_id);
+
+        let replay = reopened.prepare_invocation(
+            "pending.start".to_owned(),
+            instance_id,
+            owner_claim,
+            serde_json::json!({"prompt": "same"}),
+        );
+        assert!(matches!(
+            replay,
+            Err(RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            }) if program_invocation_id == invocation_id
+        ));
+    }
+
+    #[test]
+    fn running_invocation_is_never_redispatched_after_restart() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (instance_id, owner_claim, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, fixture_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let prepared = service
+                .prepare_invocation(
+                    "running.start".to_owned(),
+                    instance_id.clone(),
+                    owner_claim.clone(),
+                    serde_json::json!({"prompt": "once"}),
+                )
+                .expect("durable pending invocation");
+            assert!(
+                service
+                    .begin_invocation(&prepared.invocation_id)
+                    .expect("durable running marker")
+            );
+            (instance_id, owner_claim, prepared.invocation_id)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(reopened.invocation_index.contains_key(&invocation_id));
+        assert!(
+            reopened
+                .recover_invocations()
+                .expect("reconcile running work")
+                .is_empty()
+        );
+        let replay = reopened.prepare_invocation(
+            "running.start".to_owned(),
+            instance_id,
+            owner_claim,
+            serde_json::json!({"prompt": "once"}),
+        );
+        assert!(matches!(
+            replay,
+            Err(RuntimeResult::Failed { code, .. }) if code == "outcome_unknown"
+        ));
+    }
+
+    #[test]
+    fn dispatcher_refusal_is_durable_and_replayed() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+        let instance_id = create_started(&mut service, fixture_air_bytes());
+        let owner_claim = owner_claim(&service, &instance_id);
+        let prepared = service
+            .prepare_invocation(
+                "capacity.start".to_owned(),
+                instance_id.clone(),
+                owner_claim.clone(),
+                Value::Null,
+            )
+            .expect("durable pending invocation");
+        let invocation_id = prepared.invocation_id.clone();
+        service.release_invocation_claim(&invocation_id);
+        assert!(matches!(
+            service.fail_pending_invocation(
+                &invocation_id,
+                "invocation_capacity_exhausted"
+            ),
+            RuntimeResult::Failed { ref code, .. }
+                if code == "invocation_capacity_exhausted"
+        ));
+        drop(prepared);
+        drop(service);
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(
+            reopened.startup_error().is_none(),
+            "{:?}",
+            reopened.startup_error()
+        );
+        assert!(reopened.instances.contains_key(&instance_id));
+        assert!(reopened.recover_invocations().unwrap().is_empty());
+        let replay = reopened.prepare_invocation(
+            "capacity.start".to_owned(),
+            instance_id,
+            owner_claim,
+            Value::Null,
+        );
+        match replay {
+            Err(RuntimeResult::Failed { code, .. }) => {
+                assert_eq!(code, "invocation_capacity_exhausted")
+            }
+            Err(other) => panic!("unexpected replay result: {other:?}"),
+            Ok(_) => panic!("dispatcher refusal replay prepared new work"),
+        }
+    }
+
+    #[test]
+    fn pending_host_settlement_reopens_as_one_resume() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (capability_request_id, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, host_capability_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "host.pending.start".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: owner_claim.clone(),
+                        input: Value::Null,
+                    },
+                )
+                .expect("host invocation starts");
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } = started
+            else {
+                panic!("host invocation did not park: {started:?}");
+            };
+            let continuation = service
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
+                .expect("host continuation is durable");
+            let continuation: Continuation =
+                serde_json::from_value(continuation.payload).expect("host continuation");
+            let capability_request_id = continuation
+                .event_ref
+                .expect("host request")
+                .as_str()
+                .to_owned();
+            assert!(matches!(
+                service.settle_host_capability(
+                    "host.pending.fulfill".to_owned(),
+                    owner_claim.clone(),
+                    capability_request_id.clone(),
+                    HostCapabilityOutcomeKind::Ok,
+                    Some("{\"matches\":1}".to_owned()),
+                    Some("receipt.host.pending".to_owned()),
+                    None,
+                    false,
+                ),
+                RuntimeResult::CapabilitySettled { .. }
+            ));
+            let first_claim = service
+                .claim_host_capability_resume(&capability_request_id)
+                .expect("first dispatcher claim")
+                .expect("pending host resume");
+            service.release_invocation_claim(&first_claim.invocation_id);
+            assert!(matches!(
+                service.settle_host_capability(
+                    "host.pending.fulfill.retry".to_owned(),
+                    owner_claim,
+                    capability_request_id.clone(),
+                    HostCapabilityOutcomeKind::Ok,
+                    Some("{\"matches\":1}".to_owned()),
+                    Some("receipt.host.pending".to_owned()),
+                    None,
+                    false,
+                ),
+                RuntimeResult::CapabilitySettled { .. }
+            ));
+            let retry_claim = service
+                .claim_host_capability_resume(&capability_request_id)
+                .expect("retry dispatcher claim")
+                .expect("the same durable settlement remains schedulable");
+            assert_eq!(retry_claim.invocation_id, first_claim.invocation_id);
+            service.release_invocation_claim(&retry_claim.invocation_id);
+            (capability_request_id, program_invocation_id)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(
+            reopened.startup_error().is_none(),
+            "{:?}",
+            reopened.startup_error()
+        );
+        assert_eq!(
+            reopened.parked_host_capability_instance(&capability_request_id),
+            reopened.invocation_index.get(&invocation_id).cloned()
+        );
+        assert!(
+            !reopened
+                .host_capability_settlements
+                .get(&capability_request_id)
+                .expect("durable settlement")
+                .resume_started
+        );
+        assert!(reopened.recover_invocations().unwrap().is_empty());
+        let recovered = reopened
+            .recover_host_capability_resumes()
+            .expect("recover pending host resume");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].capability_request_id, capability_request_id);
+        assert_eq!(recovered[0].invocation_id, invocation_id);
+        assert!(
+            reopened
+                .claim_host_capability_resume(&capability_request_id)
+                .expect("duplicate claim check")
+                .is_none(),
+            "the recovered resume owns the only process-local claim"
+        );
+    }
+
+    #[test]
+    fn started_host_resume_becomes_unknown_after_restart_without_resend() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (capability_request_id, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, host_capability_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "host.running.start".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: owner_claim.clone(),
+                        input: Value::Null,
+                    },
+                )
+                .expect("host invocation starts");
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } = started
+            else {
+                panic!("host invocation did not park: {started:?}");
+            };
+            let continuation = service
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(instance_id))
+                .expect("host continuation is durable");
+            let continuation: Continuation =
+                serde_json::from_value(continuation.payload).expect("host continuation");
+            let capability_request_id = continuation
+                .event_ref
+                .expect("host request")
+                .as_str()
+                .to_owned();
+            assert!(matches!(
+                service.settle_host_capability(
+                    "host.running.fulfill".to_owned(),
+                    owner_claim.clone(),
+                    capability_request_id.clone(),
+                    HostCapabilityOutcomeKind::Ok,
+                    Some("{\"matches\":1}".to_owned()),
+                    Some("receipt.host.running".to_owned()),
+                    None,
+                    false,
+                ),
+                RuntimeResult::CapabilitySettled { .. }
+            ));
+            let prepared = service
+                .claim_host_capability_resume(&capability_request_id)
+                .expect("claim host resume")
+                .expect("pending host resume");
+            assert!(
+                service
+                    .begin_host_capability_resume(&prepared)
+                    .expect("durable resume marker")
+            );
+            let replay = service.settle_host_capability(
+                "host.running.replay".to_owned(),
+                owner_claim,
+                capability_request_id.clone(),
+                HostCapabilityOutcomeKind::Ok,
+                Some("{\"matches\":1}".to_owned()),
+                Some("receipt.host.running".to_owned()),
+                None,
+                false,
+            );
+            assert!(matches!(replay, RuntimeResult::CapabilitySettled { .. }));
+            assert!(
+                service
+                    .claim_host_capability_resume(&capability_request_id)
+                    .unwrap()
+                    .is_none(),
+                "an identical retry must not enqueue a second resume"
+            );
+            (capability_request_id, program_invocation_id)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(reopened.recover_invocations().unwrap().is_empty());
+        assert!(
+            reopened
+                .recover_host_capability_resumes()
+                .expect("reconcile started host resume")
+                .is_empty()
+        );
+        assert!(
+            reopened
+                .claim_host_capability_resume(&capability_request_id)
+                .unwrap()
+                .is_none(),
+            "a possible host resume send is never retried after restart"
+        );
+        let inspection = reopened
+            .service_invocation_inspection(&invocation_id)
+            .expect("service inspection");
+        assert_eq!(
+            inspection.status,
+            apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
+        );
     }
 
     #[test]

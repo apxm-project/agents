@@ -960,7 +960,12 @@ impl DriveState {
         ));
     }
 
-    fn append_effect_outcome_unknown(&mut self, node_execution_id: &str, effect_id: &str) {
+    fn append_effect_outcome_unknown(
+        &mut self,
+        node_execution_id: &str,
+        effect_id: &str,
+        typed_error: Option<TypedErrorEnvelope>,
+    ) {
         self.note_terminal_coordinates(Some(node_execution_id));
         self.seq += 1;
         let mut unknown = fact(
@@ -977,6 +982,7 @@ impl DriveState {
             target: effect_id.to_owned(),
             digest: None,
         });
+        runtime_fact_mut(&mut unknown).typed_error = typed_error;
         self.batch.push(unknown);
     }
 
@@ -2332,6 +2338,7 @@ async fn drive_from(
                             state.append_effect_outcome_unknown(
                                 &node_execution_id,
                                 call.effect_id(),
+                                None,
                             );
                             state.node_outcomes.push(NodeOutcome::Model {
                                 node_id: op.node_id.clone(),
@@ -2376,6 +2383,10 @@ async fn drive_from(
                             }
                         };
                         let execution = committed_dispatch.execution;
+                        let outcome_unknown_error = execution
+                            .outcome_unknown_error
+                            .as_ref()
+                            .map(|error| model_failure_envelope(&node_execution_id, error));
                         let outcome = execution.outcome;
                         state.last_operation_succeeded =
                             matches!(&outcome, ModelOutcome::CommittedSuccess { .. });
@@ -2496,6 +2507,7 @@ async fn drive_from(
                                 state.append_effect_outcome_unknown(
                                     &node_execution_id,
                                     call.effect_id(),
+                                    outcome_unknown_error,
                                 );
                             }
                             ModelOutcome::TypedFailure { error } => {
@@ -2859,6 +2871,7 @@ async fn drive_from(
                                         state.append_effect_outcome_unknown(
                                             &node_execution_id,
                                             effect_id,
+                                            None,
                                         );
                                     }
                                 }
@@ -4951,6 +4964,7 @@ async fn resume_from_continuation(
                 state.append_effect_outcome_unknown(
                     &parked_node_execution_id,
                     &settlement.capability_request_id,
+                    None,
                 );
             }
             CapabilityOutcome::Failed { message } => {
