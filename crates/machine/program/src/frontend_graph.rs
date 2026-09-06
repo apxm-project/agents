@@ -191,8 +191,19 @@ pub struct ProgramDefinition {
     pub input_type_ref: String,
     pub output_type_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_contract: Option<EntrypointInputContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_type_ref: Option<String>,
     pub has_default_context: bool,
+}
+
+/// A compiler-owned proof that the typed entrypoint input admits `{}`.
+/// Consumers requiring unattended empty JSON input must match this value;
+/// absence remains ineligible for that path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntrypointInputContract {
+    AcceptsEmptyObject,
 }
 
 /// A digest-pinned reference to an externally built program.

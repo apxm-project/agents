@@ -22,6 +22,7 @@ import type {
   HookPhase,
   HookReturnMode,
   HookScope,
+  InputContract,
   ParameterRole,
   PredicateComparator,
   RegionRole,
@@ -174,6 +175,7 @@ export type BoundProgram = {
   readonly program_id: string;
   readonly entrypoint: string;
   readonly input_type_ref: string;
+  readonly input_contract?: InputContract;
   readonly output_type_ref: string;
   readonly has_default_context: boolean;
   readonly context_type_ref?: string;

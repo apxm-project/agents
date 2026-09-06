@@ -154,6 +154,10 @@
         "entrypoint": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "input_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "output_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "input_contract": {
+          "type": "string",
+          "enum": ["accepts_empty_object"]
+        },
         "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "has_default_context": { "type": "boolean" }
       },

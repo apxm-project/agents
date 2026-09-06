@@ -49,7 +49,10 @@ import {
   SKILL_ENTRY_PATH_NOT_CANONICAL,
   SKILL_SOURCE_AMBIGUOUS,
 } from "../src/generated/diagnostics.ts";
-import { HOOK_SCOPE_CAPABILITY } from "../src/generated/frontend-graph.ts";
+import {
+  HOOK_SCOPE_CAPABILITY,
+  INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
+} from "../src/generated/frontend-graph.ts";
 import { ASK, Ask } from "../src/generated/permissions.ts";
 import { READ } from "../src/capabilities.ts";
 
@@ -59,6 +62,36 @@ type Input = any;
 type Output = any;
 
 void Agent;
+
+function capturedInputContract(inputType: string, config = ""): unknown {
+  return captureProgram({
+    programId: "InputContractAgent",
+    entrypoint: "InputContractAgent",
+    declared: [],
+    source: {
+      fileName: "input-contract.ts",
+      text: `
+        import { Agent } from "@apxm/frontend";
+        type OptionalInput = { label?: string };
+        type ListInput = string[];
+        type TupleInput = [string];
+        type ArrayInput = Array<string>;
+        type ReadonlyArrayInput = ReadonlyArray<string>;
+        type MappedInput = { [key in "label"]?: string };
+        type GenericInput<T> = T;
+        type DynamicUnknownInput = GenericInput<unknown>;
+        type DynamicAnyInput = GenericInput<any>;
+        type ConditionalOptionalInput = unknown extends string ? { required: string } : {};
+        type ConditionalRequiredInput = string extends string ? { required: string } : {};
+        const InputContractAgent = Agent<${inputType}, unknown>({
+          name: "InputContractAgent",
+          ${config}
+          async run(agent, input) { return input; },
+        });
+      `,
+    },
+  });
+}
 
 /** One module whose single Hook states `scope` exactly as `declared` writes it. */
 function capturedScope(
@@ -94,6 +127,55 @@ function capturedScope(
 }
 
 describe("language-local TypeScript frontend facts", () => {
+  it("stamps empty-object eligibility only when the checker proves it", () => {
+    const accepted = [
+      "unknown",
+      "{}",
+      "{ label?: string }",
+      "OptionalInput",
+      "MappedInput",
+      "DynamicUnknownInput",
+      "ConditionalOptionalInput",
+    ];
+    for (const inputType of accepted) {
+      const graph = capturedInputContract(inputType) as {
+        program_definitions: Array<{ input_contract?: string }>;
+      };
+      expect(graph.program_definitions[0]?.input_contract).toBe(
+        INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
+      );
+    }
+
+    for (const inputType of [
+      "any",
+      "{ label: string }",
+      "string",
+      "string[]",
+      "ListInput",
+      "TupleInput",
+      "ArrayInput",
+      "ReadonlyArrayInput",
+      "never",
+      "{ label?: string } | string",
+      "MissingInput",
+      "DynamicAnyInput",
+      "ConditionalRequiredInput",
+    ]) {
+      const graph = capturedInputContract(inputType) as {
+        program_definitions: Array<{ input_contract?: string }>;
+      };
+      expect(graph.program_definitions[0]?.input_contract).toBeUndefined();
+    }
+  });
+
+  it("does not let authored metadata forge eligibility", () => {
+    const graph = capturedInputContract(
+      "{ required: string }",
+      'input_contract: "accepts_empty_object",',
+    ) as { program_definitions: Array<{ input_contract?: string }> };
+    expect(graph.program_definitions[0]?.input_contract).toBeUndefined();
+  });
+
   it("emits standard SHA-256 digests without a Node-only root import", () => {
     expect(stableDigest("abc")).toBe(
       "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",

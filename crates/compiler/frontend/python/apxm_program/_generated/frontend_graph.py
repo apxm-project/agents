@@ -24,6 +24,14 @@ SOURCE_LANGUAGES: Final[tuple[SourceLanguage, ...]] = (
     SOURCE_LANGUAGE_TYPESCRIPT,
 )
 
+InputContract: TypeAlias = Literal[
+    "accepts_empty_object",
+]
+INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT: Final[InputContract] = "accepts_empty_object"
+INPUT_CONTRACTS: Final[tuple[InputContract, ...]] = (
+    INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
+)
+
 DeclKind: TypeAlias = Literal[
     "context",
     "model_binding",
@@ -297,6 +305,9 @@ __all__ = [
     "SOURCE_LANGUAGE_PYTHON",
     "SOURCE_LANGUAGE_TYPESCRIPT",
     "SOURCE_LANGUAGES",
+    "InputContract",
+    "INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT",
+    "INPUT_CONTRACTS",
     "DeclKind",
     "DECL_KIND_CONTEXT",
     "DECL_KIND_MODEL_BINDING",

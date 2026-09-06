@@ -20,6 +20,13 @@ export const SOURCE_LANGUAGES = [
   SOURCE_LANGUAGE_TYPESCRIPT,
 ] as const satisfies readonly SourceLanguage[];
 
+export type InputContract =
+  | "accepts_empty_object";
+export const INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT = "accepts_empty_object" satisfies InputContract;
+export const INPUT_CONTRACTS = [
+  INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
+] as const satisfies readonly InputContract[];
+
 export type DeclKind =
   | "context"
   | "model_binding"

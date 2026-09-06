@@ -21,6 +21,7 @@ from .frontend_graph import (
     HookPhase,
     HookReturnMode,
     HookScope,
+    InputContract,
     IntentKind,
     ParameterRole,
     PredicateComparator,
@@ -44,6 +45,7 @@ class ProgramDefinition:
     output_type_ref: str
     has_default_context: bool
     context_type_ref: Optional[str] = None
+    input_contract: Optional[InputContract] = None
 
 @dataclass(frozen=True, slots=True)
 class ImportedProgramRef:

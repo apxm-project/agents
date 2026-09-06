@@ -14,6 +14,7 @@ import type {
   HookPhase,
   HookReturnMode,
   HookScope,
+  InputContract,
   IntentKind,
   ParameterRole,
   PredicateComparator,
@@ -34,6 +35,7 @@ export type ProgramDefinition = {
   readonly output_type_ref: string;
   readonly has_default_context: boolean;
   readonly context_type_ref?: string;
+  readonly input_contract?: InputContract;
 };
 
 export type ImportedProgramRef = {

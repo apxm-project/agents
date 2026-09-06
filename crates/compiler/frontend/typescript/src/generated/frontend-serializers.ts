@@ -101,6 +101,9 @@ export function serializeProgramDefinition(record: ProgramDefinition): Json {
   if (record.context_type_ref !== undefined) {
     emitted.context_type_ref = record.context_type_ref;
   }
+  if (record.input_contract !== undefined) {
+    emitted.input_contract = record.input_contract;
+  }
   return emitted;
 }
 
