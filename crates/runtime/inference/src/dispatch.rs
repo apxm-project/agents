@@ -150,7 +150,10 @@ pub fn dispatch_committed_inference<P: ModelInferencePort + ?Sized>(
     } = dispatch;
     target_commitment.matches_resolved(authored_target, request.resolved_binding())?;
     let execution = execute_with_attempt(backend, request, policy);
-    let (usage, typed_error) = outcome_lineage_inputs(&execution.outcome);
+    let (usage, mut typed_error) = outcome_lineage_inputs(&execution.outcome);
+    if execution.outcome_unknown_error.is_some() {
+        typed_error.clone_from(&execution.outcome_unknown_error);
+    }
     let attempt_index = execution.committed_attempt.unwrap_or(0);
     let lineage = InferenceUsageLineage::seal_with_target_commitment(
         request.effect_id(),
@@ -185,7 +188,10 @@ pub async fn dispatch_committed_inference_async<P: ModelInferencePort + Sync + ?
     } = dispatch;
     target_commitment.matches_resolved(authored_target, request.resolved_binding())?;
     let execution = execute_with_attempt_async(backend, request, policy).await;
-    let (usage, typed_error) = outcome_lineage_inputs(&execution.outcome);
+    let (usage, mut typed_error) = outcome_lineage_inputs(&execution.outcome);
+    if execution.outcome_unknown_error.is_some() {
+        typed_error.clone_from(&execution.outcome_unknown_error);
+    }
     let attempt_index = execution.committed_attempt.unwrap_or(0);
     let lineage = InferenceUsageLineage::seal_with_target_commitment(
         request.effect_id(),

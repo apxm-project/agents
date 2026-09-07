@@ -14,11 +14,11 @@ use apxm_program::grammar::is_identifier;
 use apxm_program::runtime_evidence::Fact;
 use apxm_runtime_protocol::execution_contracts::OccurrenceId;
 use apxm_runtime_protocol::{
-    Commitment, ContentReadResult, ContentRef, CorrelationId, EvidenceFactKind, EvidenceRecord,
-    ExecutionCursor, ExecutionObservation, ExecutionPage, ExecutionReadRequest,
-    ExecutionReadResult, GrantRef, NodeExecutionId, ObservationKind, OutputRef, OutputVisibility,
-    PrincipalRef, ProgramInstanceId, ReadContext, ReadPurpose, SESSION_OUTPUT_REF_CONTRACT,
-    ScopeRef, SessionOutputRef,
+    Commitment, ContentReadResult, ContentRef, CorrelationId, EvidenceErrorCategory,
+    EvidenceFactKind, EvidenceRecord, EvidenceTypedError, ExecutionCursor, ExecutionObservation,
+    ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, NodeExecutionId,
+    ObservationKind, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId, ReadContext,
+    ReadPurpose, SESSION_OUTPUT_REF_CONTRACT, ScopeRef, SessionOutputRef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -689,6 +689,17 @@ impl CommitLocalStore {
         self.instances
             .get(program_instance_ref.as_str())
             .map_or(0, |r| r.program_state_version)
+    }
+
+    /// Read the owner-local status used to reconcile a service-owned worker
+    /// after process restart. This is an internal ownership lookup, not the
+    /// caller-authorized execution read surface.
+    #[must_use]
+    pub fn invocation_status(
+        &self,
+        invocation: &str,
+    ) -> Option<apxm_runtime_protocol::ProgramInvocationStatus> {
+        self.invocations.get(invocation).map(|record| record.status)
     }
 
     pub fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
@@ -1403,6 +1414,7 @@ impl CommitLocalStore {
                 evidence_digest: String::new(),
                 node_execution_id,
                 occurrence_id,
+                typed_error: evidence_typed_error(fact),
             };
             evidence_ref.evidence_digest = evidence_ref.computed_digest();
             evidence_ref
@@ -2639,6 +2651,29 @@ fn evidence_kind(fact: &Fact) -> EvidenceFactKind {
         Some(FactKind::ContextTransitioned) => EvidenceFactKind::ContextTransitioned,
         None => EvidenceFactKind::LoopIterationCompleted,
     }
+}
+
+fn evidence_typed_error(fact: &Fact) -> Option<EvidenceTypedError> {
+    let error = fact.runtime()?.typed_error.as_ref()?;
+    let category = match error.category {
+        apxm_program::common::ErrorCategory::Validation => EvidenceErrorCategory::Validation,
+        apxm_program::common::ErrorCategory::Admission => EvidenceErrorCategory::Admission,
+        apxm_program::common::ErrorCategory::Authority => EvidenceErrorCategory::Authority,
+        apxm_program::common::ErrorCategory::Configuration => EvidenceErrorCategory::Configuration,
+        apxm_program::common::ErrorCategory::Unavailable => EvidenceErrorCategory::Unavailable,
+        apxm_program::common::ErrorCategory::Conflict => EvidenceErrorCategory::Conflict,
+        apxm_program::common::ErrorCategory::OutcomeUnknown => {
+            EvidenceErrorCategory::OutcomeUnknown
+        }
+        apxm_program::common::ErrorCategory::Internal => EvidenceErrorCategory::Internal,
+    };
+    Some(EvidenceTypedError {
+        error_id: error.error_id.clone(),
+        category,
+        code_ref: error.code_ref.clone(),
+        message: error.message.clone(),
+        details_digest: error.details_digest.clone(),
+    })
 }
 
 fn fact_belongs_to_invocation(fact: &Fact, invocation: &str) -> bool {

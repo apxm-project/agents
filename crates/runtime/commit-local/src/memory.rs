@@ -77,6 +77,17 @@ impl InMemoryExecutionCommit {
             .set_runtime_metadata(metadata);
     }
 
+    #[must_use]
+    pub fn invocation_status(
+        &self,
+        invocation: &str,
+    ) -> Option<apxm_runtime_protocol::ProgramInvocationStatus> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .invocation_status(invocation)
+    }
+
     /// Failure-injection hook used by owner-local conformance suites.
     pub fn inject_outcome_unknown(&self, commit_id: impl Into<String>) {
         self.store

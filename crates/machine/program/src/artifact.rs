@@ -184,7 +184,20 @@ pub struct Entrypoint {
     pub input_type_ref: String,
     pub output_type_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_contract: Option<crate::frontend_graph::EntrypointInputContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_type_ref: Option<String>,
+}
+
+impl Entrypoint {
+    /// Whether the compiler proved that `{}` satisfies this input contract.
+    #[must_use]
+    pub fn accepts_empty_json_object(&self) -> bool {
+        matches!(
+            self.input_contract,
+            Some(crate::frontend_graph::EntrypointInputContract::AcceptsEmptyObject)
+        )
+    }
 }
 
 /// A decoded executable artifact.
@@ -389,6 +402,7 @@ impl ExecutableArtifact {
             program_id: "program.main".to_string(),
             input_type_ref: "input".to_string(),
             output_type_ref: "output".to_string(),
+            input_contract: None,
             context_type_ref: None,
         }];
 
@@ -837,6 +851,7 @@ fn entrypoint_from_definition(program: &crate::frontend_graph::ProgramDefinition
         program_id: program.program_id.clone(),
         input_type_ref: program.input_type_ref.clone(),
         output_type_ref: program.output_type_ref.clone(),
+        input_contract: program.input_contract,
         context_type_ref: program.context_type_ref.clone(),
     }
 }
@@ -1319,6 +1334,37 @@ mod from_graph_tests {
             artifact.source_bundle_digest,
             bundle.digest().expect("bundle digest")
         );
+    }
+
+    #[test]
+    fn entrypoint_input_contract_is_copied_into_the_digest_bound_artifact() {
+        let graph_without_contract = specialist_graph();
+        let mut graph = graph_without_contract.clone();
+        graph.program_definitions[0].input_contract =
+            Some(crate::frontend_graph::EntrypointInputContract::AcceptsEmptyObject);
+        let artifact = ExecutableArtifact::from_frontend_graph(&graph).expect("artifact");
+        let artifact_without_contract =
+            ExecutableArtifact::from_frontend_graph(&graph_without_contract).expect("artifact");
+        assert!(artifact.entrypoints[0].accepts_empty_json_object());
+        assert_eq!(
+            artifact.entrypoints[0].input_contract,
+            graph.program_definitions[0].input_contract
+        );
+        assert_ne!(
+            artifact.artifact_digest,
+            artifact_without_contract.artifact_digest
+        );
+    }
+
+    #[test]
+    fn missing_or_unknown_input_contract_is_ineligible_and_closed() {
+        let artifact =
+            ExecutableArtifact::from_frontend_graph(&specialist_graph()).expect("artifact");
+        assert!(!artifact.entrypoints[0].accepts_empty_json_object());
+        let mut encoded = serde_json::to_value(&artifact).expect("artifact JSON");
+        encoded["entrypoints"][0]["input_contract"] = serde_json::json!("unknown");
+        let verdict = validate_artifact_json(&encoded);
+        assert!(!verdict.is_accepted());
     }
 
     #[test]

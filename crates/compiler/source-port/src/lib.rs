@@ -48,8 +48,8 @@ use apxm_program::frontend_graph::FrontendGraph;
 use apxm_program::source_map::SourceMap;
 
 pub use crate::confinement::{
-    CAPTURE_SCRATCH_DIR_VARIABLE, CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE,
-    ConfinementMode, ConfinementReadiness, ConfinementStatus, capture_confinement_readiness,
+    CAPTURE_SCRATCH_DIR_VARIABLE, CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE, ConfinementMode,
+    ConfinementReadiness, ConfinementStatus, capture_confinement_readiness,
 };
 pub use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 pub use crate::frontend::Frontend;

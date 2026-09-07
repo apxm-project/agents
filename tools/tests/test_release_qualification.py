@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -205,6 +206,355 @@ class ReleaseQualificationTests(unittest.TestCase):
                 run_gates=False,
             )
         self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+
+    def test_qualification_restores_manifest_bridge_after_mutating_owner_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            original = artifacts["python-frontend-native"].read_bytes()
+            post_restore_observations: list[tuple[bytes, object]] = []
+
+            def mutating_gate(
+                _root: Path,
+                _gates: tuple[str, ...],
+                _result: object,
+                *,
+                emit_output: bool,
+                environment: object = None,
+            ) -> None:
+                del emit_output
+                if _gates == ("test-python-frontend",):
+                    post_restore_observations.append(
+                        (artifacts["python-frontend-native"].read_bytes(), environment)
+                    )
+                    return
+                artifacts["python-frontend-native"].write_bytes(b"gate rebuilt bridge")
+
+            with patch.object(self.qualification, "_run_gates", side_effect=mutating_gate):
+                result = self.qualification.qualify(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    run_gates=True,
+                )
+
+            self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+            self.assertEqual(artifacts["python-frontend-native"].read_bytes(), original)
+            self.assertEqual(
+                result.artifact_digests["python-frontend-native"],
+                "sha256:" + hashlib.sha256(original).hexdigest(),
+            )
+            self.assertEqual(post_restore_observations[0][0], original)
+            self.assertEqual(
+                post_restore_observations[0][1], {"APXM_SKIP_NATIVE_BUILD": "1"}
+            )
+
+    def test_qualification_rejects_stale_bridge_even_if_a_gate_rebuilds_matching_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            published = artifacts["python-frontend-native"].read_bytes()
+            artifacts["python-frontend-native"].write_bytes(b"stale bridge")
+
+            def matching_gate(
+                _root: Path,
+                _gates: tuple[str, ...],
+                _result: object,
+                *,
+                emit_output: bool,
+                environment: object = None,
+            ) -> None:
+                del emit_output
+                del environment
+                if _gates == ("test-python-frontend",):
+                    return
+                artifacts["python-frontend-native"].write_bytes(published)
+
+            with patch.object(self.qualification, "_run_gates", side_effect=matching_gate):
+                result = self.qualification.qualify(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    run_gates=True,
+                )
+
+            self.assertFalse(result.ok)
+            self.assertTrue(
+                any(item.code == "frontend-native-digest-mismatch" for item in result.diagnostics)
+            )
+            self.assertEqual(artifacts["python-frontend-native"].read_bytes(), b"stale bridge")
+
+    def test_qualification_rejects_gate_created_bridge_when_manifest_input_was_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            published = artifacts["python-frontend-native"].read_bytes()
+            artifacts["python-frontend-native"].unlink()
+
+            def creating_gate(
+                _root: Path,
+                _gates: tuple[str, ...],
+                _result: object,
+                *,
+                emit_output: bool,
+                environment: object = None,
+            ) -> None:
+                del emit_output
+                del environment
+                if _gates == ("test-python-frontend",):
+                    return
+                artifacts["python-frontend-native"].write_bytes(published)
+
+            with patch.object(self.qualification, "_run_gates", side_effect=creating_gate):
+                result = self.qualification.qualify(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    run_gates=True,
+                )
+
+            self.assertFalse(result.ok)
+            self.assertTrue(
+                any(item.code == "missing-publishable-frontend-native" for item in result.diagnostics)
+            )
+            self.assertFalse(artifacts["python-frontend-native"].exists())
+
+    def test_qualification_honors_manifest_frontend_override_over_default_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            package_bridge = (
+                root
+                / "crates/compiler/frontend/python/apxm_program/_native.so"
+            )
+            package_bridge.parent.mkdir(parents=True, exist_ok=True)
+            package_bridge.write_bytes(b"the explicitly selected bridge")
+            package_bridge.chmod(0o755)
+            subprocess.run(
+                ["git", "-C", str(root), "add", str(package_bridge.relative_to(root))],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish bridge fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                python_frontend_native_path=str(package_bridge),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            result = self.qualification.qualify(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+
+        self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+        self.assertEqual(
+            result.artifacts["python-frontend-native"].resolve(), package_bridge.resolve()
+        )
+
+    def test_gated_qualification_conformance_imports_an_alternate_manifest_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            alternate = root / "target/release/alternate_native.so"
+            published = b"explicit alternate bridge"
+            alternate.write_bytes(published)
+            alternate.chmod(0o755)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                python_frontend_native_path=str(alternate),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            package_bridge = root / self.qualification.PYTHON_FRONTEND_PACKAGE_REL
+            observed: list[bytes] = []
+
+            def mutating_gate(
+                _root: Path,
+                _gates: tuple[str, ...],
+                _result: object,
+                *,
+                emit_output: bool,
+                environment: object = None,
+            ) -> None:
+                del emit_output
+                if environment is not None:
+                    observed.append(package_bridge.read_bytes())
+                    return
+                alternate.write_bytes(b"gate alternate bridge")
+                package_bridge.parent.mkdir(parents=True, exist_ok=True)
+                package_bridge.write_bytes(b"gate package bridge")
+
+            with patch.object(self.qualification, "_run_gates", side_effect=mutating_gate):
+                result = self.qualification.qualify(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    run_gates=True,
+                )
+
+            self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+            self.assertEqual(observed, [published])
+            self.assertEqual(alternate.read_bytes(), published)
+            self.assertFalse(package_bridge.exists())
+
+    def test_qualification_rejects_inside_and_outside_frontend_symlinks_before_gates(self) -> None:
+        for target_kind in ("inside", "outside"):
+            with self.subTest(target_kind=target_kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                revision, artifacts = make_clean_owner_checkout(root)
+                self.qualification.generate_descriptors(
+                    root,
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    output_dir=root,
+                    source_revision=revision,
+                )
+                subprocess.run(
+                    ["git", "-C", str(root), "add", "deploy", "contracts"],
+                    check=True,
+                    env=git_environment(),
+                )
+                subprocess.run(
+                    ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                    check=True,
+                    env=git_environment(),
+                )
+                bridge = artifacts["python-frontend-native"]
+                if target_kind == "inside":
+                    target = root / "inside-bridge"
+                    target.write_bytes(b"inside target")
+                else:
+                    outside_directory = Path(tempfile.mkdtemp())
+                    self.addCleanup(shutil.rmtree, outside_directory)
+                    target = outside_directory / "outside-bridge"
+                    target.write_bytes(b"outside target")
+                bridge.unlink()
+                bridge.symlink_to(target)
+
+                with patch.object(
+                    self.qualification,
+                    "_run_gates",
+                    side_effect=AssertionError("invalid symlink must stop before gates"),
+                ):
+                    result = self.qualification.qualify(
+                        root,
+                        compilation_service_path=str(artifacts["compilation-service"]),
+                        runtime_service_path=str(artifacts["runtime-service"]),
+                        run_gates=True,
+                    )
+
+                self.assertFalse(result.ok)
+                self.assertTrue(
+                    any(item.code == "invalid-frontend-native-input" for item in result.diagnostics)
+                )
+                self.assertTrue(bridge.is_symlink())
+
+    def test_qualification_rejects_manifest_root_frontend_path_without_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            manifest_path = root / self.qualification.RELEASE_MANIFEST_REL
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["frontend_native"]["path"] = "."
+            manifest_path.write_bytes(
+                self.qualification._canonical_json(manifest)
+            )
+            with patch.object(self.qualification, "_run_gates"):
+                result = self.qualification.qualify(root, run_gates=True)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(
+            any(item.code == "missing-publishable-frontend-native" for item in result.diagnostics)
+        )
 
     def test_dirty_checkout_never_qualifies_even_with_matching_release_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

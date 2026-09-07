@@ -16,6 +16,7 @@ use apxm_program::runtime_evidence::{
     Fact, FactKind, LoopIterationCompletedFact, NodeExecutionRecordedFact, NodeExecutionScope,
     RuntimeFact,
 };
+use apxm_program::{common::ErrorCategory, common::TypedErrorEnvelope};
 use apxm_runtime_protocol::{
     ContentRef, ExecutionReadRequest, ExecutionReadResult, GrantRef, PrincipalRef, ReadContext,
     ReadPurpose, RequestId, ScopeRef,
@@ -964,6 +965,68 @@ async fn filesystem_owner_local_survives_reopen_and_is_portable() {
             .await,
         1
     );
+}
+
+#[tokio::test]
+async fn terminal_typed_error_projection_survives_reopen() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let port = FilesystemExecutionCommit::open_with_read_access_hook(
+        dir.path(),
+        Arc::new(AllowReadAccess),
+    )
+    .expect("open");
+    let invocation = "invoke.typed-error";
+    let mut runtime = serde_json::from_value::<RuntimeFact>(json!({
+        "fact_id": format!("fact.{invocation}.1"),
+        "event_sequence": 1,
+        "invocation_state": "failed",
+        "node_execution_id": "node.typed-error"
+    }))
+    .expect("runtime fact");
+    runtime.typed_error = Some(TypedErrorEnvelope {
+        error_id: "model-failure.node.typed-error".into(),
+        category: ErrorCategory::Unavailable,
+        code_ref: "model_reported_timeout".into(),
+        message: "the provider reported a terminal timeout".into(),
+        details_digest: None,
+    });
+    let fact = Fact::from_runtime(FactKind::InvocationFailed, runtime);
+    let mut commit = request("commit.typed-error", "instance.typed-error", 0, None);
+    commit.program_invocation_ref = ProgramInvocationRef::new(invocation);
+    commit.tuple.output_refs.clear();
+    commit.tuple.evidence = vec![fact.clone()];
+    commit.evidence_batch = vec![fact];
+    bind_observation_digest(&mut commit);
+    assert!(matches!(
+        port.commit(commit).await,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    let root = port.root().to_path_buf();
+    drop(port);
+
+    let reopened =
+        FilesystemExecutionCommit::open_with_read_access_hook(&root, Arc::new(AllowReadAccess))
+            .expect("reopen");
+    let page = match reopened
+        .read_execution(ExecutionReadRequest::EvidenceRead {
+            context: read_context(ReadPurpose::Evidence, "scope.typed-error"),
+            program_invocation_id: apxm_runtime_protocol::ProgramInvocationId::new(invocation)
+                .expect("invocation"),
+            after_cursor: None,
+            limit: 10,
+        })
+        .expect("evidence read")
+    {
+        ExecutionReadResult::EvidencePage { page } => page,
+        _ => panic!("wrong evidence page kind"),
+    };
+    let error = page.items[0].typed_error.as_ref().expect("typed error");
+    assert_eq!(error.code_ref, "model_reported_timeout");
+    assert_eq!(
+        error.category,
+        apxm_runtime_protocol::EvidenceErrorCategory::Unavailable
+    );
+    assert!(page.items[0].validate().is_ok());
 }
 
 #[tokio::test]

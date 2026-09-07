@@ -37,8 +37,10 @@ import {
   HOOK_SCOPES,
   HOOK_RETURN_MODE_OBSERVE,
   HOOK_RETURN_MODE_REPLACE_RESULT,
+  INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
   REGION_ROLE_HOOK_BODY,
   type HookScope,
+  type InputContract,
   type RegionRole,
 } from "./generated/frontend-graph.js";
 import type {
@@ -234,6 +236,7 @@ class Capture {
   private referencedNames = new Set<string>();
   private contextBindingName: string | undefined;
   private inputTypeRef = "Input";
+  private inputContract: InputContract | undefined;
   private outputTypeRef = "Output";
   private contextTypeRef: string | undefined;
 
@@ -386,7 +389,7 @@ class Capture {
   }
 
   capture(): BoundProgram {
-    const { checker, source } = createBoundSource(this.input.source);
+    const { checker, source, emptyObjectType } = createBoundSource(this.input.source);
     this.checker = checker;
     const definition = this.findAgentDefinition(source);
     const fn = definition.callback;
@@ -397,7 +400,7 @@ class Capture {
       );
     }
     this.rejectDynamicAgentName(definition.call);
-    this.readTypeArguments(definition.call);
+    this.readTypeArguments(definition.call, emptyObjectType);
     this.resolveModuleDeclarations(source, definition.call);
     this.collectReferencedNames(source, fn);
     this.declareBindings();
@@ -506,7 +509,7 @@ class Capture {
    * not exist does not compile. Python reads the same three off the real
    * classes passed to `@Agent`.
    */
-  private readTypeArguments(call: ts.CallExpression): void {
+  private readTypeArguments(call: ts.CallExpression, emptyObjectType: ts.Type): void {
     const typeArguments = call.typeArguments;
     if (typeArguments === undefined || typeArguments.length < 2) {
       // JavaScript has no type arguments to read, so a `.mjs` program keeps the
@@ -522,6 +525,10 @@ class Capture {
       return;
     }
     this.inputTypeRef = typeArguments[0].getText().trim();
+    const inputType = this.checker.getTypeFromTypeNode(typeArguments[0]);
+    if (acceptsEmptyObject(this.checker, typeArguments[0], inputType, emptyObjectType)) {
+      this.inputContract = INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT;
+    }
     this.outputTypeRef = typeArguments[1].getText().trim();
   }
 
@@ -2192,6 +2199,7 @@ class Capture {
       program_id: this.input.programId,
       entrypoint: this.input.entrypoint,
       input_type_ref: this.inputTypeRef,
+      input_contract: this.inputContract,
       output_type_ref: this.outputTypeRef,
       has_default_context: (this.input.contextSchema?.defaultPresent ?? false),
       context_type_ref: this.contextTypeRef,
@@ -2245,7 +2253,21 @@ export function captureProgram(input: CaptureInput): Json {
 function createBoundSource(input: StaticSource): {
   source: ts.SourceFile;
   checker: ts.TypeChecker;
+  emptyObjectType: ts.Type;
 } {
+  const sourceText = `${input.text}\n\nconst __apxm_empty_object_probe = {};\n`;
+  const libraryFileName = "__apxm_minimal_lib.d.ts";
+  const libraryText = `
+interface Array<T> {
+  readonly length: number;
+  readonly [index: number]: T;
+}
+interface ReadonlyArray<T> {
+  readonly length: number;
+  readonly [index: number]: T;
+}
+interface Promise<T> {}
+`;
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.Latest,
     module: ts.ModuleKind.ESNext,
@@ -2256,13 +2278,19 @@ function createBoundSource(input: StaticSource): {
     skipLibCheck: true,
   };
   const host: ts.CompilerHost = {
-    fileExists: (fileName) => fileName === input.fileName,
-    readFile: (fileName) => fileName === input.fileName ? input.text : undefined,
+    fileExists: (fileName) => fileName === input.fileName || fileName === libraryFileName,
+    readFile: (fileName) => fileName === input.fileName
+      ? sourceText
+      : fileName === libraryFileName
+        ? libraryText
+        : undefined,
     getSourceFile: (fileName, languageVersion) =>
       fileName === input.fileName
-        ? ts.createSourceFile(fileName, input.text, languageVersion, true)
+        ? ts.createSourceFile(fileName, sourceText, languageVersion, true)
+        : fileName === libraryFileName
+          ? ts.createSourceFile(fileName, libraryText, languageVersion, true)
         : undefined,
-    getDefaultLibFileName: () => "lib.d.ts",
+    getDefaultLibFileName: () => libraryFileName,
     writeFile: () => {},
     getCurrentDirectory: () => "",
     getDirectories: () => [],
@@ -2271,7 +2299,7 @@ function createBoundSource(input: StaticSource): {
     getNewLine: () => "\n",
   };
   const program = ts.createProgram({
-    rootNames: [input.fileName],
+    rootNames: [input.fileName, libraryFileName],
     options,
     host,
   });
@@ -2282,7 +2310,72 @@ function createBoundSource(input: StaticSource): {
       `static source '${input.fileName}' is unavailable`,
     );
   }
-  return { source, checker: program.getTypeChecker() };
+  const checker = program.getTypeChecker();
+  const probe = source.statements.at(-1);
+  if (
+    probe === undefined ||
+    !ts.isVariableStatement(probe) ||
+    probe.declarationList.declarations.length !== 1 ||
+    probe.declarationList.declarations[0]?.initializer === undefined
+  ) {
+    throw new CaptureError(
+      AGENT_DYNAMIC_ARGUMENT,
+      "the compiler could not construct its empty-object type probe",
+    );
+  }
+  return {
+    source,
+    checker,
+    emptyObjectType: checker.getTypeAtLocation(
+      probe.declarationList.declarations[0].initializer as ts.Expression,
+    ),
+  };
+}
+
+/**
+ * Prove the caller may submit `{}` from the checked input type itself.
+ * Broad unions, dynamic `any`, arrays, and object types with index or callable
+ * behaviour stay unsupported even when TypeScript's assignability relation is
+ * permissive for them.
+ */
+function acceptsEmptyObject(
+  checker: ts.TypeChecker,
+  typeNode: ts.TypeNode,
+  inputType: ts.Type,
+  emptyObjectType: ts.Type,
+): boolean {
+  if (
+    inputType.flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Never | ts.TypeFlags.Union | ts.TypeFlags.Intersection)
+  ) {
+    return false;
+  }
+  if ((inputType.flags & ts.TypeFlags.Unknown) !== 0) {
+    return true;
+  }
+  if (ts.isArrayTypeNode(typeNode) || ts.isTupleTypeNode(typeNode)) {
+    return false;
+  }
+  if (checker.isArrayType(inputType) || checker.isTupleType(inputType)) {
+    return false;
+  }
+  if ((inputType.flags & ts.TypeFlags.Object) === 0) {
+    return false;
+  }
+  if (!checker.isTypeAssignableTo(emptyObjectType, inputType)) {
+    return false;
+  }
+  if (
+    checker.getSignaturesOfType(inputType, ts.SignatureKind.Call).length > 0 ||
+    checker.getSignaturesOfType(inputType, ts.SignatureKind.Construct).length > 0 ||
+    checker.getIndexTypeOfType(inputType, ts.IndexKind.String) !== undefined ||
+    checker.getIndexTypeOfType(inputType, ts.IndexKind.Number) !== undefined
+  ) {
+    return false;
+  }
+  return checker.getPropertiesOfType(inputType).every(
+    (property) => (property.flags & ts.SymbolFlags.Optional) !== 0,
+  );
 }
 
 function findImportDeclaration(node: ts.Node): ts.ImportDeclaration | undefined {

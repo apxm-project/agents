@@ -7,7 +7,7 @@
 
 mod common;
 
-use apxm_program::frontend_graph::IntentKind;
+use apxm_program::{ExecutableArtifact, frontend_graph::IntentKind};
 use apxm_source_port::{
     CompiledSource, Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest,
     SourceDiagnostic, SourceDiagnosticCode, compile_source_bundle,
@@ -380,6 +380,113 @@ fn the_frontend_emits_no_air_and_only_rust_lowering_produces_it() {
             frontend.wire()
         );
     }
+}
+
+#[test]
+fn typescript_input_contract_reaches_the_digest_bound_service_artifact() {
+    if !frontend_present(Frontend::Typescript) {
+        return;
+    }
+    for (input_type, expected) in [
+        ("unknown", true),
+        ("{}", true),
+        ("{ label?: string }", true),
+        ("{ label: string }", false),
+        ("string", false),
+        ("string[]", false),
+        ("never", false),
+        ("{ label?: string } | string", false),
+    ] {
+        let source = format!(
+            r#"import {{ Agent }} from "@apxm/frontend";
+import {{ source }} from "@apxm/frontend/node";
+source(import.meta.url);
+type Input = {input_type};
+type Output = Input;
+export const InputContractAgent = Agent<Input, Output>({{
+  name: "InputContractAgent",
+  async run(agent, input) {{ return input; }},
+}});
+"#
+        );
+        let compiled = compile(&SourceBundleRequest::new(
+            Frontend::Typescript,
+            "InputContractAgent",
+            source,
+        ));
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .expect("service artifact");
+        assert_eq!(
+            artifact.entrypoints[0].accepts_empty_json_object(),
+            expected,
+            "input type {input_type:?} has the expected empty-object contract"
+        );
+    }
+}
+
+#[test]
+fn typescript_public_permissions_compile_through_source_port_into_artifact_air() {
+    if !frontend_present(Frontend::Typescript) {
+        return;
+    }
+    let source = r#"import { Agent, Model, Tool } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+import { Allow, Ask, Deny } from "@apxm/frontend/permissions";
+source(import.meta.url);
+type Input = {};
+type Output = unknown;
+const Read = Tool<Input, Output>("read", { permission: Allow });
+const Write = Tool<Input, Output>("write", { permission: Ask("writes host state") });
+const Search = Tool<Input, Output>("search_web", { permission: Deny("no network") });
+const Result = Model<Input, Output>("permission.model");
+export const PermissionAgent = Agent<Input, Output>({
+  name: "PermissionAgent",
+  async run(agent, input) {
+    await Read(input);
+    await Write(input);
+    await Search(input);
+    return await Result(input);
+  },
+});
+"#;
+    let compiled = compile(&SourceBundleRequest::new(
+        Frontend::Typescript,
+        "PermissionAgent",
+        source,
+    ));
+    assert_eq!(
+        compiled.frontend_graph.capability_requirements.len(),
+        3,
+        "source capture records each permissioned Tool declaration"
+    );
+    let requests = &compiled.air.capability_permission_requests;
+    assert_eq!(
+        requests.get("read").map(|permission| permission.as_str()),
+        Some("allow")
+    );
+    assert_eq!(
+        requests
+            .get("write")
+            .map(|permission| (permission.as_str(), permission.reason())),
+        Some(("ask", Some("writes host state")))
+    );
+    assert_eq!(
+        requests
+            .get("search_web")
+            .map(|permission| (permission.as_str(), permission.reason())),
+        Some(("deny", Some("no network")))
+    );
+    let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+        .expect("permissioned source lowers to an executable artifact");
+    assert!(
+        artifact.entrypoints[0].accepts_empty_json_object(),
+        "the same service artifact carries the compiler-owned empty-object proof"
+    );
+    assert_eq!(
+        artifact.air.capability_permission_requests, *requests,
+        "artifact AIR preserves the source permission requests"
+    );
 }
 
 // ── The rejection classes ───────────────────────────────────────────────────

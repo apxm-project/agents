@@ -15,12 +15,14 @@ use apxm_core::types::host_capability::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_runtime_protocol::{
-    AuthoredPermission, ExecutionObservation, GrantRef, ObservationKind, PrincipalRef,
+    AuthoredPermission, Commitment, ExecutionObservation, GrantRef, ObservationKind, PrincipalRef,
     ProgramInvocationId, RUNTIME_PROTOCOL_VERSION, ReadContext, ReadPurpose, RequestId,
     RuntimeHandshake, RuntimeHandshakeV2, RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2,
     RuntimeResult, RuntimeResultV2, ScopeRef,
 };
-use apxm_runtime_service::{InvocationMaterials, RuntimeService, materials_for_artifact};
+use apxm_runtime_service::{
+    InvocationMaterials, RuntimeService, RuntimeStatePolicy, materials_for_artifact,
+};
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -62,10 +64,16 @@ struct Parked {
 }
 
 fn start_fixture(invocation_id: &str) -> Parked {
+    start_fixture_with_service(
+        invocation_id,
+        RuntimeService::in_memory()
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned()),
+    )
+}
+
+fn start_fixture_with_service(invocation_id: &str, mut service: RuntimeService) -> Parked {
     let artifact = host_capability_artifact();
-    let mut service = RuntimeService::in_memory()
-        .with_embedded_read_access()
-        .with_output_access_scope_ref("scope.host-capability".to_owned());
     let digest = service.admit_artifact(artifact.clone());
     assert!(!digest.is_empty(), "the fixture artifact is admitted");
     let created = service
@@ -140,6 +148,35 @@ fn observations(service: &mut RuntimeService, invocation: &str) -> Vec<Execution
         panic!("observation subscribe returned {result:?}");
     };
     page.items
+}
+
+fn invocation_status(
+    service: &mut RuntimeService,
+    invocation: &str,
+) -> apxm_runtime_protocol::ProgramInvocationStatus {
+    let result = service
+        .handle_v2(
+            &RuntimeHandshakeV2::server(),
+            RuntimeRequestV2::ProgramInvocationInspect {
+                context: ReadContext {
+                    request_id: RequestId::new("read.invocation").expect("request id"),
+                    scope_ref: ScopeRef::new("scope.host-capability").expect("scope"),
+                    principal_ref: PrincipalRef::new("principal.host-capability")
+                        .expect("principal"),
+                    grant_ref: GrantRef::new("grant.host-capability").expect("grant"),
+                    correlation_id: None,
+                    purpose: ReadPurpose::Inspection,
+                },
+                program_invocation_id: ProgramInvocationId::new(invocation.to_owned())
+                    .expect("invocation id"),
+                node_execution_id: None,
+            },
+        )
+        .expect("the invocation inspection is readable");
+    let RuntimeResultV2::ProgramInvocationInspection { inspection, .. } = result else {
+        panic!("invocation inspection returned {result:?}");
+    };
+    inspection.status
 }
 
 fn of_kind(
@@ -408,10 +445,48 @@ fn a_settlement_for_a_request_nobody_published_is_refused() {
     assert!(
         matches!(
             malformed,
-            RuntimeResult::Failed { ref code, .. } if code == "unknown_capability_request"
+            RuntimeResult::Failed { ref code, .. } if code == "invalid_request"
         ),
         "{malformed:?}"
     );
+}
+
+#[test]
+fn a_cancelled_fulfillment_is_refused_without_settling_the_node() {
+    let mut parked = start_fixture("invocation.host.cancelled-fulfillment");
+    let (first, _) = published_request(&mut parked);
+    let refused = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::CapabilityFulfill {
+                request_id: "settle.cancelled".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                capability_request_id: first.clone(),
+                outcome: HostCapabilityOutcomeKind::Cancelled,
+                output: None,
+                receipt_ref: None,
+                message: Some("withdrawn".to_owned()),
+            },
+        )
+        .expect("the Runtime/1 request decodes");
+    assert!(
+        matches!(refused, RuntimeResult::Failed { ref code, .. } if code == "invalid_request"),
+        "{refused:?}"
+    );
+    let invocation = parked.invocation.clone();
+    let stream = observations(&mut parked.service, &invocation);
+    assert!(of_kind(&stream, ObservationKind::CapabilitySettled).is_empty());
+    assert!(matches!(
+        fulfill(
+            &mut parked,
+            "settle.valid",
+            &first,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{}")
+        ),
+        RuntimeResult::CapabilitySettled { .. }
+    ));
 }
 
 #[test]
@@ -474,6 +549,25 @@ fn the_host_withdraws_a_request_and_the_node_settles_as_cancelled() {
             .and_then(|host| host.outcome),
         Some(HostCapabilityOutcomeKind::Cancelled)
     );
+    let replayed = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::CapabilityCancel {
+                request_id: "withdraw.replay".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                capability_request_id: first,
+                message: Some("the link to the system closed".to_owned()),
+            },
+        )
+        .expect("the replay request decodes");
+    assert!(matches!(
+        replayed,
+        RuntimeResult::CapabilitySettled {
+            outcome: HostCapabilityOutcomeKind::Cancelled,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -512,8 +606,8 @@ fn cancelling_the_invocation_cancels_the_request_it_is_parked_on() {
         Some(HostCapabilityOutcomeKind::Cancelled)
     );
 
-    // The request is gone: a host answering after the cancellation has nothing
-    // to answer, rather than reviving a cancelled invocation.
+    // The cancellation is authoritative: a later, conflicting fulfillment
+    // cannot revive the cancelled invocation.
     let late = fulfill(
         &mut parked,
         "settle.late",
@@ -524,11 +618,133 @@ fn cancelling_the_invocation_cancels_the_request_it_is_parked_on() {
     assert!(
         matches!(
             late,
-            RuntimeResult::Failed { ref code, .. } if code == "unknown_capability_request"
+            RuntimeResult::Failed { ref code, .. } if code == "invalid_request"
         ),
         "{late:?}"
     );
+    assert_eq!(
+        invocation_status(&mut parked.service, &parked.invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::Cancelled,
+        "explicit invocation cancellation owns a parked, undispatched host request"
+    );
+    let stream = observations(&mut parked.service, &parked.invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled)
+            .iter()
+            .any(|observation| observation.commitment == Commitment::Committed),
+        "explicit invocation cancellation has a committed terminal observation"
+    );
+    assert!(
+        of_kind(&stream, ObservationKind::OutcomeUnknown).is_empty(),
+        "a parked host request has not crossed an external effect"
+    );
     let _ = parked.instance;
+}
+
+#[test]
+fn a_host_withdrawal_without_invocation_cancel_remains_unknown() {
+    let mut parked = start_fixture("invocation.host.withdraw-unknown");
+    let (first, _) = published_request(&mut parked);
+    let cancelled = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::CapabilityCancel {
+                request_id: "withdraw.unknown".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                capability_request_id: first,
+                message: Some("the host withdrew the request".to_owned()),
+            },
+        )
+        .expect("a well-formed request");
+    assert!(
+        matches!(
+            cancelled,
+            RuntimeResult::CapabilitySettled {
+                outcome: HostCapabilityOutcomeKind::Cancelled,
+                ..
+            }
+        ),
+        "{cancelled:?}"
+    );
+    assert_eq!(
+        invocation_status(&mut parked.service, &parked.invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown,
+        "an unmarked host withdrawal cannot claim invocation cancellation"
+    );
+    let stream = observations(&mut parked.service, &parked.invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled).is_empty(),
+        "host withdrawal alone does not emit invocation cancellation"
+    );
+    assert_eq!(
+        of_kind(&stream, ObservationKind::OutcomeUnknown).len(),
+        1,
+        "the cancelled host settlement remains effect-uncertain at the invocation boundary"
+    );
+}
+
+#[test]
+fn explicit_invocation_cancellation_survives_restart() {
+    let directory = tempfile::tempdir().expect("runtime state directory");
+    let path = directory.path().to_path_buf();
+    let mut parked = start_fixture_with_service(
+        "invocation.host.cancel-restart",
+        RuntimeService::in_memory()
+            .with_runtime_state_dir(path.clone())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned()),
+    );
+    let (first, _) = published_request(&mut parked);
+    let cancelled = parked
+        .service
+        .handle(
+            &handshake(),
+            RuntimeRequest::ProgramInvocationCancel {
+                request_id: "cancel.restart".to_owned(),
+                owner_claim: parked.owner_claim.clone(),
+                program_invocation_id: parked.invocation.clone(),
+            },
+        )
+        .expect("a well-formed request");
+    assert!(matches!(cancelled, RuntimeResult::Cancelled { .. }));
+    let Parked {
+        service,
+        instance: _,
+        owner_claim: _,
+        invocation,
+    } = parked;
+    drop(service);
+
+    let mut reopened = RuntimeService::in_memory()
+        .with_runtime_state_dir(path)
+        .with_embedded_read_access()
+        .with_output_access_scope_ref("scope.host-capability".to_owned());
+    assert!(reopened.startup_error().is_none());
+    assert_eq!(
+        invocation_status(&mut reopened, &invocation),
+        apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
+    );
+    let stream = observations(&mut reopened, &invocation);
+    assert!(
+        of_kind(&stream, ObservationKind::InvocationCancelled)
+            .iter()
+            .any(|observation| observation.commitment == Commitment::Committed)
+    );
+    assert_eq!(
+        of_kind(&stream, ObservationKind::CapabilitySettled)
+            .iter()
+            .filter(|observation| {
+                observation
+                    .host_capability
+                    .as_ref()
+                    .map(|host| host.capability_request_id.as_str())
+                    == Some(first.as_str())
+            })
+            .count(),
+        1,
+        "the withdrawn host request remains durably settled exactly once"
+    );
 }
 
 #[test]
@@ -546,7 +762,8 @@ fn two_host_requests_settle_in_schedule_order() {
     let (second, second_ref) = published_request(&mut parked);
     assert_eq!(second_ref, "host:notes.append");
     assert_ne!(second, first);
-    // The first request is settled and gone; only the outstanding one answers.
+    // Retrying an identical first settlement returns its authoritative result
+    // without resuming the invocation a second time.
     let replayed = fulfill(
         &mut parked,
         "settle.1.again",
@@ -554,13 +771,13 @@ fn two_host_requests_settle_in_schedule_order() {
         HostCapabilityOutcomeKind::Ok,
         Some("{\"matches\":1}"),
     );
-    assert!(
-        matches!(
-            replayed,
-            RuntimeResult::Failed { ref code, .. } if code == "unknown_capability_request"
-        ),
-        "{replayed:?}"
-    );
+    assert!(matches!(
+        replayed,
+        RuntimeResult::CapabilitySettled {
+            outcome: HostCapabilityOutcomeKind::Ok,
+            ..
+        }
+    ));
     let settled = fulfill(
         &mut parked,
         "settle.2",
@@ -585,5 +802,138 @@ fn two_host_requests_settle_in_schedule_order() {
     assert!(
         !of_kind(&stream, ObservationKind::TerminalCommitted).is_empty(),
         "with both requests settled the invocation reaches a terminal commit"
+    );
+}
+
+#[test]
+fn a_lost_ack_replays_the_authoritative_settlement_after_restart() {
+    let directory = tempfile::tempdir().expect("runtime state directory");
+    let path = directory.path().to_path_buf();
+    let mut parked = start_fixture_with_service(
+        "invocation.host.restart-replay",
+        RuntimeService::in_memory()
+            .with_runtime_state_dir(path.clone())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned()),
+    );
+    let (first, _) = published_request(&mut parked);
+    assert!(matches!(
+        fulfill(
+            &mut parked,
+            "settle.before-restart",
+            &first,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"matches\":1}")
+        ),
+        RuntimeResult::CapabilitySettled { .. }
+    ));
+    let invocation = parked.invocation.clone();
+    let before_restart = observations(&mut parked.service, &invocation);
+    let Parked {
+        service,
+        instance,
+        owner_claim,
+        invocation,
+    } = parked;
+    drop(service);
+
+    let service = RuntimeService::in_memory()
+        .with_runtime_state_dir(path)
+        .with_embedded_read_access()
+        .with_output_access_scope_ref("scope.host-capability".to_owned());
+    assert!(service.startup_error().is_none());
+    let mut reopened = Parked {
+        service,
+        instance,
+        owner_claim,
+        invocation,
+    };
+    let replayed = fulfill(
+        &mut reopened,
+        "settle.after-restart",
+        &first,
+        HostCapabilityOutcomeKind::Ok,
+        Some("{\"matches\":1}"),
+    );
+    assert!(matches!(
+        replayed,
+        RuntimeResult::CapabilitySettled {
+            ref request_id,
+            outcome: HostCapabilityOutcomeKind::Ok,
+            ..
+        } if request_id == "settle.after-restart"
+    ));
+    let reopened_invocation = reopened.invocation.clone();
+    assert_eq!(
+        observations(&mut reopened.service, &reopened_invocation),
+        before_restart,
+        "replaying a lost acknowledgement must not resume the node twice"
+    );
+
+    let conflicting = fulfill(
+        &mut reopened,
+        "settle.conflict",
+        &first,
+        HostCapabilityOutcomeKind::Ok,
+        Some("{\"matches\":2}"),
+    );
+    assert!(
+        matches!(conflicting, RuntimeResult::Failed { ref code, .. } if code == "invalid_request"),
+        "{conflicting:?}"
+    );
+    assert_eq!(
+        observations(&mut reopened.service, &reopened_invocation),
+        before_restart,
+        "a conflicting retry must not alter authoritative observations"
+    );
+}
+
+#[test]
+fn settlement_replay_records_fail_closed_at_the_shared_application_bound() {
+    let mut policy = RuntimeStatePolicy::default();
+    policy.applications.max_entries = 1;
+    let mut parked = start_fixture_with_service(
+        "invocation.host.settlement-bound",
+        RuntimeService::in_memory()
+            .with_state_policy(policy)
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned()),
+    );
+    let (first, _) = published_request(&mut parked);
+    assert!(matches!(
+        fulfill(
+            &mut parked,
+            "settle.bound.first",
+            &first,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"matches\":1}")
+        ),
+        RuntimeResult::CapabilitySettled { .. }
+    ));
+    let (second, _) = published_request(&mut parked);
+    let refused = fulfill(
+        &mut parked,
+        "settle.bound.second",
+        &second,
+        HostCapabilityOutcomeKind::Ok,
+        Some("{\"appended\":true}"),
+    );
+    assert!(
+        matches!(
+            refused,
+            RuntimeResult::Failed { ref code, .. }
+                if code == "capability_settlement_quota_exceeded"
+        ),
+        "{refused:?}"
+    );
+    let invocation = parked.invocation.clone();
+    assert_eq!(
+        of_kind(
+            &observations(&mut parked.service, &invocation),
+            ObservationKind::CapabilitySettled
+        )
+        .len(),
+        1,
+        "quota refusal must leave the next node parked"
     );
 }

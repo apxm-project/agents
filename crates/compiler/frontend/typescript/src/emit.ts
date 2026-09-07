@@ -176,6 +176,7 @@ export function emitFrontendGraph(
         input_type_ref: program.input_type_ref,
         output_type_ref: program.output_type_ref,
         has_default_context: program.has_default_context,
+        input_contract: program.input_contract,
         context_type_ref: program.context_type_ref,
       }),
     ],

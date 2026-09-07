@@ -761,7 +761,15 @@ fn dispatch_records_unknown_after_possible_send_without_retry() {
             .typed_error
             .as_ref()
             .map(|error| error.category),
-        Some(ErrorCategory::OutcomeUnknown)
+        Some(ErrorCategory::Unavailable)
+    );
+    assert_eq!(
+        result
+            .lineage
+            .typed_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("lost_reply")
     );
 }
 

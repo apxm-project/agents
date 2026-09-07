@@ -906,6 +906,18 @@ struct DriveState {
     terminal_region_occurrence_id: Option<String>,
 }
 
+fn facts_have_terminal_non_success(facts: &[Fact]) -> bool {
+    facts.iter().any(|fact| {
+        fact.is_kind(FactKind::InvocationFailed)
+            || fact.is_kind(FactKind::InvocationCancelled)
+            || fact.is_kind(FactKind::EffectOutcomeUnknown)
+            || matches!(
+                fact.runtime().and_then(|runtime| runtime.invocation_state),
+                Some(InvocationState::Failed | InvocationState::Cancelled)
+            )
+    })
+}
+
 impl DriveState {
     fn note_terminal_coordinates(&mut self, node_execution_id: Option<&str>) {
         let Some(node_execution_id) = node_execution_id else {
@@ -948,7 +960,12 @@ impl DriveState {
         ));
     }
 
-    fn append_effect_outcome_unknown(&mut self, node_execution_id: &str, effect_id: &str) {
+    fn append_effect_outcome_unknown(
+        &mut self,
+        node_execution_id: &str,
+        effect_id: &str,
+        typed_error: Option<TypedErrorEnvelope>,
+    ) {
         self.note_terminal_coordinates(Some(node_execution_id));
         self.seq += 1;
         let mut unknown = fact(
@@ -965,22 +982,16 @@ impl DriveState {
             target: effect_id.to_owned(),
             digest: None,
         });
+        runtime_fact_mut(&mut unknown).typed_error = typed_error;
         self.batch.push(unknown);
     }
 
     fn has_terminal_non_success(&self) -> bool {
-        self.batch.iter().any(|fact| {
-            fact.is_kind(FactKind::InvocationFailed)
-                || fact.is_kind(FactKind::InvocationCancelled)
-                || fact.is_kind(FactKind::EffectOutcomeUnknown)
-                || matches!(
-                    fact.runtime().and_then(|runtime| runtime.invocation_state),
-                    Some(InvocationState::Failed | InvocationState::Cancelled)
-                )
-        }) || self
-            .node_outcomes
-            .iter()
-            .any(|outcome| node_outcome_terminal_status(outcome).is_some())
+        facts_have_terminal_non_success(&self.batch)
+            || self
+                .node_outcomes
+                .iter()
+                .any(|outcome| node_outcome_terminal_status(outcome).is_some())
     }
 
     fn has_unknown_outcome(&self) -> bool {
@@ -1836,6 +1847,15 @@ async fn drive_from(
 
     let mut schedule_position = start_schedule_position;
     while schedule_position < schedule.len() {
+        // Every terminal effect outcome is an execution barrier. In
+        // particular, a typed model failure must not advance into a later
+        // host capability and park a continuation whose prior evidence is
+        // already terminal.
+        if state.has_terminal_non_success() {
+            state.fail_active_loops();
+            enforce_runtime_limits(&state, resource_ceilings)?;
+            return Ok(DriveEnd::RanToEnd(state));
+        }
         if ports.cancellation.is_cancelled() {
             if !state.has_terminal_non_success() {
                 state.observe(
@@ -2318,6 +2338,7 @@ async fn drive_from(
                             state.append_effect_outcome_unknown(
                                 &node_execution_id,
                                 call.effect_id(),
+                                None,
                             );
                             state.node_outcomes.push(NodeOutcome::Model {
                                 node_id: op.node_id.clone(),
@@ -2362,6 +2383,10 @@ async fn drive_from(
                             }
                         };
                         let execution = committed_dispatch.execution;
+                        let outcome_unknown_error = execution
+                            .outcome_unknown_error
+                            .as_ref()
+                            .map(|error| model_failure_envelope(&node_execution_id, error));
                         let outcome = execution.outcome;
                         state.last_operation_succeeded =
                             matches!(&outcome, ModelOutcome::CommittedSuccess { .. });
@@ -2482,6 +2507,7 @@ async fn drive_from(
                                 state.append_effect_outcome_unknown(
                                     &node_execution_id,
                                     call.effect_id(),
+                                    outcome_unknown_error,
                                 );
                             }
                             ModelOutcome::TypedFailure { error } => {
@@ -2845,6 +2871,7 @@ async fn drive_from(
                                         state.append_effect_outcome_unknown(
                                             &node_execution_id,
                                             effect_id,
+                                            None,
                                         );
                                     }
                                 }
@@ -4749,7 +4776,7 @@ async fn resume_from_continuation(
         hook_target_snapshots,
         native_usage,
         external_agent_evidence,
-        evidence_batch: _,
+        evidence_batch,
         event_sequence,
         program_invocation_ref,
         program_instance_ref: committed_program_instance_ref,
@@ -4774,6 +4801,17 @@ async fn resume_from_continuation(
             ContinuationError::InstanceScopeMismatch {
                 requested: program_instance_ref.clone(),
                 committed: committed_program_instance_ref,
+            },
+        ));
+    }
+
+    // A terminal invocation cannot also be a resumable invocation. Reject a
+    // legacy or corrupted continuation that carries terminal evidence instead
+    // of dropping that evidence and manufacturing a successful tail run.
+    if facts_have_terminal_non_success(&evidence_batch) {
+        return Err(ExecutionError::Continuation(
+            ContinuationError::InvalidCommittedState {
+                message: "committed continuation contains terminal execution evidence".into(),
             },
         ));
     }
@@ -4870,6 +4908,80 @@ async fn resume_from_continuation(
             .map(|frame| frame.dynamic_occurrence_id.clone())
     });
 
+    // An explicit cancellation may own a parked host capability before any
+    // resume dispatch is allowed to send its settlement through the node. Keep
+    // the host settlement observation, then commit the canonical invocation
+    // cancellation directly. Applying the cancelled host value first would
+    // intentionally translate it to an uncertain external effect and publish
+    // OutcomeUnknown before the cancellation boundary can win.
+    if ports.cancellation.is_cancelled() {
+        if let Some(capability_ref) = host_capability_ref.as_deref() {
+            let capability_request_id = event_ref.as_ref().map_or_else(
+                || host_capability_request_id(&state.program_invocation_id, &continuation_id),
+                |reference| reference.as_str().to_owned(),
+            );
+            let delivered_settlement = match &delivered {
+                Value::String(text) => serde_json::from_str::<HostCapabilitySettlement>(text).ok(),
+                value => serde_json::from_value::<HostCapabilitySettlement>(value.clone()).ok(),
+            };
+            state.pending_host_capability =
+                Some(apxm_runtime_protocol::HostCapabilityObservation {
+                    capability_request_id,
+                    capability_ref: capability_ref.to_owned(),
+                    input: None,
+                    authored_permission: None,
+                    outcome: Some(
+                        delivered_settlement
+                            .as_ref()
+                            .map_or(HostCapabilityOutcomeKind::Cancelled, |settlement| {
+                                settlement.outcome
+                            }),
+                    ),
+                    receipt_ref: delivered_settlement
+                        .as_ref()
+                        .and_then(|settlement| settlement.receipt_ref.clone()),
+                });
+            state.observe(
+                ports,
+                apxm_runtime_protocol::ObservationKind::CapabilitySettled,
+                apxm_runtime_protocol::Commitment::Provisional,
+                parked_node_execution_id.as_deref(),
+                Some(&resumed_occurrence),
+                None,
+                resumed_region_occurrence.as_deref(),
+                None,
+                None,
+                None,
+                None,
+            )?;
+        }
+        state.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+            apxm_runtime_protocol::Commitment::Provisional,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        state.append_invocation_cancelled(None);
+        let parts = CommitParts {
+            air,
+            hook_bindings,
+            model_admission,
+            capability_invocations,
+            program_invocation_ref,
+            program_instance_ref: committed_program_instance_ref,
+            commit_id,
+            write_set,
+        };
+        return finish(ports, parts, DriveEnd::RanToEnd(state)).await;
+    }
+
     let mut bound_value = delivered.clone();
     if let Some(capability_ref) = host_capability_ref.clone() {
         let capability_request_id = event_ref.as_ref().map_or_else(
@@ -4926,6 +5038,7 @@ async fn resume_from_continuation(
                 state.append_effect_outcome_unknown(
                     &parked_node_execution_id,
                     &settlement.capability_request_id,
+                    None,
                 );
             }
             CapabilityOutcome::Failed { message } => {

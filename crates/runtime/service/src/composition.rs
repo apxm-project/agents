@@ -738,6 +738,7 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
     sandbox_registry: Option<Arc<SandboxRegistry>>,
     commit: Arc<dyn ExecutionCommitPort>,
     observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
     program_instance_ref: ProgramInstanceRef,
     event_ref: apxm_kernel::EventRef,
     delivered: Value,
@@ -784,6 +785,10 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
         true,
     )
     .await?;
+    let profile = match cancellation {
+        Some(token) => profile.with_cancellation_token(token),
+        None => profile,
+    };
     let outcome = profile
         .resume_event(&program_instance_ref, event_ref, delivered)
         .await

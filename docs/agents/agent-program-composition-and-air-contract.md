@@ -415,6 +415,16 @@ The graph MUST NOT contain:
 Unknown semantic fields fail closed. Descriptive source-map extensions may be
 ignored only when the contract marks them non-semantic.
 
+An entrypoint MAY carry the closed `input_contract` value
+`accepts_empty_object`. The TypeScript frontend emits it only after its
+compiler type checker proves that the declared input type accepts `{}` under
+the frontend's supported object rules. It is copied into the digest-bound
+artifact entrypoint record. Consumers that admit an unattended empty JSON
+object MUST match this exact value; an absent or unknown value is ineligible.
+Only a frontend with an independent checker proof may emit it; other frontends
+remain absent and therefore ineligible. Author configuration and presentation
+metadata cannot set or override it.
+
 Under ADR-0015, the five semantic operation records and the closed structural
 operation records are **typed source intents**, not AIR/AIS operation spellings.
 FrontendGraph carries discriminated intents for Model invocation,

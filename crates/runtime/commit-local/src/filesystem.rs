@@ -96,6 +96,17 @@ impl FilesystemExecutionCommit {
             .runtime_metadata()
     }
 
+    #[must_use]
+    pub fn invocation_status(
+        &self,
+        invocation: &str,
+    ) -> Option<apxm_runtime_protocol::ProgramInvocationStatus> {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .invocation_status(invocation)
+    }
+
     /// Atomically replace opaque composition metadata in the authenticated
     /// store. The adapter does not inspect or interpret the JSON value.
     pub fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), CommitLocalError> {

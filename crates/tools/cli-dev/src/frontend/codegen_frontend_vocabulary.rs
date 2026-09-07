@@ -90,6 +90,15 @@ pub(crate) const FAMILIES: &[Family] = &[
         },
     },
     Family {
+        type_name: "InputContract",
+        prefix: "INPUT_CONTRACT_",
+        set_name: "INPUT_CONTRACTS",
+        source: Source::DefEnum {
+            def: "ProgramDefinition",
+            property: "input_contract",
+        },
+    },
+    Family {
         type_name: "DeclKind",
         prefix: "DECL_KIND_",
         set_name: "DECL_KINDS",

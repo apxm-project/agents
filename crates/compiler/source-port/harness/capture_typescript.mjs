@@ -18,8 +18,9 @@
 //   an in-memory compiler host and evaluated through in-memory module hooks, so
 //   no directory, no symlink, and no temporary file is created for it.
 // * Its module specifiers resolve through a closed table: the declared frontend
-//   package and its Node host bridge. Every other specifier is rejected, so the
-//   submitted text reaches no Node builtin and no package.
+//   package, its Node host bridge, and its public permission vocabulary. Every
+//   other specifier is rejected, so the submitted text reaches no Node builtin
+//   and no package.
 // * The typecheck runs first and rejects before any evaluation, so a source that
 //   does not typecheck never executes.
 // * The process runs under Node's permission model with read access to the
@@ -49,6 +50,7 @@ const ENTRY_FILE = `${ROOT}/submitted_source.ts`;
 const ENTRY_URL = "apxm-submitted:///submitted_source.js";
 const FRONTEND_SPECIFIER = "@apxm/frontend";
 const FRONTEND_NODE_SPECIFIER = "@apxm/frontend/node";
+const FRONTEND_PERMISSIONS_SPECIFIER = "@apxm/frontend/permissions";
 
 // Keep the harness's own I/O handles before process is hidden from submitted
 // code. The submitted module never needs process, and exposing it would make
@@ -181,6 +183,10 @@ const frontendNodeModule = new URL(
   path.join(frontendPackage, "dist", "node.js"),
   "file:///",
 ).href;
+const frontendPermissionsModule = new URL(
+  path.join(frontendPackage, "dist", "permissions.js"),
+  "file:///",
+).href;
 const frontendHostModule = new URL(
   path.join(frontendPackage, "dist", "host.js"),
   "file:///",
@@ -197,6 +203,9 @@ const options = {
   paths: {
     [FRONTEND_SPECIFIER]: [frontendTypes],
     [FRONTEND_NODE_SPECIFIER]: [path.join(frontendPackage, "dist", "node.d.ts")],
+    [FRONTEND_PERMISSIONS_SPECIFIER]: [
+      path.join(frontendPackage, "dist", "permissions.d.ts"),
+    ],
   },
 };
 
@@ -258,8 +267,9 @@ try {
 }
 
 // The submitted module resolves through this closed table only. Any other
-// specifier — a Node builtin, an installed package, a relative path — is not
-// reachable, so the evaluated text has no ambient module surface. Synchronous
+// specifier — a Node builtin, an installed package, a relative path, or an
+// unapproved frontend subpath — is not reachable, so the evaluated text has no
+// ambient module surface. Synchronous
 // `registerHooks` is intentional: the asynchronous `register`
 // API starts a loader worker, which would require granting submitted code
 // worker authority under Node's permission model.
@@ -271,6 +281,9 @@ registerHooks({
       }
       if (specifier === FRONTEND_NODE_SPECIFIER) {
         return { url: frontendNodeModule, shortCircuit: true };
+      }
+      if (specifier === FRONTEND_PERMISSIONS_SPECIFIER) {
+        return { url: frontendPermissionsModule, shortCircuit: true };
       }
       throw new Error(
         "the submitted source may not import '" +

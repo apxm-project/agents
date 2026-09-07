@@ -25,6 +25,7 @@ use apxm_kernel::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
+use apxm_program::common::ErrorCategory as EvidenceErrorCategory;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
 use apxm_program::runtime_evidence::{
@@ -40,7 +41,7 @@ use apxm_execution::{
     CompositionRequest, EventAwait, EventOutcome, EventPort, EvidencePositionRef,
     EvidencePositionRefType, ExecutionError, ExecutionPortBundle, ExecutionPorts, ExecutionRequest,
     NodeOutcome, ObservationFailurePolicy, ObservationRecorder, ObservationSink,
-    ObservationSinkError, StaticHookHandlerPort, StaticHookResult, execute,
+    ObservationSinkError, RunTerminalStatus, StaticHookHandlerPort, StaticHookResult, execute,
 };
 use apxm_runtime_protocol::{Commitment, ObservationKind};
 
@@ -297,6 +298,17 @@ impl ModelInferencePort for FakeModel {
             },
             output: serde_json::Value::Null,
         }
+    }
+}
+
+struct AfterSendFailureModel;
+impl ModelInferencePort for AfterSendFailureModel {
+    fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+        AttemptDisposition::FailedAfterSend(apxm_inference::TypedError {
+            category: apxm_inference::ErrorCategory::Unavailable,
+            code: "model_attempt_failed".into(),
+            message: "the provider response could not be decoded after send".into(),
+        })
     }
 }
 
@@ -1911,6 +1923,37 @@ async fn unknown_effect_does_not_commit_a_return_terminal() {
 }
 
 #[tokio::test]
+async fn unknown_model_effect_retains_the_after_send_diagnostic() {
+    let commit = Arc::new(FakeCommit::new());
+    let report = execute(
+        &ports_with_model(commit.clone(), Arc::new(AfterSendFailureModel)),
+        request(),
+        json!({"iterations": 0}),
+    )
+    .await
+    .expect("after-send failure commits an uncertain result");
+
+    assert_eq!(report.terminal_status, RunTerminalStatus::OutcomeUnknown);
+    let unknown = commit
+        .facts()
+        .into_iter()
+        .find(|fact| fact.is_kind(FactKind::EffectOutcomeUnknown))
+        .expect("outcome-unknown fact");
+    let error = unknown
+        .runtime()
+        .and_then(|fact| fact.typed_error.as_ref())
+        .expect("after-send diagnostic");
+    assert_eq!(error.code_ref, "model_attempt_failed");
+    assert_eq!(error.category, EvidenceErrorCategory::Unavailable);
+    assert!(
+        !commit
+            .facts()
+            .iter()
+            .any(|fact| fact.is_kind(FactKind::InvocationCommitted))
+    );
+}
+
+#[tokio::test]
 async fn cancellation_before_first_effect_commits_cancelled_without_output() {
     let commit = Arc::new(FakeCommit::new());
     let recorder = Arc::new(ObservationRecorder::new(256, 1024 * 1024));
@@ -2077,8 +2120,8 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
         "the refusal names the reason and the layer that gave it: {refused}"
     );
 
-    // One decision, one fact — for every capability the program invokes, not
-    // only the refused one.
+    // The refusal is terminal, so the driver records exactly its decision and
+    // never advances to the later capability.
     let decided = commit
         .facts()
         .into_iter()
@@ -2087,7 +2130,11 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
                 .then(|| fact.runtime().expect("runtime fact").clone())
         })
         .collect::<Vec<_>>();
-    assert_eq!(decided.len(), 2, "one decision per capability invocation");
+    assert_eq!(
+        decided.len(),
+        1,
+        "execution stops at the refused capability"
+    );
     let refused_fact = decided
         .iter()
         .find(|fact| fact.capability_ref.as_deref() == Some("cap.search"))

@@ -391,6 +391,46 @@ fn submitted_source_cannot_mutate_the_captured_graph() {
     }
 }
 
+/// The empty-object contract is compiler-owned. Submitted source may inspect
+/// its captured graph, but it cannot add the proof marker before the trusted
+/// source-port service turns that graph into an artifact.
+#[test]
+fn submitted_source_cannot_forge_input_contract() {
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let mut source = reaching_program(frontend, "", "");
+        source.push_str(match frontend {
+            Frontend::Python => {
+                "\ngraph = Reviewer.frontend_graph()\n\
+                 graph[\"program_definitions\"][0][\"input_contract\"] = \"accepts_empty_object\"\n"
+            }
+            Frontend::Typescript => {
+                "\nconst graph = Reviewer.frontendGraph() as any;\n\
+                 graph.program_definitions[0].input_contract = \"accepts_empty_object\";\n"
+            }
+        });
+        let request = SourceBundleRequest::new(frontend, ENTRYPOINT, source);
+        match compile_source_bundle(&request, &roots(), &drivers()) {
+            Ok(compiled) => assert!(
+                compiled.frontend_graph.program_definitions[0]
+                    .input_contract
+                    .is_none(),
+                "submitted {} source forged the compiler-owned input contract",
+                frontend.wire()
+            ),
+            Err(diagnostics) => assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == SourceDiagnosticCode::SourceRejected),
+                "forging the {} input contract must reject or preserve the graph; got {diagnostics:?}",
+                frontend.wire()
+            ),
+        }
+    }
+}
+
 /// A marker record is part of the capture input before the Agent is built. Its
 /// public TypeScript fields are readonly only to the type checker, so the
 /// runtime record must also reject an `any`-cast mutation.

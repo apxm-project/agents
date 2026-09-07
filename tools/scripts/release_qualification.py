@@ -36,6 +36,9 @@ OWNER_DESCRIPTOR_SIDECAR_REL = Path(
 RELEASE_MANIFEST_REL = Path(
     "contracts/services/manifests/apxm.agents-service-release-manifest.v1.json"
 )
+PYTHON_FRONTEND_PACKAGE_REL = Path(
+    "crates/compiler/frontend/python/apxm_program/_native.so"
+)
 PROTOCOL_DESCRIPTORS = (
     ("compilation-protocol", Path("crates/compiler/service-protocol/src/lib.rs")),
     ("runtime-protocol", Path("crates/runtime/service-protocol/src/lib.rs")),
@@ -1004,12 +1007,164 @@ def _find_frontend_native(root: Path, explicit: str | None = None) -> Path | Non
     return None
 
 
+@dataclass(frozen=True)
+class _FrontendNativeSnapshot:
+    """The manifest-selected bridge bytes captured before owner gates run."""
+
+    path: Path
+    payload: bytes | None
+    mode: int | None
+    symlink_target: str | None = None
+    invalid: bool = False
+
+    def restore(self) -> None:
+        """Restore the cohort bytes after gates may have rebuilt the bridge."""
+
+        if self.symlink_target is not None:
+            if self.path.exists() or self.path.is_symlink():
+                self.path.unlink()
+            self.path.symlink_to(self.symlink_target)
+            return
+        # A gate must not be able to turn a regular published artifact into a
+        # symlink and have qualification silently follow it. Leave that shape
+        # for the normal manifest validator to reject.
+        if self.path.is_symlink():
+            return
+        if self.payload is None:
+            if self.path.exists() and self.path.is_file():
+                self.path.unlink()
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(
+            f".{self.path.name}.qualification-{os.getpid()}.tmp"
+        )
+        try:
+            temporary.write_bytes(self.payload)
+            os.chmod(temporary, self.mode)
+            os.replace(temporary, self.path)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
+
+
+def _snapshot_manifest_frontend_native(root: Path) -> _FrontendNativeSnapshot | None:
+    """Capture the checked-in manifest bridge before mutating owner gates run."""
+
+    manifest = _load_json(root, root / RELEASE_MANIFEST_REL, [], "release manifest")
+    if not isinstance(manifest, dict):
+        return None
+    frontend = manifest.get("frontend_native")
+    if not isinstance(frontend, dict) or not isinstance(frontend.get("path"), str):
+        return None
+    relative = frontend["path"]
+    if not SAFE_RELATIVE_PATH.fullmatch(relative):
+        return None
+    candidate = root / relative
+    if candidate == root:
+        return None
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    parent = candidate.parent
+    while parent != root:
+        if parent.is_symlink():
+            return _FrontendNativeSnapshot(candidate, None, None, invalid=True)
+        parent = parent.parent
+    if candidate.is_symlink():
+        try:
+            return _FrontendNativeSnapshot(
+                candidate, None, None, os.readlink(candidate), invalid=True
+            )
+        except OSError:
+            return _FrontendNativeSnapshot(candidate, None, None, invalid=True)
+    path = _resolve_regular_file(root, candidate)
+    if path is None:
+        if candidate.exists():
+            return None
+        return _FrontendNativeSnapshot(candidate, None, None)
+    try:
+        return _FrontendNativeSnapshot(path, path.read_bytes(), path.stat().st_mode & 0o777)
+    except OSError:
+        return None
+
+
+def _snapshot_path(path: Path) -> _FrontendNativeSnapshot:
+    """Capture a path that will be temporarily staged for conformance."""
+
+    if path.is_symlink():
+        try:
+            return _FrontendNativeSnapshot(
+                path, None, None, os.readlink(path), invalid=True
+            )
+        except OSError:
+            return _FrontendNativeSnapshot(path, None, None, invalid=True)
+    if not path.exists():
+        return _FrontendNativeSnapshot(path, None, None)
+    if not path.is_file():
+        return _FrontendNativeSnapshot(path, None, None, invalid=True)
+    try:
+        return _FrontendNativeSnapshot(path, path.read_bytes(), path.stat().st_mode & 0o777)
+    except OSError:
+        return _FrontendNativeSnapshot(path, None, None, invalid=True)
+
+
+def _stage_frontend_for_conformance(
+    root: Path,
+    selected: _FrontendNativeSnapshot | None,
+    package_snapshot: _FrontendNativeSnapshot | None,
+) -> _FrontendNativeSnapshot | None:
+    """Stage alternate selected bridge bytes at Python's fixed import path."""
+
+    if selected is None or selected.payload is None:
+        return None
+    package_path = root / PYTHON_FRONTEND_PACKAGE_REL
+    try:
+        if selected.path.resolve() == package_path.resolve():
+            return None
+    except OSError:
+        return None
+    package_snapshot = package_snapshot or _snapshot_path(package_path)
+    if package_snapshot.invalid:
+        return package_snapshot
+    package_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = package_path.with_name(
+        f".{package_path.name}.qualification-stage-{os.getpid()}.tmp"
+    )
+    try:
+        temporary.write_bytes(selected.payload)
+        os.chmod(temporary, selected.mode or 0o755)
+        os.replace(temporary, package_path)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+    return package_snapshot
+
+
+def _manifest_frontend_native_path(root: Path) -> str | None:
+    """Return the checked-in bridge path so qualification honors its override."""
+
+    manifest = _load_json(root, root / RELEASE_MANIFEST_REL, [], "release manifest")
+    if not isinstance(manifest, dict):
+        return None
+    frontend = manifest.get("frontend_native")
+    relative = frontend.get("path") if isinstance(frontend, dict) else None
+    if not isinstance(relative, str) or not SAFE_RELATIVE_PATH.fullmatch(relative):
+        return None
+    try:
+        (root / relative).resolve(strict=False).relative_to(root.resolve())
+    except ValueError:
+        return None
+    return relative
+
+
 def _run_gates(
     root: Path,
     gates: Sequence[str],
     result: Qualification,
     *,
     emit_output: bool = True,
+    environment: Mapping[str, str] | None = None,
 ) -> None:
     dekk = os.environ.get("DEKK", "").strip() or shutil.which("dekk")
     if not dekk:
@@ -1022,12 +1177,17 @@ def _run_gates(
         )
         return
     for gate in gates:
+        gate_environment = None
+        if environment is not None:
+            gate_environment = dict(os.environ)
+            gate_environment.update(environment)
         completed = subprocess.run(
             [dekk, "agents", gate],
             cwd=root,
             check=False,
             capture_output=True,
             text=True,
+            env=gate_environment,
         )
         if emit_output and completed.stdout:
             print(completed.stdout, end="")
@@ -1069,8 +1229,61 @@ def qualify(
 ) -> Qualification:
     result = Qualification()
     root = root.resolve()
-    if run_gates:
-        _run_gates(root, gates, result, emit_output=emit_gate_output)
+    frontend_native_snapshot = (
+        _snapshot_manifest_frontend_native(root) if run_gates else None
+    )
+    frontend_package_snapshot = (
+        _snapshot_path(root / PYTHON_FRONTEND_PACKAGE_REL) if run_gates else None
+    )
+    if run_gates and frontend_native_snapshot is not None and frontend_native_snapshot.invalid:
+        result.diagnostics.append(
+            Diagnostic(
+                "invalid-frontend-native-input",
+                "release manifest frontend_native path is a symlink or traverses a symlink",
+                "publish a regular native bridge file inside the owner checkout; symlinked inputs are rejected",
+            )
+        )
+    elif run_gates:
+        try:
+            _run_gates(root, gates, result, emit_output=emit_gate_output)
+        finally:
+            # The Compilation Service gate rebuilds and reinstalls the Python
+            # bridge.  Its fresh bytes are what the gate exercises, but the
+            # release validator must inspect and package the exact bytes named
+            # by the already-published manifest.  Restore that immutable
+            # cohort input before selecting artifacts so a macOS codesign or
+            # linker rewrite cannot create a false digest mismatch.  An absent
+            # bridge is restored to absence, while malformed symlink inputs
+            # stop before gates and remain subject to the normal validator.
+            if frontend_native_snapshot is not None:
+                frontend_native_snapshot.restore()
+        if frontend_package_snapshot is not None:
+            frontend_package_snapshot.restore()
+        staged_frontend = _stage_frontend_for_conformance(
+            root, frontend_native_snapshot, frontend_package_snapshot
+        )
+        try:
+            if staged_frontend is not None and staged_frontend.invalid:
+                result.diagnostics.append(
+                    Diagnostic(
+                        "invalid-frontend-conformance-input",
+                        "the Python frontend import path cannot be safely staged for the selected bridge",
+                        "publish a regular Python frontend package path or remove the conflicting directory",
+                    )
+                )
+            else:
+                _run_gates(
+                    root,
+                    ("test-python-frontend",),
+                    result,
+                    emit_output=emit_gate_output,
+                    environment={"APXM_SKIP_NATIVE_BUILD": "1"},
+                )
+        finally:
+            if staged_frontend is not None:
+                staged_frontend.restore()
+            if frontend_package_snapshot is not None:
+                frontend_package_snapshot.restore()
 
     if not _is_clean(root):
         result.diagnostics.append(
@@ -1155,7 +1368,7 @@ def qualify(
     for schema_name, schema_relative in _discover_shipped_schemas(root):
         result.schema_paths[schema_name] = schema_relative.as_posix()
         result.schema_digests[schema_name] = _digest_file(root / schema_relative)
-    frontend_native = _find_frontend_native(root)
+    frontend_native = _find_frontend_native(root, _manifest_frontend_native_path(root))
     if frontend_native is None:
         result.diagnostics.append(
             Diagnostic(

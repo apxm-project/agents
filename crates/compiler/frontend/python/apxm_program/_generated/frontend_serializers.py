@@ -114,6 +114,9 @@ def serialize_program_definition(record: ProgramDefinition) -> dict[str, Any]:
     context_type_ref = _field(record, "context_type_ref")
     if context_type_ref is not None:
         emitted["context_type_ref"] = context_type_ref
+    input_contract = _field(record, "input_contract")
+    if input_contract is not None:
+        emitted["input_contract"] = input_contract
     return emitted
 
 

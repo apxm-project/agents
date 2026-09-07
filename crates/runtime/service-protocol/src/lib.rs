@@ -25,14 +25,15 @@ pub mod execution_contracts;
 pub use execution_contracts::{
     AttemptId, AuthoredPermission, Commitment, ContentReadResult, ContentRef,
     ContractValidationError, CorrelationId, EXECUTION_OBSERVATION_CONTRACT,
-    EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceFactKind, EvidenceRecord, EvidenceRef,
-    ExecutionCursor, ExecutionObservation, ExecutionPage, ExecutionReadRequest,
-    ExecutionReadResult, GrantRef, HostCapabilityObservation, HostCapabilityOutcomeKind,
-    NODE_EXECUTION_INSPECTION_CONTRACT, NodeExecutionId, NodeExecutionInspection,
-    NodeExecutionStatus, ObservationId, ObservationKind, ObservationTiming, OutputRef,
-    OutputVisibility, PrincipalRef, ProgramInstanceId, ProgramInvocationId,
-    ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef, ReadContext, ReadPurpose,
-    RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef, SessionOutputRef,
+    EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceErrorCategory, EvidenceFactKind,
+    EvidenceRecord, EvidenceRef, EvidenceTypedError, ExecutionCursor, ExecutionObservation,
+    ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, HostCapabilityObservation,
+    HostCapabilityOutcomeKind, NODE_EXECUTION_INSPECTION_CONTRACT, NodeExecutionId,
+    NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
+    ObservationTiming, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
+    ProgramInvocationId, ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef,
+    ReadContext, ReadPurpose, RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef,
+    SessionOutputRef,
 };
 
 /// Authoritative lifecycle state for one reserved EventRef.
@@ -68,7 +69,7 @@ pub const EXECUTION_ADMISSION_CONTRACT: &str = "apxm.runtime.execution-admission
 /// silently widened; clients opt into this separately negotiated surface.
 pub const RUNTIME_PROTOCOL_V2_VERSION: &str = "apxm.runtime.protocol/2";
 pub const EXECUTION_READ_SCHEMA_DIGEST: &str =
-    "sha256:e168df958f22f2f7c488aa6b4f5fa39d26a1b21822eeb502e9e6ccf7d13f651b";
+    "sha256:18a60760ac119570c3ef0e0facba4b7c8030035bb2a93f38430b128a8f5c375a";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -298,7 +299,9 @@ pub enum RuntimeRequest {
     /// The runtime published the request as a `capability_requested`
     /// observation and parked the node; this is the answer. `cancelled` is not
     /// a settlement a host sends — `capability_cancel` withdraws a request —
-    /// and `output` is stated only for `ok`.
+    /// and `output` is stated only for `ok`. Retrying the same request identity
+    /// with identical settlement content returns its authoritative result;
+    /// changing any settlement content is an invalid request.
     CapabilityFulfill {
         /// Caller correlation id.
         request_id: String,
@@ -321,7 +324,9 @@ pub enum RuntimeRequest {
     /// Withdraw one outstanding host-fulfilled Capability request.
     ///
     /// The node settles as an uncertain effect: a request the host withdrew
-    /// may or may not have reached the system behind it.
+    /// may or may not have reached the system behind it. An identical retry is
+    /// idempotent and a retry that conflicts with a prior settlement is
+    /// invalid.
     CapabilityCancel {
         /// Caller correlation id.
         request_id: String,
@@ -656,6 +661,22 @@ pub fn public_event_method_forbidden(name: &str) -> bool {
         name,
         "event.bind_wait" | "event.consume_wake" | "resume_event"
     )
+}
+
+/// Whether a host fulfillment has the closed Runtime/1 wire shape.
+///
+/// Cancellation is a distinct request method. A fulfillment must therefore
+/// name a runtime-minted request, exclude `cancelled`, and carry output only
+/// when the outcome is `ok`.
+#[must_use]
+pub fn capability_fulfillment_is_well_formed(
+    capability_request_id: &str,
+    outcome: HostCapabilityOutcomeKind,
+    output: Option<&str>,
+) -> bool {
+    is_host_capability_request_id(capability_request_id)
+        && outcome != HostCapabilityOutcomeKind::Cancelled
+        && (outcome == HostCapabilityOutcomeKind::Ok) == output.is_some()
 }
 
 /// In-memory Runtime Service peer used by protocol vectors.
@@ -1023,10 +1044,11 @@ impl InMemoryRuntimePeer {
                 ..
             } => {
                 owner_claim.validate()?;
-                if !is_host_capability_request_id(&capability_request_id)
-                    || outcome == HostCapabilityOutcomeKind::Cancelled
-                    || (outcome == HostCapabilityOutcomeKind::Ok) != output.is_some()
-                {
+                if !capability_fulfillment_is_well_formed(
+                    &capability_request_id,
+                    outcome,
+                    output.as_deref(),
+                ) {
                     return Ok(RuntimeResult::Failed {
                         request_id,
                         code: "invalid_request".to_owned(),
@@ -1371,6 +1393,27 @@ mod tests {
         assert!(public_event_method_forbidden("event.bind_wait"));
         assert!(public_event_method_forbidden("event.consume_wake"));
         assert!(!public_event_method_forbidden("event.fulfill"));
+    }
+
+    #[test]
+    fn capability_fulfillment_validation_excludes_cancellation() {
+        let capability_request_id =
+            apxm_core::types::host_capability::host_capability_request_id("invocation.1", "node.1");
+        assert!(capability_fulfillment_is_well_formed(
+            &capability_request_id,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{}")
+        ));
+        assert!(!capability_fulfillment_is_well_formed(
+            &capability_request_id,
+            HostCapabilityOutcomeKind::Cancelled,
+            None
+        ));
+        assert!(!capability_fulfillment_is_well_formed(
+            &capability_request_id,
+            HostCapabilityOutcomeKind::Ok,
+            None
+        ));
     }
 
     #[test]
