@@ -71,6 +71,14 @@ class ServiceGateTests(unittest.TestCase):
             set(),
         )
 
+    def test_source_port_runs_after_both_frontends_are_built_and_installed(self) -> None:
+        steps = [name for name, _ in self.gate.resolve_steps(self.gate.load_commands())]
+        self.assertLess(
+            steps.index("test-compilation-service"),
+            steps.index("test-source-port"),
+            "source-port conformance consumes the frontend build products",
+        )
+
     def test_steps_resolve_to_the_declared_run_strings(self) -> None:
         commands = self.gate.load_commands()
         steps = dict(self.gate.resolve_steps(commands))
