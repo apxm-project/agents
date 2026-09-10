@@ -1,4 +1,4 @@
-"""A reference Agent Program that declares Agent Skills and loads them.
+"""A reference Workflow Program that declares Workflow Skills and loads them.
 
 The two `Skill` declarations differ only in where their instructions live, and
 that difference is the route an edit takes to the artifact digest: the file one
@@ -14,7 +14,7 @@ import json
 import sys
 from typing import TypedDict
 
-from apxm_program import Agent, Skill
+from apxm_program import Workflow, Skill
 
 
 class ReviewRequest(TypedDict):
@@ -41,7 +41,7 @@ ToneSkill = Skill(
 )
 
 
-@Agent(input=ReviewRequest, output=ReviewGuidance)
+@Workflow(input=ReviewRequest, output=ReviewGuidance)
 async def SkilledExample(agent, request):
     """Load both declared skills and return the instructions they carry."""
     await ToneSkill.load()

@@ -1,6 +1,6 @@
 """The Python frontend facts the shared conformance corpus cannot state.
 
-Everything about authoring a program — what an Agent binds, what the
+Everything about authoring a program — what an Workflow binds, what the
 FrontendGraph says, what the canonical AIR lowers to, and what authoring is
 rejected — is stated once in `contracts/vectors/apxm.frontend-conformance.json`
 and run from the generated harness in `test_frontend_conformance.py`. A fact
@@ -12,7 +12,7 @@ into both languages could not state it:
   value — `Model<Input, Output>` is not a value at all — so the fact has no
   TypeScript projection.
 * The generated runtime-evidence binding decodes facts. It is a generated
-  contract binding rather than an authored Agent, so it has no source fixture to
+  contract binding rather than an authored Workflow, so it has no source fixture to
   capture and no FrontendGraph to compare.
 * A ``Skill`` stating both an entry and inline text is a rejection the corpus's
   ``declaration_rejections`` cannot express: that vocabulary states one
@@ -21,7 +21,7 @@ into both languages could not state it:
   TypeScript frontend carries the same test for the same reason.
 * A Hook whose target names nothing, and a Hook that names its target
   declaration rather than the selector for it. A Python Hook binds through the
-  module globals its Agent resolves, so both are facts about a whole module, not
+  module globals its Workflow resolves, so both are facts about a whole module, not
   about one authored program, and a corpus vector authors its programs inside
   one shared module. The TypeScript frontend carries the same tests for the same
   reason.
@@ -30,8 +30,10 @@ into both languages could not state it:
 from __future__ import annotations
 
 import pytest
+from typing import Any, Awaitable, Literal, NotRequired, Required, TypedDict, get_args, get_origin, get_overloads, get_type_hints
 
-from apxm_program import Agent, Capability, Event, Hook, Model, Skill, Tool
+from apxm_program import Agent, Workflow, Program, Capability, Context, Event, Hook, Model, Skill, Tool
+from apxm_program._workflow import InputT, OutputT, ContextT
 from apxm_program._capture import CaptureError
 from apxm_program._generated.capabilities import READ
 from apxm_program._generated.diagnostics import (
@@ -49,6 +51,82 @@ from apxm_program._generated.runtime_evidence import (
 )
 
 
+def test_workflow_returns_one_sealed_typed_program() -> None:
+    class Input(TypedDict):
+        reference: str
+
+    class Output(TypedDict):
+        accepted: bool
+
+    @Workflow(input=Input, output=Output)
+    async def TypedWorkflow(agent, input):
+        return {"accepted": True}
+
+    assert get_type_hints(Program.invoke)["_input"] is InputT
+    assert get_type_hints(Program.invoke)["return"] == Awaitable[OutputT]
+    assert Program.__parameters__ == (InputT, OutputT, ContextT)
+    declarations = get_overloads(Workflow)
+    assert len(declarations) == 2
+    default_handle = get_args(get_type_hints(declarations[0])["return"])[1]
+    assert get_origin(default_handle) is Program
+    assert get_args(default_handle) == (InputT, OutputT, type(None))
+    assert get_type_hints(type(TypedWorkflow).invoke)["return"] == Awaitable[OutputT]
+    with pytest.raises(AttributeError):
+        type(TypedWorkflow).invoke = lambda *_: None
+    with pytest.raises(AttributeError):
+        TypedWorkflow._program_id = "changed"
+    with pytest.raises(TypeError):
+        Program()
+    graph = TypedWorkflow.frontend_graph()
+    graph["program_definitions"][0]["input_type_ref"] = "changed"
+    assert TypedWorkflow.frontend_graph()["program_definitions"][0]["input_type_ref"] == "Input"
+
+
+def test_context_marker_preserves_its_python_type_without_mutable_state() -> None:
+    class State:
+        count: int = 0
+
+    declared = Context(State)
+    assert declared.schema_type is State
+    assert declared.type_ref == "State"
+    assert declared.default_present is True
+    with pytest.raises(AttributeError):
+        declared.type_ref = "Changed"
+
+
+def test_agent_requires_an_exact_model_that_its_body_invokes() -> None:
+    primary = Model[object, object]("test.primary")
+    other = Model[object, object]("test.other")
+
+    with pytest.raises(TypeError, match="model"):
+        Agent(input=object, output=object)
+    with pytest.raises(TypeError, match="typed Model"):
+        Agent(input=object, output=object, model="test.primary")
+    with pytest.raises(TypeError, match="must invoke"):
+        @Agent(input=object, output=object, model=primary)
+        async def Unused(agent, input):
+            return await other(input)
+
+    @Agent(input=object, output=object, model=primary)
+    async def ModelBacked(agent, input):
+        return await primary(input)
+
+    assert ModelBacked.frontend_graph()["program_definitions"][0]["authoring"] == {
+        "kind": "agent", "primary_model_ref": "test.primary",
+    }
+    assert ModelBacked.diagnostics() is None
+    assert get_type_hints(type(ModelBacked.new()).invoke)["return"] == Awaitable[OutputT]
+
+
+def test_generated_union_branches_keep_exact_literal_discriminators() -> None:
+    from apxm_program._generated.frontend_records import AgentAuthoring, WorkflowAuthoring, SsaExpression, TruthyPredicate
+
+    assert get_type_hints(WorkflowAuthoring)["kind"] == Literal["workflow"]
+    assert get_type_hints(AgentAuthoring)["kind"] == Literal["agent"]
+    assert get_type_hints(SsaExpression)["kind"] == Literal["ssa"]
+    assert get_type_hints(TruthyPredicate)["comparator"] == Literal["truthy"]
+
+
 def test_a_bare_typed_marker_factory_is_not_yet_a_declaration() -> None:
     bare_typed_factory = Event[object]
     assert not hasattr(bare_typed_factory, "wait")
@@ -59,6 +137,69 @@ def test_a_bare_typed_marker_factory_is_not_yet_a_declaration() -> None:
 
 class _Payload:
     """A typed declaration this module's fixtures state an interface with."""
+
+
+class _OptionalDetails(TypedDict, total=False):
+    note: str
+    enabled: bool
+
+
+class _JsonInput(TypedDict):
+    reference: str
+    count: float
+    retries: int
+    accepted: bool
+    absent: None
+    labels: list[str]
+    details: NotRequired[_OptionalDetails]
+
+
+class _RecursiveInput(TypedDict):
+    child: NotRequired[_RecursiveInput]
+
+
+class _RequiredOverride(TypedDict, total=False):
+    reference: Required[str]
+
+
+class _NullableInput(TypedDict):
+    reference: str | None
+
+
+def test_typed_json_input_reaches_the_closed_frontend_schema() -> None:
+    @Workflow(input=_JsonInput, output=_JsonInput)
+    async def JsonInput(agent, input):
+        return input
+
+    assert JsonInput.frontend_graph()["program_definitions"][0]["input_schema"] == {
+        "type": "object", "additionalProperties": False,
+        "required": ["reference", "count", "retries", "accepted", "absent", "labels"],
+        "properties": {
+            "reference": {"type": "string"}, "count": {"type": "number"},
+            "retries": {"type": "integer"}, "accepted": {"type": "boolean"},
+            "absent": {"type": "null"}, "labels": {"type": "array", "items": {"type": "string"}},
+            "details": {"type": "object", "additionalProperties": False, "required": [],
+                        "properties": {"note": {"type": "string"}, "enabled": {"type": "boolean"}}},
+        },
+    }
+
+
+def test_required_field_override_remains_required() -> None:
+    @Workflow(input=_RequiredOverride, output=_RequiredOverride)
+    async def RequiredOverride(agent, input):
+        return input
+
+    schema = RequiredOverride.frontend_graph()["program_definitions"][0]["input_schema"]
+    assert schema["required"] == ["reference"]
+
+
+@pytest.mark.parametrize("input_type", [Any, object, _Payload, _RecursiveInput, dict[str, str], tuple[str], Literal["fixed"], _NullableInput])
+def test_unsupported_python_input_has_no_widened_schema(input_type) -> None:
+    @Workflow(input=input_type, output=_Payload)
+    async def UnsupportedInput(agent, input):
+        return input
+
+    assert "input_schema" not in UnsupportedInput.frontend_graph()["program_definitions"][0]
 
 
 _StrayModel = Model[_Payload, _Payload]("stray.hook.model")
@@ -83,7 +224,7 @@ def test_a_hook_target_no_declaration_names_is_refused() -> None:
     try:
         with pytest.raises(CaptureError, match=HOOK_TARGET_UNRESOLVED) as error:
 
-            @Agent(input=_Payload, output=_Payload)
+            @Workflow(input=_Payload, output=_Payload)
             async def StrayHookTarget(agent, input):
                 return await _StrayModel(input)
 
@@ -106,7 +247,7 @@ def test_a_hook_names_its_target_declaration_or_the_selector_for_it() -> None:
         _StrayHook = Hook.before(target=target, scope="model")(_stray_handler)
         try:
 
-            @Agent(input=_Payload, output=_Payload)
+            @Workflow(input=_Payload, output=_Payload)
             async def HookTargetShape(agent, input):
                 return await _StrayModel(input)
 

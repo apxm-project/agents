@@ -18,7 +18,7 @@
 //! checkout and fail from an installed package — the two configurations
 //! `tests_program/test_packed_package.py` and `test/packed-package.test.ts`
 //! exercise. TypeScript adds a second reason: `tsc` erases the typed interface
-//! an Agent capture reads back, and the published package carries no
+//! an Workflow capture reads back, and the published package carries no
 //! `inlineSources` map, so a TypeScript fixture cannot be recovered from the
 //! running module and has to be carried as authored text either way. Inlining is
 //! also what every other generator here does with the schemas it projects.
@@ -40,7 +40,7 @@
 //! carries its fixtures as real generated module code. TypeScript's capture
 //! reads authored text, which the harness supplies through the package's own
 //! the private host bridge's `submitAuthoredSource` before calling the public
-//! `Agent(...)`. Both paths run
+//! `Workflow(...)`. Both paths run
 //! entirely through the surface an installed package publishes.
 
 use std::collections::BTreeSet;
@@ -399,7 +399,7 @@ fn python_program(program: &Value, indent: usize) -> Vec<String> {
         arguments.push(format!("context={context}"));
     }
     let mut lines = vec![
-        format!("{pad}@Agent({})", arguments.join(", ")),
+        format!("{pad}@Workflow({})", arguments.join(", ")),
         format!(
             "{pad}async def {}(agent, input):",
             string(program, "program_id")
@@ -421,7 +421,7 @@ pub fn render_conformance_python() -> String {
         "import re".to_string(),
         "from typing import Any, Optional".to_string(),
         String::new(),
-        "from .. import Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool"
+        "from .. import Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool"
             .to_string(),
         "from ..permissions import Allow, Ask".to_string(),
         String::new(),
@@ -570,8 +570,8 @@ fn python_program_vector(id: &str, vector: &Value) -> Vec<String> {
     }
     let mut hooks: Vec<String> = Vec::new();
     for program in array(vector, "programs") {
-        // A Python Hook binds through the module globals its Agent resolves, so
-        // it is declared above that Agent and removed again below it: a Hook
+        // A Python Hook binds through the module globals its Workflow resolves, so
+        // it is declared above that Workflow and removed again below it: a Hook
         // left in scope would bind into every later vector's capture too.
         for hook in array(program, "hooks") {
             lines.push(String::new());
@@ -808,7 +808,7 @@ fn typescript_declaration(declaration: &Value) -> String {
 /// The authored TypeScript module one vector's programs are captured from.
 fn typescript_source_text(corpus: &Value, vector: &Value) -> String {
     let mut lines = vec![
-        "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";"
+        "import { Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";"
             .to_string(),
         String::new(),
     ];
@@ -872,7 +872,7 @@ fn typescript_program_text(corpus: &Value, program: &Value) -> Vec<String> {
     };
     let mut lines = vec![
         format!(
-            "const {} = Agent{generics}({{",
+            "const {} = Workflow{generics}({{",
             string(program, "program_id")
         ),
         format!(
@@ -928,7 +928,7 @@ fn typescript_agent_call(program: &Value) -> String {
         None => String::new(),
     };
     format!(
-        "  const {id} = Agent<Input, Output>({{ name: {name},{context} async run() {{ return null; }} }});",
+        "  const {id} = Workflow<Input, Output>({{ name: {name},{context} async run() {{ return null; }} }});",
         id = string(program, "program_id"),
         name = typescript_string(&string(program, "program_id"))
     )
@@ -940,7 +940,7 @@ pub fn render_conformance_typescript() -> String {
         TYPESCRIPT_HEADER.to_string(),
         TYPESCRIPT_MODULE_DOC.to_string(),
         String::new(),
-        "import { Agent, Capability, Context, Event, Model, Skill, Tool } from \"../index.js\";"
+        "import { Workflow, Capability, Context, Event, Model, Skill, Tool } from \"../index.js\";"
             .to_string(),
         "import { submitAuthoredSource } from \"../host.js\";".to_string(),
         "import { Allow, Ask } from \"../permissions.js\";".to_string(),
@@ -1233,7 +1233,7 @@ const TYPESCRIPT_MODULE_DOC: &str = r"// The shared frontend-conformance corpus,
 //
 // Each vector supplies its authored text through the package's own
 // the private host bridge's `submitAuthoredSource` and then calls the public
-// `Agent(...)`, because
+// `Workflow(...)`, because
 // TypeScript capture reads authored source rather than a live closure and `tsc`
 // has already erased the typed interface from the module that runs. That import
 // makes this module Node-only; nothing in the browser authoring entrypoint
@@ -1879,7 +1879,7 @@ mod tests {
     #[test]
     fn each_language_uses_its_own_capture_entry() {
         let python = render_conformance_python();
-        assert!(python.contains("@Agent(input=Input, output=Output)"));
+        assert!(python.contains("@Workflow(input=Input, output=Output)"));
         assert!(python.contains("async def Summarizer(agent, input):"));
 
         let typescript = render_conformance_typescript();

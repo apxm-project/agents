@@ -186,7 +186,13 @@ pub struct Entrypoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_contract: Option<crate::frontend_graph::EntrypointInputContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<crate::input_schema::EntrypointInputSchema>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring: Option<crate::frontend_graph::ProgramAuthoring>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_type_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context: Option<crate::frontend_graph::ValueExpression>,
 }
 
 impl Entrypoint {
@@ -403,7 +409,10 @@ impl ExecutableArtifact {
             input_type_ref: "input".to_string(),
             output_type_ref: "output".to_string(),
             input_contract: None,
+            input_schema: None,
+            authoring: None,
             context_type_ref: None,
+            default_context: None,
         }];
 
         let artifact_semantic_requirements = air_semantic_requirements(air);
@@ -518,8 +527,60 @@ impl ExecutableArtifact {
             ));
         }
         for entry in &self.entrypoints {
+            if let Some(default) = &entry.default_context {
+                if entry.context_type_ref.is_none() {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        entry.entrypoint.clone(),
+                        "a default Context requires its declared Context type",
+                    ));
+                }
+                if let Err(reason) = default.literal_json() {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        entry.entrypoint.clone(),
+                        reason,
+                    ));
+                }
+            }
             check_identifier(&mut verdict, &entry.entrypoint, "entrypoint");
             check_identifier(&mut verdict, &entry.program_id, "program_id");
+            if let Some(crate::frontend_graph::ProgramAuthoring::Agent { primary_model_ref }) =
+                &entry.authoring
+            {
+                check_identifier(&mut verdict, primary_model_ref, "Agent primary_model_ref");
+                let called = air_operand_refs(
+                    &self.air,
+                    SemanticOpKind::ModelCall,
+                    apxm_ais::SLOT_MODEL_REF,
+                )
+                .contains(primary_model_ref);
+                let required = self
+                    .artifact_semantic_requirements
+                    .iter()
+                    .any(|requirement| {
+                        requirement.typed_port_slot == *primary_model_ref
+                            && requirement.required_port_contract.schema_id
+                                == MODEL_TARGET_PORT_CONTRACT
+                            && requirement.source_scope == PortSourceScope::ArtifactSemantic
+                    });
+                if !called || !required {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        entry.entrypoint.clone(),
+                        "an Agent primary model must be called by AIR and have an exact model-target requirement",
+                    ));
+                }
+            }
+            if let Some(schema) = &entry.input_schema
+                && let Err(reason) = schema.validate()
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    entry.entrypoint.clone(),
+                    reason,
+                ));
+            }
         }
 
         for requirement in &self.artifact_semantic_requirements {
@@ -852,7 +913,10 @@ fn entrypoint_from_definition(program: &crate::frontend_graph::ProgramDefinition
         input_type_ref: program.input_type_ref.clone(),
         output_type_ref: program.output_type_ref.clone(),
         input_contract: program.input_contract,
+        input_schema: program.input_schema.clone(),
+        authoring: program.authoring.clone(),
         context_type_ref: program.context_type_ref.clone(),
+        default_context: program.default_context.clone(),
     }
 }
 
@@ -1222,7 +1286,8 @@ mod from_graph_tests {
                 "input_type_ref": "SpecialistInput",
                 "output_type_ref": "SpecialistOutput",
                 "context_type_ref": "SpecialistContext",
-                "has_default_context": true
+                "has_default_context": true,
+                "default_context": {"kind":"object", "fields":[]}
             }],
             "imported_program_refs": [{
                 "program_ref": "Summarizer",
@@ -1357,6 +1422,165 @@ mod from_graph_tests {
     }
 
     #[test]
+    fn authoring_role_is_source_declared_and_digest_bound_not_inferred_from_model_calls() {
+        use crate::frontend_graph::ProgramAuthoring;
+
+        let mut graph = specialist_graph();
+        let unclassified = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        assert_eq!(unclassified.entrypoints[0].authoring, None);
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Workflow {});
+        let workflow = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        assert_eq!(
+            workflow.entrypoints[0].authoring,
+            graph.program_definitions[0].authoring
+        );
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "model.target".into(),
+        });
+        let agent = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        assert_eq!(
+            agent.entrypoints[0].authoring,
+            graph.program_definitions[0].authoring
+        );
+        assert_eq!(
+            agent.air, workflow.air,
+            "the constructors share one executable semantics"
+        );
+        assert_ne!(agent.artifact_digest, workflow.artifact_digest);
+        assert_ne!(unclassified.artifact_digest, workflow.artifact_digest);
+        assert_ne!(agent.source_bundle_digest, workflow.source_bundle_digest);
+        assert!(
+            ExecutableArtifact::decode_for_execution(
+                &agent.encode().unwrap(),
+                &agent.artifact_digest
+            )
+            .is_ok()
+        );
+        let mut altered = agent.clone();
+        altered.entrypoints[0].authoring = Some(ProgramAuthoring::Workflow {});
+        assert_eq!(
+            ExecutableArtifact::decode_for_execution(
+                &altered.encode().unwrap(),
+                &agent.artifact_digest
+            ),
+            Err("artifact_digest_mismatch".to_owned())
+        );
+    }
+
+    #[test]
+    fn agent_primary_model_requires_both_captured_use_and_exact_requirement() {
+        use crate::frontend_graph::ProgramAuthoring;
+
+        for target in ["model.unused", "", "model bad"] {
+            let mut graph = specialist_graph();
+            graph.program_definitions[0].authoring = Some(ProgramAuthoring::Agent {
+                primary_model_ref: target.into(),
+            });
+            assert!(
+                !graph.verify().is_accepted(),
+                "invalid primary target: {target}"
+            );
+            assert!(ExecutableArtifact::from_frontend_graph(&graph).is_err());
+        }
+        let mut graph = specialist_graph();
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "model.target".into(),
+        });
+        graph.model_requirements.clear();
+        assert!(ExecutableArtifact::from_frontend_graph(&graph).is_err());
+        let mut graph = specialist_graph();
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "model.target".into(),
+        });
+        graph
+            .call_intents
+            .retain(|call| call.intent_kind != crate::frontend_graph::IntentKind::ModelInvocation);
+        assert!(ExecutableArtifact::from_frontend_graph(&graph).is_err());
+    }
+
+    #[test]
+    fn declared_context_default_is_closed_and_digest_bound() {
+        use crate::frontend_graph::{ProgramAuthoring, ValueExpression};
+        let mut graph = specialist_graph();
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Workflow {});
+        let artifact = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        assert_eq!(
+            artifact.entrypoints[0]
+                .default_context
+                .as_ref()
+                .unwrap()
+                .literal_json()
+                .unwrap(),
+            serde_json::json!({})
+        );
+        let mut altered = artifact.clone();
+        altered.entrypoints[0].default_context = Some(ValueExpression::String {
+            value: "changed".into(),
+        });
+        assert_eq!(
+            ExecutableArtifact::decode_for_execution(
+                &altered.encode().unwrap(),
+                &artifact.artifact_digest
+            ),
+            Err("artifact_digest_mismatch".into())
+        );
+        graph.program_definitions[0].default_context = None;
+        assert!(!graph.verify().is_accepted());
+        graph.program_definitions[0].default_context = Some(ValueExpression::Ssa {
+            value_id: "input".into(),
+        });
+        assert!(!graph.verify().is_accepted());
+    }
+
+    #[test]
+    fn executable_agent_projection_cannot_claim_an_absent_model_or_wrong_port() {
+        use crate::frontend_graph::ProgramAuthoring;
+
+        let mut graph = specialist_graph();
+        graph.program_definitions[0].authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "model.target".into(),
+        });
+        let artifact = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        let mut absent = artifact.clone();
+        absent.entrypoints[0].authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "model.absent".into(),
+        });
+        assert!(!absent.validate().is_accepted());
+        let mut wrong_port = artifact.clone();
+        wrong_port
+            .artifact_semantic_requirements
+            .iter_mut()
+            .find(|requirement| requirement.typed_port_slot == "model.target")
+            .unwrap()
+            .required_port_contract
+            .schema_id = CAPABILITY_PORT_CONTRACT.into();
+        assert!(!wrong_port.validate().is_accepted());
+        let mut unused = artifact.clone();
+        unused
+            .air
+            .semantic_operations
+            .retain(|operation| operation.op != SemanticOpKind::ModelCall);
+        assert!(!unused.validate().is_accepted());
+    }
+
+    #[test]
+    fn authoring_projection_is_closed_and_agent_requires_its_primary_model() {
+        use crate::frontend_graph::ProgramAuthoring;
+
+        for value in [
+            serde_json::json!({"kind":"agent"}),
+            serde_json::json!({"kind":"unknown"}),
+            serde_json::json!({"kind":"workflow", "primary_model_ref":"model.target"}),
+            serde_json::json!({"kind":"agent", "primary_model_ref":"model.target", "authority":"admin"}),
+        ] {
+            assert!(
+                serde_json::from_value::<ProgramAuthoring>(value.clone()).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
     fn missing_or_unknown_input_contract_is_ineligible_and_closed() {
         let artifact =
             ExecutableArtifact::from_frontend_graph(&specialist_graph()).expect("artifact");
@@ -1365,6 +1589,56 @@ mod from_graph_tests {
         encoded["entrypoints"][0]["input_contract"] = serde_json::json!("unknown");
         let verdict = validate_artifact_json(&encoded);
         assert!(!verdict.is_accepted());
+    }
+
+    #[test]
+    fn entrypoint_input_schema_is_validated_and_digest_bound() {
+        let untyped = specialist_graph();
+        let mut graph = untyped.clone();
+        graph.program_definitions[0].input_schema = Some(
+            serde_json::from_value(serde_json::json!({
+                "type": "object", "properties": {"reference": {"type": "string"}},
+                "required": ["reference"], "additionalProperties": false
+            }))
+            .unwrap(),
+        );
+        let artifact = ExecutableArtifact::from_frontend_graph(&graph).unwrap();
+        assert_eq!(
+            artifact.entrypoints[0].input_schema,
+            graph.program_definitions[0].input_schema
+        );
+        assert_ne!(
+            artifact.artifact_digest,
+            ExecutableArtifact::from_frontend_graph(&untyped)
+                .unwrap()
+                .artifact_digest
+        );
+        assert!(
+            ExecutableArtifact::decode_for_execution(
+                &artifact.encode().unwrap(),
+                &artifact.artifact_digest
+            )
+            .is_ok()
+        );
+        let mut altered = artifact.clone();
+        altered.entrypoints[0]
+            .input_schema
+            .as_mut()
+            .unwrap()
+            .required = Some(vec![]);
+        assert_eq!(
+            ExecutableArtifact::decode_for_execution(
+                &altered.encode().unwrap(),
+                &artifact.artifact_digest
+            ),
+            Err("artifact_digest_mismatch".to_owned())
+        );
+        graph.program_definitions[0]
+            .input_schema
+            .as_mut()
+            .unwrap()
+            .additional_properties = Some(true);
+        assert!(ExecutableArtifact::from_frontend_graph(&graph).is_err());
     }
 
     #[test]

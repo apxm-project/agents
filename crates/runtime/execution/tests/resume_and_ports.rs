@@ -10,9 +10,9 @@ use sha2::Digest;
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CapturedHookBodyHandler, CommittedNativeModelUsageOutcome, CompositionOutcome, CompositionPort,
-    CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, EventRef,
-    ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NodeOutcome, RunOutcome,
-    execute_resumable, resume, wake_from_event_application,
+    CompositionRequest, Continuation, EntrypointInput, EventAwait, EventOutcome, EventPort,
+    EventRef, ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NodeOutcome, RunOutcome,
+    execute_resumable, resume, resume_invocation, wake_from_event_application,
 };
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
@@ -74,6 +74,7 @@ fn request(scope: &str) -> ExecutionRequest {
         },
     )]);
     ExecutionRequest {
+        entrypoint_input: None,
         initial_values: air
             .semantic_operations
             .iter()
@@ -217,6 +218,7 @@ struct Commit {
     instance_refs: Mutex<Vec<String>>,
     invocation_refs: Mutex<Vec<String>>,
     continuation_load_refs: Mutex<Vec<String>>,
+    prepared_contents: Mutex<Vec<Vec<u8>>>,
     fail: bool,
 }
 
@@ -226,6 +228,10 @@ impl ExecutionCommitPort for Commit {
         &self,
         preparation: SessionOutputPreparation,
     ) -> Result<PreparedSessionOutputRef, String> {
+        self.prepared_contents
+            .lock()
+            .unwrap()
+            .push(preparation.content.clone());
         let content_digest = format!("sha256:{:x}", sha2::Sha256::digest(&preparation.content));
         Ok(PreparedSessionOutputRef {
             contract: SESSION_OUTPUT_REF_CONTRACT.to_owned(),
@@ -637,6 +643,151 @@ async fn structural_yield_binds_delivered_input_without_overwriting_context() {
     ));
 }
 
+/// A typed yield has a public output and a separate exact next-input slot.
+fn invocation_yield_request(scope: &str) -> ExecutionRequest {
+    let mut request = request(scope);
+    request.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air",
+        "semantic_operations": [{
+            "node_id": "node.capability", "op": "capability.invoke",
+            "parent_region_id": "region.root", "execution_order": 1,
+            "operands": [
+                {"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"},
+                {"slot": "arguments", "value_id": "value.next", "type_ref": "Input"}
+            ],
+            "result": {"value_id": "value.effect", "type_ref": "Output"}
+        }],
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0},
+            {"region_id": "yield.input", "kind": "yield", "parent_region_id": "region.root", "execution_order": 0,
+             "operands": [{"slot":"output", "value_id":"value.reply", "type_ref":"Output"}],
+             "block_arguments": [{"value_id": "value.next", "type_ref": "Input"}]},
+            {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 2,
+             "operands": [{"slot":"output", "value_id":"value.next", "type_ref":"Input"}]}
+        ],
+        "value_assemblies": [{"value_id":"value.reply", "expression":{"kind":"object", "fields":[
+            {"name":"reply", "value":{"kind":"string", "value":"first"}}
+        ]}}],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
+    })).expect("typed structural yield AIR");
+    request.initial_values.clear();
+    assert!(
+        request.air.verify().is_accepted(),
+        "{:?}",
+        request.air.verify()
+    );
+    request
+}
+
+#[tokio::test]
+async fn new_invocation_commits_yield_output_and_uses_fresh_input_and_authority() {
+    let commit = Arc::new(Commit::default());
+    let scope = "instance.yield-admission";
+    let yielded = execute_resumable(
+        &ports(commit.clone()),
+        invocation_yield_request(scope),
+        json!({"saved":"context"}),
+    )
+    .await
+    .expect("first invocation yields");
+    assert!(matches!(
+        yielded,
+        RunOutcome::Suspended {
+            event_ref: None,
+            ..
+        }
+    ));
+    {
+        let tuples = commit.tuples.lock().unwrap();
+        assert_eq!(tuples.len(), 1);
+        assert_eq!(tuples[0].output_refs.len(), 1);
+        assert!(tuples[0].continuation.is_some());
+        assert_eq!(
+            tuples[0].output_refs[0]["program_invocation_id"],
+            format!("invocation.{scope}")
+        );
+    }
+    assert_eq!(
+        serde_json::from_slice::<Value>(&commit.prepared_contents.lock().unwrap()[0]).unwrap(),
+        json!({"reply":"first"})
+    );
+
+    let mut wrong = invocation_yield_request(scope);
+    wrong.entrypoint_input = Some(EntrypointInput::new(json!({"message":"second"})));
+    assert!(
+        resume_invocation(&ports(commit.clone()), wrong)
+            .await
+            .is_err(),
+        "the old invocation identity is not fresh admission"
+    );
+    assert_eq!(commit.tuples.lock().unwrap().len(), 1);
+
+    let mut changed = invocation_yield_request(scope);
+    changed.program_invocation_ref = ProgramInvocationRef::new("invocation.changed");
+    changed.commit_id = "commit.changed".into();
+    changed.entrypoint_input = Some(EntrypointInput::new(json!({"message":"second"})));
+    let mut changed_air = serde_json::to_value(&changed.air).unwrap();
+    changed_air["source_map"]["source_language"] = json!("typescript");
+    changed.air = serde_json::from_value(changed_air).unwrap();
+    assert!(
+        resume_invocation(&ports(commit.clone()), changed)
+            .await
+            .is_err(),
+        "an invocation cannot replace the committed program"
+    );
+    assert_eq!(commit.tuples.lock().unwrap().len(), 1);
+
+    let mut next = invocation_yield_request(scope);
+    next.program_invocation_ref = ProgramInvocationRef::new("invocation.next");
+    next.commit_id = "commit.next".into();
+    next.entrypoint_input = Some(EntrypointInput::new(json!({"message":"second"})));
+    let RunOutcome::Completed(report) = resume_invocation(&ports(commit.clone()), next)
+        .await
+        .expect("new admitted input resumes")
+    else {
+        panic!("the next invocation returns");
+    };
+    assert_eq!(report.final_context, json!({"saved":"context"}));
+    assert_eq!(report.node_outcomes.len(), 1);
+    let tuples = commit.tuples.lock().unwrap();
+    assert_eq!(tuples.len(), 2);
+    assert!(tuples[1].continuation.is_none());
+    assert_eq!(
+        tuples[1].output_refs[0]["program_invocation_id"],
+        "invocation.next"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(commit.prepared_contents.lock().unwrap().last().unwrap())
+            .unwrap(),
+        json!({"message":"second"})
+    );
+}
+
+#[tokio::test]
+async fn new_invocation_cannot_inherit_a_revoked_capability_admission() {
+    let commit = Arc::new(Commit::default());
+    let scope = "instance.yield-revoked";
+    execute_resumable(
+        &ports(commit.clone()),
+        invocation_yield_request(scope),
+        Value::Null,
+    )
+    .await
+    .expect("first invocation yields under its own grant");
+    let mut next = invocation_yield_request(scope);
+    next.program_invocation_ref = ProgramInvocationRef::new("invocation.revoked");
+    next.commit_id = "commit.revoked".into();
+    next.entrypoint_input = Some(EntrypointInput::new(json!({"message":"second"})));
+    next.capability_invocations.clear();
+    let result = resume_invocation(&ports(commit.clone()), next).await;
+    assert!(
+        result.is_err(),
+        "the continuation cannot restore a previous grant: {result:?}"
+    );
+    assert_eq!(commit.tuples.lock().unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn branch_decision_survives_an_await_inside_the_selected_arm() {
     let commit = Arc::new(Commit::default());
@@ -693,7 +844,7 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
 }
 
 #[tokio::test]
-async fn resumed_input_cannot_become_a_capability_argument() {
+async fn raw_resume_without_fresh_admission_cannot_supply_a_capability_argument() {
     let commit = Arc::new(Commit::default());
     let mut yielded = request("instance.resume-capability-input");
     yielded.air = serde_json::from_value(json!({
@@ -720,19 +871,27 @@ async fn resumed_input_cannot_become_a_capability_argument() {
     .expect("resume capability AIR");
     yielded.initial_values.clear();
     let verdict = yielded.air.verify();
-    assert!(!verdict.is_accepted(), "{verdict:?}");
+    assert!(verdict.is_accepted(), "{verdict:?}");
 
-    let error = execute_resumable(
+    execute_resumable(
         &ports(commit.clone()),
         yielded,
         json!({"persistent": "context"}),
     )
     .await
-    .expect_err("resume input must be rejected before any park or dispatch");
+    .expect("typed source may yield before a Capability");
+    let error = resume(
+        &ports(commit.clone()),
+        &ProgramInstanceRef::new("instance.resume-capability-input"),
+        json!({"unsafe":"unadmitted"}),
+    )
+    .await
+    .expect_err("raw resume input cannot dispatch a Capability");
     assert!(matches!(
         error,
         apxm_execution::ExecutionError::InvalidAir { .. }
     ));
+    assert_eq!(commit.tuples.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

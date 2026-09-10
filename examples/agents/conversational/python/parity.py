@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from apxm_program import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
+from apxm_program import Workflow, Capability, Context, Event, Hook, Model, TaskGroup, Tool
 from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
 from apxm_program.scopes import MODEL
 
@@ -29,7 +29,7 @@ class ParityContext:
     iterations: int = 0
 
 
-@Agent(input=Input, output=Output, context=ParityContext)
+@Workflow(input=Input, output=Output, context=ParityContext)
 async def ParityChild(agent, request):
     return await ParityModel(request)
 
@@ -39,7 +39,7 @@ async def RecordParityModelStart(agent) -> None:
     return None
 
 
-@Agent(input=Input, output=Output, context=ParityContext)
+@Workflow(input=Input, output=Output, context=ParityContext)
 async def ParityCorpus(agent, request):
     while True:
         try:

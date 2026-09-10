@@ -1,0 +1,13 @@
+[
+  {"name":"closed-object","input":{"type":"object","properties":{"reference":{"type":"string"}},"required":["reference"],"additionalProperties":false},"expected_valid":true},
+  {"name":"optional-nested-object","input":{"type":"object","properties":{"details":{"type":"object","properties":{},"required":[],"additionalProperties":false}},"required":[],"additionalProperties":false},"expected_valid":true},
+  {"name":"typed-array","input":{"type":"array","items":{"type":"integer"}},"expected_valid":true},
+  {"name":"null","input":{"type":"null"},"expected_valid":true},
+  {"name":"object-must-be-closed","input":{"type":"object","properties":{},"required":[],"additionalProperties":true},"expected_valid":false},
+  {"name":"object-must-declare-fields","input":{"type":"object","additionalProperties":false},"expected_valid":false},
+  {"name":"array-needs-items","input":{"type":"array"},"expected_valid":false},
+  {"name":"scalar-cannot-carry-items","input":{"type":"string","items":{"type":"string"}},"expected_valid":false},
+  {"name":"unknown-keywords-rejected","input":{"type":"string","pattern":".*"},"expected_valid":false},
+  {"name":"union-types-rejected","input":{"type":["string","null"]},"expected_valid":false},
+  {"name":"duplicate-required-rejected","input":{"type":"object","properties":{"reference":{"type":"string"}},"required":["reference","reference"],"additionalProperties":false},"expected_valid":false}
+]

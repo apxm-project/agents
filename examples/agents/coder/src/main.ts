@@ -30,6 +30,7 @@ const ReviewModel = Model<
 
 export const Coder = Agent<CoderInput, CoderOutput>({
   name: "Coder",
+  model: DraftEdit,
   async run(agent, input) {
     const currentSource = await ReadSource({ file_path: input.file_path });
     const draft = await DraftEdit({ request: input, source: currentSource });

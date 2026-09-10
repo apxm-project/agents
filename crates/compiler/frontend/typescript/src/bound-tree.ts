@@ -24,14 +24,13 @@ import type {
   HookScope,
   InputContract,
   ParameterRole,
-  PredicateComparator,
   RegionRole,
   ValueOrigin,
 } from "./generated/frontend-graph.js";
 import type {
   CallIntent,
   ControlIntent,
-  PredicateLiteral,
+  ControlPredicate,
   SkillRequirement,
   ValueExpression,
 } from "./generated/frontend-records.js";
@@ -78,21 +77,8 @@ export type BoundOperand = {
   readonly slot: string;
 };
 
-/**
- * A closed structural predicate over one prior typed value.
- *
- * The comparator is carried dynamically rather than as one of the contract's
- * three `ControlPredicate` branches, mirroring `_bound_tree.BoundPredicate`:
- * capture decides the branch from the authored comparison operator, and the
- * generated union serializer dispatches on the same discriminant when the
- * predicate reaches the graph.
- */
-export type BoundPredicate = {
-  readonly root_value_id: string;
-  readonly property_path: readonly string[];
-  readonly comparator: PredicateComparator;
-  readonly literal?: PredicateLiteral;
-};
+/** The generated discriminated predicate over one prior typed value. */
+export type BoundPredicate = ControlPredicate;
 
 /**
  * A resolved effectful call: model, tool, capability, agent, or event.
@@ -176,8 +162,11 @@ export type BoundProgram = {
   readonly entrypoint: string;
   readonly input_type_ref: string;
   readonly input_contract?: InputContract;
+  readonly input_schema?: import("./generated/frontend-records.js").EntrypointInputSchema;
+  readonly authoring?: import("./generated/frontend-records.js").ProgramAuthoring;
   readonly output_type_ref: string;
   readonly has_default_context: boolean;
+  readonly default_context?: ValueExpression;
   readonly context_type_ref?: string;
   readonly parameters: readonly BoundParameter[];
   readonly body_region_id: string;

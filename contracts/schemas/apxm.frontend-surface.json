@@ -10,15 +10,15 @@
     "surface_version": { "const": "apxm.frontend-graph" },
     "everyday": {
       "type": "array",
-      "description": "The five everyday author-facing names. A beginner needs only these.",
+      "description": "Everyday source declarations for model-backed Agents and general Workflows.",
       "items": { "type": "string" },
-      "const": ["Agent", "agent", "Context", "Tool", "Model"]
+      "const": ["Agent", "Workflow", "agent", "Context", "Tool", "Model"]
     },
     "advanced": {
       "type": "array",
       "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one. `Skill` declares instructions a program can load; it is not a second way to declare a persona, it is the one way, and like every other declaration it is stated at module scope and named by the body that loads it — no declaration is listed again on the Agent. `source` is the one name a TypeScript module states about itself, because JavaScript cannot read its own text back; Python infers the same fact.",
       "items": { "type": "string" },
-      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source"]
+      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source", "Program"]
     },
     "non_public": {
       "type": "array",
@@ -62,6 +62,20 @@
       "type": "array",
       "description": "Every generated closed vocabulary the surface publishes on its own author-facing import path, and where each language publishes it. A vocabulary is not a declaration: it carries no arguments and produces no intent, it is the set of values a declaration's arguments are written with. Each is stated here so the import path an author is taught is a fact the manifest owns rather than one each document remembers, and so `exported_from_root: false` — the invariant that a vocabulary stays off the root namespace the tiers pin exactly — is declared rather than merely observed.",
       "items": { "$ref": "#/$defs/SurfaceVocabulary" }
+    },
+    "types": {
+      "type": "array",
+      "description": "Shared executable type contracts. These are not authoring factories and produce no second source intent.",
+      "items": {
+        "type": "object",
+        "required": ["concept", "type_parameters", "projections"],
+        "properties": {
+          "concept": {"type": "string"},
+          "type_parameters": {"type": "array", "items": {"type": "string"}},
+          "projections": {"type": "object", "propertyNames": {"$ref": "#/$defs/LanguageId"}, "additionalProperties": {"$ref": "#/$defs/SurfaceProjection"}}
+        },
+        "additionalProperties": false
+      }
     },
     "declarations": {
       "type": "array",
@@ -171,6 +185,7 @@
           "type": "string",
           "enum": [
             "AgentDecl",
+            "ProgramDecl",
             "ContextDecl",
             "ModelBinding",
             "ToolBinding",

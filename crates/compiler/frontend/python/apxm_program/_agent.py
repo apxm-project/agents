@@ -7,128 +7,47 @@ and ``.invoke(...)`` composition and the compiled graph for the compiler bridge.
 
 from __future__ import annotations
 
-import hashlib
-import json
-from typing import Any, Callable, Optional
+from dataclasses import replace
+from typing import Any, Awaitable, Callable, Optional, overload
 
-from . import _bridge
-from . import _native
 from ._capture import capture_program
 from ._emit import emit_frontend_graph
 from ._generated.diagnostics import (
     AGENT_DYNAMIC_ARGUMENT,
     AGENT_MISSING_INPUT_OUTPUT,
 )
-from ._markers import ContextSchema
-
-class _FrozenDefinitionType(type):
-    """Prevent evaluated source from replacing Agent handle methods."""
-
-    def __setattr__(cls, name: str, value: Any) -> None:
-        raise AttributeError("AgentDefinition methods are immutable after import")
+from ._markers import ContextSchema, ModelBinding
+from ._input_schema import checked_input_schema
+from ._generated.frontend_records import AgentAuthoring, WorkflowAuthoring
+from ._workflow import ContextT, InputT, OutputT, ProgramHandle, Program
 
 
-class AgentDefinition(metaclass=_FrozenDefinitionType):
-    """A compiled typed Agent program and its composition surface."""
+@overload
+def Agent(*, input: type[InputT], output: type[OutputT], model: ModelBinding, context: None = None) -> Callable[[Callable[..., Awaitable[OutputT]]], Program[InputT, OutputT, None]]: ...
 
-    __slots__ = (
-        "_program_id",
-        "_input_type_ref",
-        "_output_type_ref",
-        "_context_type_ref",
-        "_artifact_digest",
-        "_sealed",
-        "__weakref__",
-    )
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Keep the captured handle's methods and snapshot reference stable."""
-        if getattr(self, "_sealed", False):
-            raise AttributeError("AgentDefinition is immutable after capture")
-        object.__setattr__(self, name, value)
-
-    def __init__(
-        self,
-        program_id: str,
-        graph: dict[str, Any],
-        input_type_ref: str,
-        output_type_ref: str,
-        context_type_ref: Optional[str],
-    ) -> None:
-        self._program_id = program_id
-        # Keep the canonical snapshot in the native bridge. Python objects,
-        # function defaults, and module globals are reflective from evaluated
-        # source and therefore cannot serve as an integrity boundary.
-        graph_json = json.dumps(graph, sort_keys=True, separators=(",", ":"))
-        self._input_type_ref = input_type_ref
-        self._output_type_ref = output_type_ref
-        self._context_type_ref = context_type_ref
-        self._artifact_digest = "sha256:" + hashlib.sha256(
-            graph_json.encode("utf-8")
-        ).hexdigest()
-        _native.seal_frontend_graph(self, graph_json)
-        self._sealed = True
-
-    def _graph_value(self) -> dict[str, Any]:
-        """Decode an independent graph value from the immutable snapshot."""
-        return _native.frontend_graph(self)
-
-    @property
-    def program_id(self) -> str:
-        return self._program_id
-
-    @property
-    def _program_reference(self) -> tuple[str, str, str, str]:
-        """Return the static composition reference consumed by source capture."""
-        return (
-            self._program_id,
-            self._artifact_digest,
-            self._program_id,
-            f"{self._program_id}.identity",
-        )
-
-    def frontend_graph(self) -> dict[str, Any]:
-        """The captured FrontendGraph for this program."""
-        return _native.frontend_graph(self)
-
-    def diagnostics(self) -> Optional[str]:
-        """Verification diagnostics for the captured graph, or ``None``."""
-        return _bridge.verify_graph(self._graph_value())
-
-    def canonical_air(self) -> str:
-        """Canonical AIR JSON lowered from the captured graph."""
-        return _bridge.canonical_air_json(self._graph_value())
-
-    def artifact(self) -> dict[str, Any]:
-        """One complete executable artifact compiled from the captured graph."""
-        return _bridge.compile_artifact(self._graph_value())
-
-    def new(self, *, context: Any = None) -> "ProgramInstance":
-        """Create a stateful instance handle for later invocation."""
-        return ProgramInstance(self._program_id, self)
-
-    def invoke(self, _input: Any = None) -> Any:  # pragma: no cover
-        raise RuntimeError("Agent.invoke is called inside a compiled Agent body")
-
-
-class ProgramInstance:
-    """An inferred stateful instance handle produced by ``Agent.new``."""
-
-    def __init__(self, program_ref: str, definition: AgentDefinition) -> None:
-        self.program_ref = program_ref
-        self._definition = definition
-
-    def invoke(self, _input: Any = None) -> Any:  # pragma: no cover
-        raise RuntimeError("instance.invoke is called inside a compiled Agent body")
+@overload
+def Agent(*, input: type[InputT], output: type[OutputT], model: ModelBinding, context: type[ContextT] | ContextSchema[ContextT]) -> Callable[[Callable[..., Awaitable[OutputT]]], Program[InputT, OutputT, ContextT]]: ...
 
 
 def Agent(
     *,
-    input: Any,
-    output: Any,
-    context: Any = None,
-) -> Callable[[Callable[..., Any]], AgentDefinition]:
-    """Declare one typed Agent program over an ``async def`` callback."""
+    input: type[InputT],
+    output: type[OutputT],
+    model: ModelBinding,
+    context: type[ContextT] | ContextSchema[ContextT] | None = None,
+) -> Callable[[Callable[..., Awaitable[OutputT]]], Program[InputT, OutputT, ContextT]]:
+    """A model-backed program must invoke its explicitly bound primary Model."""
+    if not isinstance(model, ModelBinding):
+        raise TypeError(f"{AGENT_DYNAMIC_ARGUMENT}: Agent requires an explicit typed Model binding")
+    return _define_program(input=input, output=output, context=context, model=model)
+
+
+def _define_program(
+    *, input: type[InputT], output: type[OutputT],
+    context: type[ContextT] | ContextSchema[ContextT] | None,
+    model: ModelBinding | None = None,
+) -> Callable[[Callable[..., Awaitable[OutputT]]], Program[InputT, OutputT, ContextT]]:
+    """The shared capture boundary behind both public program declarations."""
     input_type_ref = _type_ref(input)
     output_type_ref = _type_ref(output)
     context_type_ref: Optional[str] = None
@@ -139,7 +58,7 @@ def Agent(
     elif context is not None:
         context_type_ref = _type_ref(context)
 
-    def decorate(func: Callable[..., Any]) -> AgentDefinition:
+    def decorate(func: Callable[..., Awaitable[OutputT]]) -> Program[InputT, OutputT, ContextT]:
         bindings = _resolve_bindings(func)
         program = capture_program(
             func,
@@ -149,9 +68,19 @@ def Agent(
             context_type_ref=context_type_ref,
             has_default_context=has_default_context,
             bindings=bindings,
+            context_schema_type=context.schema_type if isinstance(context, ContextSchema) else context,
         )
+        program = replace(
+            program,
+            input_schema=checked_input_schema(input, bindings),
+            authoring=WorkflowAuthoring(kind="workflow") if model is None else AgentAuthoring(kind="agent", primary_model_ref=model.target_ref),
+        )
+        if model is not None:
+            binding_names = {f"decl.model.{name}" for name, binding in bindings.items() if binding is model}
+            if not any(call.contract.intent_kind == "model_invocation" and call.contract.binding_ref in binding_names for call in program.calls):
+                raise TypeError(f"{AGENT_DYNAMIC_ARGUMENT}: Agent must invoke its explicitly declared primary Model binding")
         graph = emit_frontend_graph(program)
-        return AgentDefinition(
+        return ProgramHandle[InputT, OutputT, ContextT](
             func.__name__,
             graph,
             input_type_ref,

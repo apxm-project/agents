@@ -137,29 +137,41 @@ fn branch_name(branch: &Branch) -> &'static str {
 
 fn py_value(kind: &FieldKind, access: &str) -> String {
     match kind {
-        FieldKind::Str | FieldKind::Int | FieldKind::Bool | FieldKind::Vocabulary(_) => {
-            access.to_string()
-        }
+        FieldKind::Str
+        | FieldKind::Int
+        | FieldKind::Bool
+        | FieldKind::Literal(_)
+        | FieldKind::Vocabulary(_) => access.to_string(),
         FieldKind::StrTuple => format!("list({access})"),
         FieldKind::Permission => format!("serialize_permission({access})"),
         FieldKind::Local(name) => format!("{}({access})", py_serializer(name)),
         FieldKind::LocalTuple(name) => {
             format!("[{}(item) for item in {access}]", py_serializer(name))
         }
+        FieldKind::LocalMap(name) => format!(
+            "{{key: {}(item) for key, item in {access}.items()}}",
+            py_serializer(name)
+        ),
     }
 }
 
 fn ts_value(kind: &FieldKind, access: &str) -> String {
     match kind {
-        FieldKind::Str | FieldKind::Int | FieldKind::Bool | FieldKind::Vocabulary(_) => {
-            access.to_string()
-        }
+        FieldKind::Str
+        | FieldKind::Int
+        | FieldKind::Bool
+        | FieldKind::Literal(_)
+        | FieldKind::Vocabulary(_) => access.to_string(),
         FieldKind::StrTuple => format!("[...{access}]"),
         FieldKind::Permission => format!("serializePermission({access})"),
         FieldKind::Local(name) => format!("{}({access})", ts_serializer(name)),
         FieldKind::LocalTuple(name) => {
             format!("{access}.map((item) => {}(item))", ts_serializer(name))
         }
+        FieldKind::LocalMap(name) => format!(
+            "Object.fromEntries(Object.entries({access}).map(([key, item]) => [key, {}(item)]))",
+            ts_serializer(name)
+        ),
     }
 }
 
@@ -273,7 +285,7 @@ fn render_ts_union(schema: &Value, union: &UnionDef) -> String {
     for branch in union.branches {
         let name = branch_name(branch);
         buf.push_str(&format!(
-            "  if (discriminant === {}) {{\n    return {}(record as {name});\n  }}\n",
+            "  if (discriminant === {}) {{\n    return {}(record);\n  }}\n",
             branch_constant(schema, union, branch, discriminant),
             ts_serializer(name)
         ));

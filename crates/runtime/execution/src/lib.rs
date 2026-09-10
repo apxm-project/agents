@@ -28,13 +28,14 @@ pub mod structural;
 pub use bundle::ExecutionPortBundle;
 pub use driver::{
     CancellationToken, CapabilityGrantOrigin, CapabilityGrantSet, CapabilityInvocationAdmission,
-    CapabilityNotGranted, CapturedHookBodyHandler, ExecutionError, ExecutionPorts,
+    CapabilityNotGranted, CapturedHookBodyHandler, EntrypointInput, ExecutionError, ExecutionPorts,
     ExecutionPortsError, ExecutionRequest, MAX_EXPRESSION_DEPTH, MAX_HOOK_BINDINGS,
     MAX_INITIAL_VALUES, MAX_SCHEDULE_STEPS, MAX_SEMANTIC_OPERATIONS, MAX_STRUCTURAL_REGIONS,
     MAX_VALUE_ASSEMBLIES, NodeOutcome, RunReport, RunTerminalStatus, StaticHookExecutionError,
     StaticHookHandlerPort, StaticHookInvocation, StaticHookResult, execute, execute_resumable,
     execute_resumable_with_resource_ceilings, execute_with_resource_ceilings, resume,
-    resume_with_resource_ceilings, wake_from_event_application,
+    resume_invocation, resume_invocation_with_resource_ceilings, resume_with_resource_ceilings,
+    wake_from_event_application,
 };
 pub use observe::{
     AllowBroker, ApprovalBroker, ApprovalDecision, DenyBroker, ObservationFailurePolicy,

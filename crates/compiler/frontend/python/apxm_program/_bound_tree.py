@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
-from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
+from ._generated.frontend_records import CallIntent, ControlIntent, EntrypointInputSchema, ProgramAuthoring, SkillRequirement, ValueExpression
 from ._generated.permissions import Permission
 
 
@@ -56,7 +56,7 @@ class BoundValue:
     type_ref: str
     origin: str  # parameter | call_result | block_argument | context_value | literal | resume_input
     origin_id: Optional[str] = None
-    expression: Optional[dict[str, object]] = None
+    expression: Optional[ValueExpression] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +233,9 @@ class BoundProgram:
     context_type_ref: Optional[str]
     parameters: tuple[BoundParameter, ...]
     body_region_id: str
+    input_schema: Optional[EntrypointInputSchema] = None
+    authoring: Optional[ProgramAuthoring] = None
+    default_context: Optional[ValueExpression] = None
     declarations: tuple[BoundDeclaration, ...] = ()
     values: tuple[BoundValue, ...] = ()
     regions: tuple[BoundRegion, ...] = ()

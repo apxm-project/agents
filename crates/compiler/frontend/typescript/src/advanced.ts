@@ -1,6 +1,6 @@
 // Advanced authoring markers: static Hooks and structured task scopes.
 
-import type { AgentHandle } from "./agent.js";
+import type { Program } from "./workflow.js";
 import {
   HOOK_PHASE_AFTER,
   HOOK_PHASE_BEFORE,
@@ -39,13 +39,13 @@ export type HookTarget = {
 export type HookDecl<C = unknown> = {
   readonly phase: HookPhase;
   readonly scope: Scope;
-  readonly agent: AgentHandle<never, unknown, C>;
+  readonly agent: Program<never, unknown, C>;
   readonly target: HookTarget;
   readonly run: (agent: HookAgent<C>) => Promise<unknown> | unknown;
 };
 
 export type HookOptions<C = unknown> = {
-  agent: AgentHandle<never, unknown, C>;
+  agent: Program<never, unknown, C>;
   target: HookTarget;
   scope?: Scope;
   run(agent: HookAgent<C>): Promise<unknown> | unknown;

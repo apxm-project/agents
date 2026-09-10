@@ -51,7 +51,8 @@ The whole declaration surface, in the form each language projects it:
 <!-- BEGIN DECLARATION SURFACE -->
 | Declaration | Tier | Python | TypeScript |
 | --- | --- | --- | --- |
-| Agent definition | `everyday` | `@Agent(input=InputType, output=OutputType, context=ContextType) on one async def` | `Agent<Input, Output, Context>({ name?, context?, async run(agent, input) })` |
+| Workflow definition | `everyday` | `@Workflow(input=InputType, output=OutputType, context=ContextType) on one async def; no Model required` | `Workflow<Input, Output, Context>({ name?, context?, async run(agent, input) }); no Model required` |
+| Agent definition | `everyday` | `@Agent(input=InputType, output=OutputType, model=PrimaryModel, context=ContextType) on one async def` | `Agent<Input, Output, Context>({ model: PrimaryModel, name?, context?, async run(agent, input) })` |
 | Context schema/default | `everyday` | `@Context on one typed class whose field defaults are the initial Context` | `Context<Schema>(initial)` |
 | Exact Model binding | `everyday` | `Model[Input, Output](ref)` | `Model<Input, Output>(ref)` |
 | Imported Tool binding | `everyday` | `Tool[Input, Output](capability_ref, permission=...)` | `Tool<Input, Output>(capabilityRef, { permission })` |
@@ -62,6 +63,7 @@ The whole declaration surface, in the form each language projects it:
 | Declared Agent Skill | `advanced` | `Skill(skill_id, entry=...) or Skill(skill_id, text=...), then await skill.load()` | `Skill(skillId, { entry }) or Skill(skillId, { text }), then await skill.load()` |
 | Structured task scope | `advanced` | `async with TaskGroup()` | `TaskGroup.run(async () => { ... })` |
 | Authored module source | `advanced` | `inferred — the frontend reads the decorated def back through inspect` | `source(import.meta.url), once above the module's Agent definitions` |
+| Compiled Program | executable type | `Program[Input, Output, Context] returned by @Agent and @Workflow; typed invoke(input) and new(context=...)` | `Program<Input, Output, Context> returned by Agent and Workflow; typed invoke(input) and new({context})` |
 <!-- END DECLARATION SURFACE -->
 
 Markers are statically recognized by imported symbol identity. Compiling does
@@ -86,6 +88,7 @@ the message text. The codes are the manifest's, projected into both frontends by
 <!-- BEGIN DIAGNOSTIC CODES -->
 | Declaration | Rejection reasons |
 | --- | --- |
+| Workflow definition | `AgentBodyNotAsync`, `AgentMissingInputOutput`, `AgentDynamicArgument` |
 | Agent definition | `AgentBodyNotAsync`, `AgentMissingInputOutput`, `AgentDynamicArgument` |
 | Context schema/default | `ContextNotTyped` |
 | Exact Model binding | `ModelDisplayNameRejected`, `ModelUntypedSchema` |

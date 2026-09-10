@@ -1,6 +1,6 @@
 """Canonical session agent package entry.
 
-Authors a minimal session Agent on the typed authoring surface and prints
+Authors a minimal session Workflow on the typed authoring surface and prints
 canonical ``apxm.air`` AIR JSON to stdout. This is the exact stdout contract
 ``apxm compile-service-canonical`` captures and validates as an ``AirModule``
 before the Server session family drives it.
@@ -8,7 +8,7 @@ before the Server session family drives it.
 
 from __future__ import annotations
 
-from apxm_program import Agent, Context, Event, Model
+from apxm_program import Workflow, Context, Event, Model
 
 class SessionRequest:
     """The typed message one session turn accepts."""
@@ -27,7 +27,7 @@ class SessionContext:
     messages: tuple = ()
 
 
-@Agent(input=SessionRequest, output=SessionReply, context=SessionContext)
+@Workflow(input=SessionRequest, output=SessionReply, context=SessionContext)
 async def SessionAgent(agent, incoming):
     while True:
         reply = await SessionModel(incoming)

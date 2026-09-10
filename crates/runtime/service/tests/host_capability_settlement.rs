@@ -72,8 +72,21 @@ fn start_fixture(invocation_id: &str) -> Parked {
     )
 }
 
-fn start_fixture_with_service(invocation_id: &str, mut service: RuntimeService) -> Parked {
-    let artifact = host_capability_artifact();
+fn start_fixture_with_service(invocation_id: &str, service: RuntimeService) -> Parked {
+    start_artifact_with_input(
+        invocation_id,
+        service,
+        host_capability_artifact(),
+        serde_json::json!({}),
+    )
+}
+
+fn start_artifact_with_input(
+    invocation_id: &str,
+    mut service: RuntimeService,
+    artifact: Vec<u8>,
+    input: serde_json::Value,
+) -> Parked {
     let digest = service.admit_artifact(artifact.clone());
     assert!(!digest.is_empty(), "the fixture artifact is admitted");
     let created = service
@@ -103,7 +116,7 @@ fn start_fixture_with_service(invocation_id: &str, mut service: RuntimeService) 
                 request_id: "start".to_owned(),
                 program_instance_id: program_instance_id.clone(),
                 owner_claim: owner_claim.clone(),
-                input: serde_json::json!({}),
+                input,
             },
         )
         .expect("the invocation starts");
@@ -119,6 +132,181 @@ fn start_fixture_with_service(invocation_id: &str, mut service: RuntimeService) 
         instance: program_instance_id,
         owner_claim,
         invocation: program_invocation_id,
+    }
+}
+
+#[test]
+fn compiled_entrypoint_input_reaches_host_with_inline_or_named_mapping() {
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for frontend in [Frontend::Python, Frontend::Typescript] {
+        for named in [false, true] {
+            let source = match frontend {
+                Frontend::Typescript => r#"import { Workflow, Capability } from "@apxm/frontend";
+type Input = {reference: string; state: string};
+const Notes = Capability<unknown, unknown>("host:notes.search");
+export const Transform = Workflow<Input, unknown>({name: "Transform", async run(agent, input) {
+  if (input.state === "submitted") {
+    MAPPING
+    return await Notes(ARGUMENT);
+  }
+  return {ignored: true};
+}});
+"#
+                .replace(
+                    "MAPPING",
+                    if named {
+                        "const mapped = {reference: input.reference};"
+                    } else {
+                        ""
+                    },
+                )
+                .replace(
+                    "ARGUMENT",
+                    if named {
+                        "mapped"
+                    } else {
+                        "{reference: input.reference}"
+                    },
+                ),
+                Frontend::Python => r#"from typing import TypedDict
+from apxm_program import Workflow, Capability
+class Input(TypedDict):
+    reference: str
+    state: str
+Notes = Capability[object, object]("host:notes.search")
+@Workflow(input=Input, output=object)
+async def Transform(agent, input):
+    if input["state"] == "submitted":
+        MAPPING
+        return await Notes(ARGUMENT)
+    return {"ignored": True}
+"#
+                .replace(
+                    "        MAPPING\n",
+                    if named {
+                        "        mapped = {\"reference\": input[\"reference\"]}\n"
+                    } else {
+                        ""
+                    },
+                )
+                .replace(
+                    "ARGUMENT",
+                    if named {
+                        "mapped"
+                    } else {
+                        "{\"reference\": input[\"reference\"]}"
+                    },
+                ),
+            };
+            let compiled = compile_source_bundle(
+                &SourceBundleRequest::new(frontend, "Transform", source)
+                    .with_host_capabilities(["notes.search"]),
+                &roots,
+                &drivers,
+            )
+            .unwrap();
+            let artifact =
+                ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                    .unwrap()
+                    .encode()
+                    .unwrap();
+            for state in ["submitted", "draft"] {
+                let mut parked = start_artifact_with_input(
+                    "invocation.input.mapping",
+                    RuntimeService::in_memory()
+                        .with_embedded_read_access()
+                        .with_output_access_scope_ref("scope.host-capability".to_owned()),
+                    artifact.clone(),
+                    serde_json::json!({"reference":"R-42", "state":state}),
+                );
+                let invocation = parked.invocation.clone();
+                let stream = observations(&mut parked.service, &invocation);
+                let requested = of_kind(&stream, ObservationKind::CapabilityRequested);
+                assert_eq!(requested.len(), usize::from(state == "submitted"));
+                if state == "submitted" {
+                    let host = requested[0].host_capability.as_ref().unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<serde_json::Value>(host.input.as_ref().unwrap())
+                            .unwrap(),
+                        serde_json::json!({"reference":"R-42"})
+                    );
+                    let request_id = host.capability_request_id.clone();
+                    let result = fulfill(
+                        &mut parked,
+                        "settle.mapping",
+                        &request_id,
+                        HostCapabilityOutcomeKind::Ok,
+                        Some("{\"accepted\":true}"),
+                    );
+                    assert!(matches!(result, RuntimeResult::CapabilitySettled { .. }));
+                    let final_stream = observations(&mut parked.service, &invocation);
+                    assert_eq!(
+                        of_kind(&final_stream, ObservationKind::CapabilitySettled).len(),
+                        1
+                    );
+                    assert_eq!(
+                        of_kind(&final_stream, ObservationKind::CapabilityRequested).len(),
+                        1
+                    );
+                    assert_eq!(
+                        of_kind(&final_stream, ObservationKind::TerminalCommitted).len(),
+                        1
+                    );
+                } else {
+                    assert_eq!(
+                        of_kind(&stream, ObservationKind::TerminalCommitted).len(),
+                        1
+                    );
+                }
+                assert_eq!(
+                    invocation_status(&mut parked.service, &invocation),
+                    apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn
+                );
+                let final_stream = observations(&mut parked.service, &invocation);
+                let terminal = of_kind(&final_stream, ObservationKind::TerminalCommitted);
+                let output_ref = terminal[0].output_ref.clone().unwrap();
+                let result = parked
+                    .service
+                    .handle_v2(
+                        &RuntimeHandshakeV2::server(),
+                        RuntimeRequestV2::OutputRead {
+                            context: ReadContext {
+                                request_id: RequestId::new("read.mapping.output").unwrap(),
+                                scope_ref: ScopeRef::new("scope.host-capability").unwrap(),
+                                principal_ref: PrincipalRef::new("principal.host-capability")
+                                    .unwrap(),
+                                grant_ref: GrantRef::new("grant.host-capability").unwrap(),
+                                correlation_id: None,
+                                purpose: ReadPurpose::Output,
+                            },
+                            output_ref,
+                        },
+                    )
+                    .unwrap();
+                let RuntimeResultV2::Output { output, .. } = result else {
+                    panic!("{result:?}")
+                };
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&output.bytes).unwrap(),
+                    if state == "submitted" {
+                        serde_json::json!("{\"accepted\":true}")
+                    } else {
+                        serde_json::json!({"ignored":true})
+                    }
+                );
+            }
+        }
     }
 }
 
@@ -148,6 +336,575 @@ fn observations(service: &mut RuntimeService, invocation: &str) -> Vec<Execution
         panic!("observation subscribe returned {result:?}");
     };
     page.items
+}
+
+/// Read only the committed output reference emitted at an invocation boundary.
+fn committed_output(service: &mut RuntimeService, invocation: &str) -> serde_json::Value {
+    let stream = observations(service, invocation);
+    let terminal = of_kind(&stream, ObservationKind::TerminalCommitted);
+    assert_eq!(terminal.len(), 1, "one terminal output per invocation");
+    assert_eq!(terminal[0].commitment, Commitment::Committed);
+    assert!(terminal[0].evidence_ref.is_some());
+    let result = service
+        .handle_v2(
+            &RuntimeHandshakeV2::server(),
+            RuntimeRequestV2::OutputRead {
+                context: ReadContext {
+                    request_id: RequestId::new("read.yield.output").unwrap(),
+                    scope_ref: ScopeRef::new("scope.host-capability").unwrap(),
+                    principal_ref: PrincipalRef::new("principal.host-capability").unwrap(),
+                    grant_ref: GrantRef::new("grant.host-capability").unwrap(),
+                    correlation_id: None,
+                    purpose: ReadPurpose::Output,
+                },
+                output_ref: terminal[0]
+                    .output_ref
+                    .clone()
+                    .expect("typed output is committed"),
+            },
+        )
+        .unwrap();
+    let RuntimeResultV2::Output { output, .. } = result else {
+        panic!("{result:?}");
+    };
+    serde_json::from_slice(&output.bytes).unwrap()
+}
+
+#[test]
+fn compiled_yield_reopens_same_instance_with_new_input_and_preserved_locals_and_context() {
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for (frontend, declared_default) in [
+        (Frontend::Python, false),
+        (Frontend::Typescript, false),
+        (Frontend::Python, true),
+        (Frontend::Typescript, true),
+    ] {
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Capability, Context } from "@apxm/frontend";
+type Input = {message: string};
+type State = {first: string};
+const StateContext = Context<State>();
+const Notes = Capability<unknown, unknown>("host:notes.search");
+export const Conversation = Workflow<Input, unknown, State>({name: "Conversation", context: StateContext, async run(agent, input) {
+  agent.context = {first: input.message};
+  const first = input.message;
+  const next = await agent.yield_({reply: input.message});
+  const receipt = await Notes({reference: next.message, first: first, saved: agent.context.first});
+  return {first: first, saved: agent.context.first, next: next.message};
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow, Capability, Context
+class Input(TypedDict):
+    message: str
+class State(TypedDict):
+    first: str
+Notes = Capability[object, object]("host:notes.search")
+@Workflow(input=Input, output=object, context=Context(State))
+async def Conversation(agent, input):
+    agent.context = {"first": input["message"]}
+    first = input["message"]
+    next_input = await agent.yield_({"reply": input["message"]})
+    receipt = await Notes({"reference": next_input["message"], "first": first, "saved": agent.context["first"]})
+    return {"first": first, "saved": agent.context["first"], "next": next_input["message"]}
+"#
+            }
+        };
+        let source = if declared_default {
+            match frontend {
+                Frontend::Typescript => source
+                    .replace("type State = {first: string};", "type State = {first: string; inherited: string};")
+                    .replace("Context<State>();", "Context<State>({first: \"initial\", inherited: \"\"});")
+                    .replace("agent.context = {first: input.message};", "agent.context = {first: input.message, inherited: agent.context.first};")
+                    .replace("{reply: input.message}", "{reply: agent.context.inherited}"),
+                Frontend::Python => source
+                    .replace("class State(TypedDict):\n    first: str", "class State:\n    first: str = \"initial\"\n    inherited: str = \"\"")
+                    .replace("agent.context = {\"first\": input[\"message\"]}", "agent.context = {\"first\": input[\"message\"], \"inherited\": agent.context[\"first\"]}")
+                    .replace("{\"reply\": input[\"message\"]}", "{\"reply\": agent.context[\"inherited\"]}"),
+            }
+        } else {
+            source.to_owned()
+        };
+        let expected_first_reply = if declared_default { "initial" } else { "first" };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "Conversation", source)
+                .with_host_capabilities(["notes.search"]),
+            &roots,
+            &drivers,
+        )
+        .expect("typed yielding source compiles");
+        assert_eq!(
+            compiled.frontend_graph.program_definitions[0]
+                .default_context
+                .is_some(),
+            declared_default
+        );
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned());
+        let mut parked = start_artifact_with_input(
+            "invocation.conversation.first",
+            service,
+            artifact.clone(),
+            serde_json::json!({"message":"first"}),
+        );
+        let first_invocation = parked.invocation.clone();
+        assert_eq!(
+            invocation_status(&mut parked.service, &first_invocation),
+            ProgramInvocationStatus::CommittedYield
+        );
+        assert_eq!(
+            committed_output(&mut parked.service, &first_invocation),
+            serde_json::json!({"reply":expected_first_reply})
+        );
+        assert!(
+            of_kind(
+                &observations(&mut parked.service, &first_invocation),
+                ObservationKind::CapabilityRequested
+            )
+            .is_empty()
+        );
+        let replay = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"message":"first"}),
+        };
+        assert!(
+            matches!(parked.service.handle(&handshake(), replay.clone()).unwrap(), RuntimeResult::ProgramInvocationStarted { program_invocation_id, .. } if program_invocation_id == first_invocation)
+        );
+        let conflict = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"message":"changed"}),
+        };
+        assert!(
+            matches!(parked.service.handle(&handshake(), conflict).unwrap(), RuntimeResult::Failed { code, .. } if code == "invocation_idempotency_conflict")
+        );
+        drop(parked.service);
+        parked.service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned());
+        assert!(parked.service.startup_error().is_none());
+        assert_eq!(
+            committed_output(&mut parked.service, &first_invocation),
+            serde_json::json!({"reply":expected_first_reply})
+        );
+        parked
+            .service
+            .bind_admission(
+                &parked.instance,
+                materials(&artifact, "invocation.conversation.second"),
+            )
+            .unwrap();
+        let next = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start.second".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"message":"second"}),
+        };
+        let result = parked.service.handle(&handshake(), next.clone()).unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = result
+        else {
+            panic!("new input did not resume: {result:?}");
+        };
+        assert_ne!(program_invocation_id, first_invocation);
+        parked.invocation = program_invocation_id;
+        let invocation = parked.invocation.clone();
+        let stream = observations(&mut parked.service, &invocation);
+        let requests = of_kind(&stream, ObservationKind::CapabilityRequested);
+        assert_eq!(requests.len(), 1);
+        let host = requests[0].host_capability.as_ref().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(host.input.as_ref().unwrap()).unwrap(),
+            serde_json::json!({"reference":"second", "first":"first", "saved":"first"})
+        );
+        let capability_request_id = host.capability_request_id.clone();
+        let busy = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start.concurrent".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"message":"third"}),
+        };
+        assert!(
+            matches!(parked.service.handle(&handshake(), busy.clone()).unwrap(), RuntimeResult::Failed { code, .. } if code == "invocation_already_started")
+        );
+        assert!(matches!(
+            fulfill(
+                &mut parked,
+                "settle.conversation",
+                &capability_request_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{}")
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        assert_eq!(
+            invocation_status(&mut parked.service, &invocation),
+            ProgramInvocationStatus::CommittedReturn
+        );
+        assert_eq!(
+            committed_output(&mut parked.service, &invocation),
+            serde_json::json!({"first":"first", "saved":"first", "next":"second"})
+        );
+        assert!(
+            matches!(parked.service.handle(&handshake(), busy).unwrap(), RuntimeResult::Failed { code, .. } if code == "program_instance_completed")
+        );
+        assert!(
+            matches!(parked.service.handle(&handshake(), replay).unwrap(), RuntimeResult::ProgramInvocationStarted { program_invocation_id, .. } if program_invocation_id == first_invocation)
+        );
+        assert!(
+            matches!(parked.service.handle(&handshake(), next).unwrap(), RuntimeResult::ProgramInvocationStarted { program_invocation_id, .. } if program_invocation_id == invocation)
+        );
+        assert_eq!(
+            of_kind(
+                &observations(&mut parked.service, &invocation),
+                ObservationKind::CapabilityRequested
+            )
+            .len(),
+            1,
+            "request replay cannot repeat an effect"
+        );
+    }
+}
+
+/// Re-execute one test with its own empty roster and an optional exact fixture
+/// target. This never changes the parallel test process's environment.
+fn isolated_model_roster(test: &str, fixture_target: Option<&str>) -> bool {
+    const CHILD: &str = "APXM_TEST_MODEL_ROSTER_CHILD";
+    if std::env::var(CHILD).ok().as_deref() == Some(test) {
+        return false;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env(CHILD, test)
+        .env("APXM_HOME", directory.path())
+        .env_remove("APXM_BACKEND")
+        .env_remove("APXM_BACKEND_MODEL");
+    if let Some(target) = fixture_target {
+        command
+            .env("APXM_BACKEND", "fixture")
+            .env("APXM_BACKEND_MODEL", target);
+    }
+    let result = command.output().unwrap();
+    assert!(
+        result.status.success(),
+        "isolated source execution failed:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    true
+}
+
+#[test]
+fn compiled_boolean_condition_without_effects_executes_typed_input() {
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    if isolated_model_roster(
+        "compiled_boolean_condition_without_effects_executes_typed_input",
+        None,
+    ) {
+        return;
+    }
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for frontend in [Frontend::Typescript, Frontend::Python] {
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow } from "@apxm/frontend";
+type Input = {enabled: boolean};
+export const Condition = Workflow<Input, unknown>({name: "Condition", async run(agent, input) {
+  if (input.enabled) { return {enabled: true}; }
+  return {enabled: false};
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow
+class Input(TypedDict):
+    enabled: bool
+@Workflow(input=Input, output=object)
+async def Condition(agent, input):
+    if input["enabled"]:
+        return {"enabled": True}
+    return {"enabled": False}
+"#
+            }
+        };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "Condition", source),
+            &roots,
+            &drivers,
+        )
+        .expect("pure typed condition compiles without effect dependencies");
+        assert!(compiled.air.semantic_operations.is_empty());
+        assert!(compiled.frontend_graph.model_requirements.is_empty());
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        for enabled in [false, true] {
+            let input = serde_json::json!({"enabled":enabled});
+            let mut parked = start_artifact_with_input(
+                "invocation.pure.condition",
+                RuntimeService::in_memory()
+                    .with_embedded_read_access()
+                    .with_output_access_scope_ref("scope.host-capability".to_owned()),
+                artifact.clone(),
+                input.clone(),
+            );
+            let invocation = parked.invocation.clone();
+            assert_eq!(
+                invocation_status(&mut parked.service, &invocation),
+                ProgramInvocationStatus::CommittedReturn
+            );
+            assert_eq!(committed_output(&mut parked.service, &invocation), input);
+        }
+    }
+}
+
+/// The explicitly selected development backend runs only in this child
+/// process. Other tests keep their model-free runtime and ambient environment.
+#[test]
+fn compiled_agent_loop_uses_each_new_message_for_model_and_host_effects() {
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+
+    if isolated_model_roster(
+        "compiled_agent_loop_uses_each_new_message_for_model_and_host_effects",
+        Some("conversation.model"),
+    ) {
+        return;
+    }
+
+    fn settle_turn(parked: &mut Parked) -> serde_json::Value {
+        let invocation = parked.invocation.clone();
+        let stream = observations(&mut parked.service, &invocation);
+        assert_eq!(of_kind(&stream, ObservationKind::ModelAttempt).len(), 1);
+        assert_eq!(
+            of_kind(&stream, ObservationKind::CapabilityRequested).len(),
+            1
+        );
+        let (read_id, reference) = published_request(parked);
+        assert_eq!(reference, "host:notes.search");
+        assert!(matches!(
+            fulfill(
+                parked,
+                "settle.read",
+                &read_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{}")
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        let (write_id, reference) = published_request(parked);
+        assert_ne!(write_id, read_id);
+        assert_eq!(reference, "host:notes.write");
+        assert!(matches!(
+            fulfill(
+                parked,
+                "settle.write",
+                &write_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{}")
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        assert_eq!(
+            invocation_status(&mut parked.service, &invocation),
+            ProgramInvocationStatus::CommittedYield
+        );
+        let stream = observations(&mut parked.service, &invocation);
+        assert_eq!(
+            of_kind(&stream, ObservationKind::CapabilityRequested).len(),
+            2
+        );
+        assert_eq!(
+            of_kind(&stream, ObservationKind::CapabilitySettled).len(),
+            2
+        );
+        assert_eq!(of_kind(&stream, ObservationKind::ModelAttempt).len(), 1);
+        let output = committed_output(&mut parked.service, &invocation);
+        assert!(
+            output["reply"]
+                .as_str()
+                .unwrap()
+                .starts_with("apxm-fixture:")
+        );
+        assert_eq!(output["reviewed"], true);
+        output
+    }
+
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for frontend in [Frontend::Typescript, Frontend::Python] {
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Agent, Capability, Model } from "@apxm/frontend";
+type Input = {message: string};
+type Output = {reply: string; reviewed: boolean};
+type ModelInput = {prompt: string};
+type ModelOutput = {content: string};
+const review = Model<ModelInput, ModelOutput>("conversation.model");
+const read = Capability<unknown, unknown>("host:notes.search");
+const write = Capability<unknown, unknown>("host:notes.write");
+export const Conversation = Agent<Input, Output>({name: "Conversation", model: review, async run(agent, input) {
+  while (input.message !== "") {
+    const response = await review({prompt: input.message});
+    await read({limit: 10});
+    await write({body: "reviewed"});
+    input = await agent.yield_({reply: response.content, reviewed: true});
+  }
+  return {reply: "", reviewed: false};
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Agent, Capability, Model
+class Input(TypedDict):
+    message: str
+class Output(TypedDict):
+    reply: str
+    reviewed: bool
+class ModelInput(TypedDict):
+    prompt: str
+class ModelOutput(TypedDict):
+    content: str
+review = Model[ModelInput, ModelOutput]("conversation.model")
+read = Capability[object, object]("host:notes.search")
+write = Capability[object, object]("host:notes.write")
+@Agent(input=Input, output=Output, model=review)
+async def Conversation(agent, input):
+    while input["message"] != "":
+        response = await review({"prompt": input["message"]})
+        await read({"limit": 10})
+        await write({"body": "reviewed"})
+        input = await agent.yield_({"reply": response["content"], "reviewed": True})
+    return {"reply": "", "reviewed": False}
+"#
+            }
+        };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "Conversation", source)
+                .with_host_capabilities(["notes.search", "notes.write"]),
+            &roots,
+            &drivers,
+        )
+        .expect("typed model-backed loop source compiles");
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let service = || {
+            RuntimeService::in_memory()
+                .with_runtime_state_dir(directory.path().to_path_buf())
+                .with_embedded_read_access()
+                .with_output_access_scope_ref("scope.host-capability".to_owned())
+        };
+        let mut parked = start_artifact_with_input(
+            "invocation.agent.first",
+            service(),
+            artifact.clone(),
+            serde_json::json!({"message":"first"}),
+        );
+        let first = settle_turn(&mut parked);
+        let first_invocation = parked.invocation.clone();
+        drop(parked.service);
+        parked.service = service();
+        parked
+            .service
+            .bind_admission(
+                &parked.instance,
+                materials(&artifact, "invocation.agent.second"),
+            )
+            .unwrap();
+        let next = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start.second".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"message":"second"}),
+        };
+        let result = parked.service.handle(&handshake(), next).unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = result
+        else {
+            panic!("next Agent input was not admitted: {result:?}")
+        };
+        assert_ne!(program_invocation_id, first_invocation);
+        parked.invocation = program_invocation_id;
+        let second = settle_turn(&mut parked);
+        assert_ne!(
+            first, second,
+            "a new message must produce a new model request"
+        );
+
+        // Independently start with the exact second input. Equality with its
+        // request-derived completion proves the resumed loop used that input,
+        // without copying the backend's request rendering/hash implementation.
+        let mut baseline = start_artifact_with_input(
+            "invocation.agent.baseline",
+            RuntimeService::in_memory()
+                .with_embedded_read_access()
+                .with_output_access_scope_ref("scope.host-capability".to_owned()),
+            artifact,
+            serde_json::json!({"message":"second"}),
+        );
+        assert_eq!(second, settle_turn(&mut baseline));
+    }
 }
 
 fn invocation_status(

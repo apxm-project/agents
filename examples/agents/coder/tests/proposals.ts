@@ -1,4 +1,4 @@
-// An Agent Program that invokes the two Capabilities this package ships.
+// An Workflow Program that invokes the two Capabilities this package ships.
 //
 // `src/main.ts` is the agent: it reads a file, asks a model for a draft, and
 // turns that draft into proposals. Every one of its Capability arguments comes
@@ -10,7 +10,7 @@
 // binds, with authored literal arguments, so executing it exercises exactly one
 // thing: whether a `capability.invoke` for a Capability this package ships
 // reaches the handler this package ships.
-import { Agent, Tool } from "@apxm/frontend";
+import { Workflow, Tool } from "@apxm/frontend";
 import { source } from "@apxm/frontend/node";
 
 import { proposeEdit } from "../capabilities/edit/handler.js";
@@ -26,7 +26,7 @@ type NoInput = { unused?: never };
 const ProposeEdit = Tool<EditProposal, PreparedEdit>(proposeEdit);
 const PrepareTest = Tool<{ command: string }, PreparedTest>(prepareTest);
 
-export const Proposals = Agent<NoInput, PreparedTest>({
+export const Proposals = Workflow<NoInput, PreparedTest>({
   name: "Proposals",
   async run() {
     await ProposeEdit({

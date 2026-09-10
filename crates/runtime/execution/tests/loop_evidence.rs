@@ -9,9 +9,10 @@ use sha2::Digest;
 
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    CapturedHookBodyHandler, CompositionOutcome, CompositionPort, CompositionRequest, EventAwait,
-    EventOutcome, EventPort, ExecutionPortBundle, ExecutionPorts, ExecutionRequest, RunOutcome,
-    StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
+    CapturedHookBodyHandler, CompositionOutcome, CompositionPort, CompositionRequest,
+    EntrypointInput, EventAwait, EventOutcome, EventPort, ExecutionPortBundle, ExecutionPorts,
+    ExecutionRequest, RunOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    execute_resumable, resume_invocation,
 };
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
@@ -194,6 +195,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
         .collect::<BTreeMap<_, _>>();
     let model_admission = admission(&air);
     ExecutionRequest {
+        entrypoint_input: None,
         initial_values: air
             .semantic_operations
             .iter()
@@ -858,8 +860,8 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
         },
     ]));
     let hooks = Arc::new(ArtifactHooks::default());
-    let mut execution_request = request(air, "example.resume");
-    execution_request.hook_bindings = hook_bindings;
+    let mut execution_request = request(air.clone(), "example.resume");
+    execution_request.hook_bindings = hook_bindings.clone();
     let runtime_ports = ports_with_hooks(model.clone(), commit.clone(), false, hooks);
 
     assert!(matches!(
@@ -891,14 +893,14 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
         })
     );
 
+    let mut next_invocation = request(air, "example.resume.next");
+    next_invocation.hook_bindings = hook_bindings;
+    next_invocation.program_invocation_ref = ProgramInvocationRef::new("invocation.second");
+    next_invocation.entrypoint_input = Some(EntrypointInput::new(json!({"message":"second turn"})));
     assert!(matches!(
-        resume(
-            &runtime_ports,
-            &ProgramInstanceRef::new("instance.1"),
-            json!({"message": "second turn"}),
-        )
-        .await
-        .expect("resume reaches the next authored yield"),
+        resume_invocation(&runtime_ports, next_invocation)
+            .await
+            .expect("resume reaches the next authored yield"),
         RunOutcome::Suspended { .. }
     ));
     // The Skills the program declares are loaded and threaded into the request,
@@ -925,6 +927,14 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
             .expect("second continuation"),
     )
     .expect("typed second continuation");
+    assert_ne!(
+        first_continuation.program_invocation_ref,
+        second_continuation.program_invocation_ref
+    );
+    assert_eq!(
+        second_continuation.program_invocation_ref.as_str(),
+        "invocation.second"
+    );
     assert_eq!(
         second_continuation.context,
         json!({

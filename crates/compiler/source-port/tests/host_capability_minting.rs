@@ -17,7 +17,7 @@ use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 fn program_invoking(frontend: Frontend, capability_ref: &str) -> String {
     match frontend {
         Frontend::Python => format!(
-            "from apxm_program import Agent, Capability\n\
+            "from apxm_program import Workflow, Capability\n\
              \n\
              \n\
              class ReviewRequest:\n\
@@ -31,12 +31,12 @@ fn program_invoking(frontend: Frontend, capability_ref: &str) -> String {
              Notes = Capability[ReviewRequest, Review](\"{capability_ref}\")\n\
              \n\
              \n\
-             @Agent(input=ReviewRequest, output=Review)\n\
+             @Workflow(input=ReviewRequest, output=Review)\n\
              async def Reviewer(agent, request):\n\
              \x20   return await Notes(request)\n"
         ),
         Frontend::Typescript => format!(
-            "import {{ Agent, Capability }} from \"@apxm/frontend\";\n\
+            "import {{ Workflow, Capability }} from \"@apxm/frontend\";\n\
              import {{ source }} from \"@apxm/frontend/node\";\n\
              \n\
              source(import.meta.url);\n\
@@ -46,7 +46,7 @@ fn program_invoking(frontend: Frontend, capability_ref: &str) -> String {
              \n\
              const Notes = Capability<ReviewRequest, Review>(\"{capability_ref}\");\n\
              \n\
-             export const Reviewer = Agent<ReviewRequest, Review>({{\n\
+             export const Reviewer = Workflow<ReviewRequest, Review>({{\n\
              \x20 name: \"Reviewer\",\n\
              \x20 async run(agent, request) {{\n\
              \x20   return await Notes(request);\n\

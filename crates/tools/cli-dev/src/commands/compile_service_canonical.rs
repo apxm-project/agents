@@ -89,7 +89,7 @@ mod tests {
              StudioModel = Model[StudioInput, StudioOutput](\"model.target\")\n\
              \n\
              \n\
-             @Agent(input=StudioInput, output=StudioOutput)\n\
+             @Agent(input=StudioInput, output=StudioOutput, model=StudioModel)\n\
              async def StudioGenerated(agent, request):\n\
              \x20\x20\x20\x20while request[\"message\"] != \"\":\n\
              \x20\x20\x20\x20\x20\x20\x20\x20reply = await StudioModel(request)\n\

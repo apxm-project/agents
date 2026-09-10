@@ -139,8 +139,17 @@
           "type": "string",
           "enum": ["accepts_empty_object"]
         },
+        "input_schema": {
+          "$ref": "apxm.frontend-graph#/$defs/EntrypointInputSchema"
+        },
+        "authoring": {
+          "$ref": "apxm.frontend-graph#/$defs/ProgramAuthoring"
+        },
         "context_type_ref": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "default_context": {
+          "$ref": "apxm.frontend-graph#/$defs/ValueExpression"
         }
       },
       "additionalProperties": false

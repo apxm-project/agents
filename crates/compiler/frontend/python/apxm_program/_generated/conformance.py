@@ -19,7 +19,7 @@ import json
 import re
 from typing import Any, Optional
 
-from .. import Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool
+from .. import Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool
 from ..permissions import Allow, Ask
 
 
@@ -336,7 +336,7 @@ class NestedContext:
 # vector: minimal_model_agent
 SummarizerModel = Model[object, object]("summarizer.model")
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def Summarizer(agent, input):
     return await SummarizerModel(input)
 
@@ -346,7 +346,7 @@ def _vector_minimal_model_agent() -> list[str]:
 # vector: initial_context_assignment
 InitialModel = Model[object, object]("initial.model")
 
-@Agent(input=Input, output=Output, context=InitialContext)
+@Workflow(input=Input, output=Output, context=InitialContext)
 async def InitialContextAgent(agent, input):
     agent.context = InitialContext()
     return await InitialModel(input)
@@ -358,7 +358,7 @@ def _vector_initial_context_assignment() -> list[str]:
 SearchWeb = Tool[object, object]("search_web")
 SupportModel = Model[object, object]("support.model")
 
-@Agent(input=Input, output=Output, context=Conversation)
+@Workflow(input=Input, output=Output, context=Conversation)
 async def Support(agent, input):
     while True:
         research = None
@@ -376,7 +376,7 @@ AuditCapability = Capability[object, object]("read", permission=Allow)
 AuditModel = Model[object, object]("audit.model")
 AuditTool = Tool[object, object]("read", permission=Ask("Reads whatever the model asks for."))
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def Auditor(agent, input):
     findings = await AuditTool(input)
     archived = await AuditCapability(findings)
@@ -390,7 +390,7 @@ ReviewModel = Model[object, object]("review.model")
 SpecialistModel = Model[object, object]("specialist.model")
 Approval = Event[object]("approval.event")
 
-@Agent(input=Input, output=Output, context=ReviewContext)
+@Workflow(input=Input, output=Output, context=ReviewContext)
 async def Specialist(agent, input):
     return await SpecialistModel(input)
 
@@ -398,7 +398,7 @@ async def Specialist(agent, input):
 async def RecordModelStart(agent) -> None:
     return None
 
-@Agent(input=Input, output=Output, context=ReviewContext)
+@Workflow(input=Input, output=Output, context=ReviewContext)
 async def Coordinator(agent, input):
     while True:
         specialist = Specialist.new(context=ReviewContext())
@@ -417,7 +417,7 @@ def _vector_composed_agent_event_and_task_group() -> list[str]:
 # vector: resumable_loop_block_arguments
 ResumeModel = Model[object, object]("resume.model")
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def Resumable(agent, input):
     while True:
         reply = await ResumeModel(input)
@@ -435,7 +435,7 @@ NestedAudit = Tool[object, object]("read")
 async def AuditInnerIteration(agent) -> None:
     await NestedAudit(agent.context)
 
-@Agent(input=Input, output=Output, context=NestedContext)
+@Workflow(input=Input, output=Output, context=NestedContext)
 async def NestedLoops(agent, input):
     while True:
         reply = await NestedOuterModel(input)
@@ -456,7 +456,7 @@ AgentScopeModel = Model[object, object]("agent.scope.model")
 async def AuditWholeAgent(agent) -> None:
     return None
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def AgentScoped(agent, input):
     found = await AgentScopeTool(input)
     return await AgentScopeModel(found)
@@ -477,7 +477,7 @@ async def ZebraRunsFirst(agent) -> None:
 async def AlphaRunsSecond(agent) -> None:
     return None
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def OrderedHooks(agent, input):
     return await OrderedModel(input)
 
@@ -491,7 +491,7 @@ def _vector_same_phase_hooks_run_in_declaration_order() -> list[str]:
 # vector: negative_integer_at_safe_boundary
 NegativeValueModel = Model[object, object]("negative.value.model")
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def NegativeValue(agent, input):
     return await NegativeValueModel(-9007199254740991)
 
@@ -501,7 +501,7 @@ def _vector_negative_integer_at_safe_boundary() -> list[str]:
 # vector: skill_carried_by_package_entry
 ReviewSkill = Skill("review", entry="skills/review/SKILL.md")
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def PackagedSkillAgent(agent, input):
     return await ReviewSkill.load()
 
@@ -511,7 +511,7 @@ def _vector_skill_carried_by_package_entry() -> list[str]:
 # vector: skill_written_inline_in_source
 ToneSkill = Skill("tone", text="Answer in one sentence.")
 
-@Agent(input=Input, output=Output)
+@Workflow(input=Input, output=Output)
 async def InlineSkillAgent(agent, input):
     return await ToneSkill.load()
 
@@ -522,7 +522,7 @@ def _vector_skill_written_inline_in_source() -> list[str]:
 def _vector_rejects_unresolved_returned_call() -> list[str]:
     UnresolvedReturnModel = Model[object, object]("unresolved.return.model")
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def ReturnsUnresolved(agent, input):
             return Unresolved(input)
     except Exception as error:
@@ -535,7 +535,7 @@ def _vector_rejects_unresolved_returned_call() -> list[str]:
 def _vector_rejects_unresolved_operand_call() -> list[str]:
     UnresolvedOperandModel = Model[object, object]("unresolved.operand.model")
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def OperandUnresolved(agent, input):
             return await UnresolvedOperandModel(Unresolved(input))
     except Exception as error:
@@ -548,7 +548,7 @@ def _vector_rejects_unresolved_operand_call() -> list[str]:
 def _vector_rejects_effect_read_as_data() -> list[str]:
     ValuePositionModel = Model[object, object]("value.position.model")
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def EffectAsValue(agent, input):
             return ValuePositionModel(input)
     except Exception as error:
@@ -561,7 +561,7 @@ def _vector_rejects_effect_read_as_data() -> list[str]:
 def _vector_rejects_extra_authored_operands() -> list[str]:
     ExtraOperandModel = Model[object, object]("extra.operand.model")
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def ExtraOperands(agent, input):
             return await ExtraOperandModel(input, input)
     except Exception as error:
@@ -573,7 +573,7 @@ def _vector_rejects_extra_authored_operands() -> list[str]:
 # vector: rejects_predicate_integer_outside_safe_domain
 def _vector_rejects_predicate_integer_outside_safe_domain() -> list[str]:
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def UnsafeIntegerPredicate(agent, input):
             if input["count"] == 9007199254740992:
                 return input
@@ -588,7 +588,7 @@ def _vector_rejects_predicate_integer_outside_safe_domain() -> list[str]:
 def _vector_rejects_local_binding_shadowing_a_declared_marker() -> list[str]:
     ShadowedModel = Model[object, object]("shadowed.model")
     try:
-        @Agent(input=Input, output=Output)
+        @Workflow(input=Input, output=Output)
         async def Shadowed(agent, input):
             ShadowedModel = lambda value: value
             return await ShadowedModel(input)

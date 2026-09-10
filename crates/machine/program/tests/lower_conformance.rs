@@ -573,3 +573,28 @@ fn yield_resume_value_is_owned_once_by_the_exact_yield_node() {
     assert_eq!(owners, ["node.yield"]);
     assert!(air.verify().is_accepted());
 }
+
+#[test]
+fn typed_yield_input_can_feed_an_authored_capability_but_cannot_forge_its_origin() {
+    let mut value = generic_graph_value();
+    value["values"].as_array_mut().unwrap().push(json!({
+        "value_id":"value.next", "type_ref":"Input", "origin":"resume_input", "origin_id":"yield.next"
+    }));
+    value["control_intents"].as_array_mut().unwrap().push(json!({
+        "node_id":"yield.next", "control_kind":"yield", "parent_region_id":"loop.main", "execution_order":1,
+        "result_value":"value.next"
+    }));
+    value["call_intents"][1]["execution_order"] = json!(2);
+    value["call_intents"][1]["operand_values"] = json!(["value.next"]);
+    value["data_edges"][1]["from_value"] = json!("value.next");
+    let graph: FrontendGraph = serde_json::from_value(value.clone()).unwrap();
+    assert!(graph.verify().is_accepted(), "{:?}", graph.verify());
+    let air = frontend_graph_to_air(&graph).unwrap();
+    assert!(air.verify().is_accepted(), "{:?}", air.verify());
+    value["values"].as_array_mut().unwrap().last_mut().unwrap()["origin_id"] = json!("node.model");
+    let forged: FrontendGraph = serde_json::from_value(value).unwrap();
+    assert!(
+        !forged.verify().is_accepted(),
+        "only the exact structural yield owns typed next input"
+    );
+}

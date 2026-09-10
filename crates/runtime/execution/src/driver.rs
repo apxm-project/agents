@@ -331,6 +331,8 @@ impl StaticHookHandlerPort for CapturedHookBodyHandler {
 /// immutable instance and invocation identities, and prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
+    /// Invocation input bound only to the compiled entrypoint parameter.
+    pub entrypoint_input: Option<EntrypointInput>,
     /// Exact externally supplied SSA values (entry parameters, admitted inputs).
     pub initial_values: BTreeMap<String, Value>,
     pub hook_bindings: Vec<HookBinding>,
@@ -340,6 +342,101 @@ pub struct ExecutionRequest {
     pub program_invocation_ref: ProgramInvocationRef,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
+}
+
+/// Invocation data, separate from externally initialized SSA values.
+/// The driver resolves its destination from the compiled function signature.
+pub struct EntrypointInput(Value);
+
+impl EntrypointInput {
+    pub fn new(value: Value) -> Self {
+        Self(value)
+    }
+}
+
+fn bound_initial_values(
+    request: &ExecutionRequest,
+) -> Result<BTreeMap<String, Value>, ExecutionError> {
+    let mut values = request.initial_values.clone();
+    if let Some(input) = &request.entrypoint_input {
+        bind_entrypoint_input(&request.air, input, &mut values)?;
+    }
+    Ok(values)
+}
+
+fn bind_entrypoint_input(
+    air: &AirModule,
+    input: &EntrypointInput,
+    values: &mut BTreeMap<String, Value>,
+) -> Result<(), ExecutionError> {
+    let parameters = air
+        .structural_ir
+        .iter()
+        .filter(|region| {
+            region.kind == apxm_ais::StructuralOpKind::Function && region.parent_region_id.is_none()
+        })
+        .flat_map(|region| {
+            region
+                .block_arguments
+                .iter()
+                .map(move |argument| (region, argument))
+        })
+        .filter(|(_, argument)| argument.value_id.ends_with(".param.input"))
+        .collect::<Vec<_>>();
+    match parameters.as_slice() {
+        [] => {}
+        [(region, parameter)] => {
+            if region.region_id.strip_suffix(".body")
+                != parameter.value_id.strip_suffix(".param.input")
+            {
+                return Err(ExecutionError::InvalidAir {
+                    message: "entrypoint input parameter does not belong to the compiled function"
+                        .into(),
+                });
+            }
+            if values
+                .insert(parameter.value_id.clone(), input.0.clone())
+                .is_some()
+            {
+                return Err(ExecutionError::InvalidAir {
+                    message: "entrypoint input cannot also be supplied through initial_values"
+                        .into(),
+                });
+            }
+        }
+        _ => {
+            return Err(ExecutionError::InvalidAir {
+                message: "invocation input requires one exact compiled entrypoint parameter".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod entrypoint_input_tests {
+    use super::*;
+
+    #[test]
+    fn invocation_input_does_not_bind_a_nested_function_parameter() {
+        let air: AirModule = serde_json::from_value(serde_json::json!({
+            "schema_version":"apxm.air", "semantic_operations":[], "value_assemblies":[],
+            "structural_ir":[
+                {"region_id":"Outer.body","kind":"function","execution_order":0},
+                {"region_id":"Inner.body","kind":"function","parent_region_id":"Outer.body","execution_order":0,
+                 "block_arguments":[{"value_id":"Inner.param.input","type_ref":"Input"}]}
+            ],
+            "context_flow":[], "source_map":{"schema_version":"apxm.source-map","source_language":"typescript","node_spans":[],"region_annotations":[]}
+        })).unwrap();
+        let mut values = BTreeMap::new();
+        bind_entrypoint_input(
+            &air,
+            &EntrypointInput::new(serde_json::json!({"value":1})),
+            &mut values,
+        )
+        .unwrap();
+        assert!(values.is_empty());
+    }
 }
 
 /// Admitted Auth/Server references for one exact `capability.invoke` AIR node.
@@ -3282,6 +3379,7 @@ async fn drive_from(
                 resume_value_id,
             } => {
                 enforce_runtime_limits(&state, resource_ceilings)?;
+                materialize_program_output(air, &mut state, region_id)?;
                 if options.suspend_on_park && options.yield_at_loop {
                     return Ok(DriveEnd::Parked {
                         state,
@@ -3308,28 +3406,7 @@ async fn drive_from(
                 else {
                     unreachable!("matched ProgramReturn above")
                 };
-                let return_value_id = air
-                    .structural_ir
-                    .iter()
-                    .find(|region| region.region_id == *return_region_id)
-                    .and_then(|region| {
-                        region
-                            .operands
-                            .iter()
-                            .find(|operand| operand.slot == "output")
-                            .map(|operand| operand.value_id.clone())
-                    });
-                if let Some(value_id) = return_value_id {
-                    state.last_result = materialize_ssa_value(
-                        air,
-                        &state,
-                        return_region_id,
-                        &value_id,
-                        &mut BTreeSet::new(),
-                    )?;
-                    state.last_result_value_id = Some(value_id);
-                    state.last_operation_succeeded = true;
-                }
+                materialize_program_output(air, &mut state, return_region_id)?;
                 state.fail_active_loops();
                 enforce_runtime_limits(&state, resource_ceilings)?;
                 return Ok(DriveEnd::RanToEnd(state));
@@ -3504,6 +3581,37 @@ async fn apply_static_hook(
         state.last_operation_succeeded = snapshot.succeeded;
     }
     Ok((before, state.context.clone()))
+}
+
+/// Resolve the source-declared output at a structural invocation boundary.
+fn materialize_program_output(
+    air: &AirModule,
+    state: &mut DriveState,
+    region_id: &str,
+) -> Result<(), ExecutionError> {
+    let value_id = air
+        .structural_ir
+        .iter()
+        .find(|region| region.region_id == region_id)
+        .and_then(|region| {
+            region
+                .operands
+                .iter()
+                .find(|operand| operand.slot == "output")
+        })
+        .map(|operand| operand.value_id.clone());
+    if let Some(value_id) = value_id {
+        let result = materialize_ssa_value(air, state, region_id, &value_id, &mut BTreeSet::new())?;
+        if state.last_result_value_id.as_ref() != Some(&value_id) {
+            state.committed_output_node_execution_id = None;
+            state.committed_output_occurrence_id = None;
+            state.committed_output_region_occurrence_id = None;
+        }
+        state.last_result = result;
+        state.last_result_value_id = Some(value_id);
+        state.last_operation_succeeded = true;
+    }
+    Ok(())
 }
 
 fn node_outcome_id(outcome: &NodeOutcome) -> Option<&str> {
@@ -4413,6 +4521,76 @@ async fn commit_suspension(
             Some(expected + 1),
         ));
     }
+    let yield_commit_id = format!(
+        "{}.yield.{}.{}",
+        continuation.commit_id,
+        continuation.continuation_id,
+        state.seq.max(state.observation_seq)
+    );
+    let mut prepared_output = None;
+    let mut boundary_observations = Vec::new();
+    if continuation.event_ref.is_none() && !terminal_non_success {
+        prepared_output = prepare_final_output(
+            ports,
+            &state,
+            &continuation.program_instance_ref,
+            &continuation.program_invocation_ref,
+            &yield_commit_id,
+        )
+        .await?;
+        let output_ref = prepared_output
+            .as_ref()
+            .map(|value| value.output_ref.as_str());
+        let evidence_ref = PrecommitEvidenceRef::new(
+            &yield_commit_id,
+            continuation.program_invocation_ref.as_str(),
+            (state.batch.len() - 1) as u64,
+        )
+        .map_err(|message| ExecutionError::InvalidCommitRequest {
+            message: message.to_owned(),
+        })?;
+        if let Some(output_ref) = output_ref {
+            boundary_observations.push(state.stage_observation(
+                ports,
+                apxm_runtime_protocol::ObservationKind::ContentCommitted,
+                apxm_runtime_protocol::Commitment::Committed,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(output_ref),
+                None,
+                None,
+            )?);
+        }
+        boundary_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::TerminalCommitted,
+            apxm_runtime_protocol::Commitment::Committed,
+            None,
+            None,
+            None,
+            None,
+            None,
+            output_ref,
+            Some(evidence_ref.as_str()),
+            None,
+        )?);
+        boundary_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::EvidenceCommitted,
+            apxm_runtime_protocol::Commitment::Committed,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(evidence_ref.as_str()),
+            None,
+        )?);
+    }
     let mut committed_continuation = continuation.clone();
     // Persist the observation high-water mark alongside the scheduler's
     // sequence lower bound. The continuation schema has one monotonic event
@@ -4439,6 +4617,12 @@ async fn commit_suspension(
     let attempts = state.committed_model_attempts.clone();
     let lineages = state.committed_model_lineages.clone();
     let mut tuple = commit_tuple(&state, Some(payload), event_wait);
+    if let Some(prepared_output) = prepared_output {
+        tuple.output_refs.push(
+            serde_json::to_value(prepared_output)
+                .map_err(|error| ExecutionError::OutputPreparation(error.to_string()))?,
+        );
+    }
     bind_tuple_digests(&mut committed_continuation.write_set, &tuple);
     let payload = serde_json::to_value(&committed_continuation)
         .expect("continuation contains only serializable canonical runtime values");
@@ -4452,10 +4636,6 @@ async fn commit_suspension(
     // rather than commit. The parked node and the continuation's event
     // sequence are exactly the coordinates that separate two parks of one
     // invocation, and both are replayed identically, so this stays idempotent.
-    let yield_commit_id = format!(
-        "{}.yield.{}.{}",
-        continuation.commit_id, continuation.continuation_id, committed_continuation.event_sequence
-    );
     let request = ExecutionCommitRequest {
         commit_id: yield_commit_id.clone(),
         program_instance_ref: continuation.program_instance_ref.clone(),
@@ -4472,6 +4652,11 @@ async fn commit_suspension(
             message: error.to_string(),
         })?;
     let commit = ports.execution_commit.commit(request).await;
+    if matches!(commit, ExecutionCommitResult::Committed { .. }) {
+        for observation in &boundary_observations {
+            DriveState::deliver_post_commit(ports, observation);
+        }
+    }
     let operational_usage = publish_committed_native_model_usage(
         ports,
         &yield_commit_id,
@@ -4519,7 +4704,7 @@ pub async fn execute_with_resource_ceilings(
     )?;
     let state = DriveState::new(
         initial_context,
-        request.initial_values.clone(),
+        bound_initial_values(&request)?,
         &request.air,
         request.program_invocation_ref.as_str(),
     );
@@ -4571,8 +4756,9 @@ pub async fn execute_with_resource_ceilings(
 /// Execute a canonical AIR program with durable park/resume. It behaves exactly
 /// like [`execute`] until it reaches a structural yield or parked `await.event`,
 /// at which point it persists a [`Continuation`] through `continuation` and
-/// returns [`RunOutcome::Suspended`] without completing the invocation. When it
-/// runs to the end it commits atomically and returns [`RunOutcome::Completed`].
+/// returns [`RunOutcome::Suspended`]. A structural yield commits this
+/// invocation's output; an Event wait keeps the same invocation waiting. When
+/// execution runs to the end it commits and returns [`RunOutcome::Completed`].
 ///
 /// # Errors
 ///
@@ -4606,7 +4792,7 @@ pub async fn execute_resumable_with_resource_ceilings(
     )?;
     let state = DriveState::new(
         initial_context,
-        request.initial_values.clone(),
+        bound_initial_values(&request)?,
         &request.air,
         request.program_invocation_ref.as_str(),
     );
@@ -4674,6 +4860,51 @@ pub async fn resume_with_resource_ceilings(
         None,
         delivered,
         resource_ceilings,
+        None,
+    )
+    .await
+}
+
+/// Start a newly admitted invocation at the prior structural yield.
+pub async fn resume_invocation(
+    ports: &ExecutionPorts,
+    request: ExecutionRequest,
+) -> Result<RunOutcome, ExecutionError> {
+    resume_invocation_with_resource_ceilings(ports, request, None).await
+}
+
+/// Continue exact committed state with current invocation authority and limits.
+pub async fn resume_invocation_with_resource_ceilings(
+    ports: &ExecutionPorts,
+    request: ExecutionRequest,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<RunOutcome, ExecutionError> {
+    validate_execution_request(
+        &request.air,
+        &request.initial_values,
+        &request.hook_bindings,
+    )?;
+    validate_commit_inputs(
+        &request.program_instance_ref,
+        &request.program_invocation_ref,
+        &request.commit_id,
+        &request.write_set,
+    )?;
+    let delivered = request
+        .entrypoint_input
+        .as_ref()
+        .map(|input| input.0.clone())
+        .ok_or_else(|| ExecutionError::InvalidCommitRequest {
+            message: "a new invocation requires explicit input".into(),
+        })?;
+    let instance = request.program_instance_ref.clone();
+    resume_from_continuation(
+        ports,
+        &instance,
+        None,
+        delivered,
+        resource_ceilings,
+        Some(request),
     )
     .await
 }
@@ -4713,6 +4944,7 @@ pub(crate) async fn resume_event(
         Some(event_ref),
         delivered,
         None,
+        None,
     )
     .await
 }
@@ -4731,6 +4963,7 @@ pub(crate) async fn resume_event_with_resource_ceilings(
         Some(event_ref),
         delivered,
         resource_ceilings,
+        None,
     )
     .await
 }
@@ -4741,6 +4974,7 @@ async fn resume_from_continuation(
     delivered_event_ref: Option<EventRef>,
     delivered: Value,
     resource_ceilings: Option<&ResourceCeilings>,
+    admitted_request: Option<ExecutionRequest>,
 ) -> Result<RunOutcome, ExecutionError> {
     let payload = ports
         .execution_commit
@@ -4752,11 +4986,46 @@ async fn resume_from_continuation(
             })
         })?;
     verify_continuation_integrity(&payload)?;
-    let parked: Continuation = serde_json::from_value(payload.payload).map_err(|error| {
+    let mut parked: Continuation = serde_json::from_value(payload.payload).map_err(|error| {
         ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
             message: error.to_string(),
         })
     })?;
+    let new_invocation = admitted_request.is_some();
+    if let Some(request) = admitted_request {
+        let yielded = parked
+            .evidence_batch
+            .last()
+            .and_then(|fact| fact.runtime())
+            .and_then(|runtime| runtime.invocation_state)
+            == Some(InvocationState::CommittedYield);
+        if parked.event_ref.is_some()
+            || !yielded
+            || parked.program_instance_ref != request.program_instance_ref
+            || parked.program_invocation_ref == request.program_invocation_ref
+            || parked.air != request.air
+            || parked.hook_bindings != request.hook_bindings
+            || request
+                .initial_values
+                .iter()
+                .any(|(key, value)| parked.values.get(key) != Some(value))
+        {
+            return Err(ExecutionError::Continuation(
+                ContinuationError::InvalidCommittedState {
+                    message: "new invocation does not match its committed structural yield".into(),
+                },
+            ));
+        }
+        parked.model_admission = request.model_admission;
+        parked.capability_invocations = request.capability_invocations;
+        parked.program_invocation_ref = request.program_invocation_ref;
+        parked.commit_id = request.commit_id;
+        parked.write_set = request.write_set;
+        parked.native_usage = Usage::default();
+        parked.external_agent_evidence.clear();
+        parked.evidence_batch.clear();
+        parked.event_sequence = 0;
+    }
 
     let Continuation {
         air,
@@ -4882,6 +5151,31 @@ async fn resume_from_continuation(
             message: "continuation is missing its exact resume SSA destination".into(),
         })
     })?;
+    if new_invocation {
+        state.seq += 1;
+        state.batch.push(fact(
+            &state.program_invocation_id,
+            state.seq,
+            FactKind::InvocationAdmitted,
+            None,
+            Some(InvocationState::Running),
+            None,
+            None,
+        ));
+        state.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::InvocationStarted,
+            apxm_runtime_protocol::Commitment::Provisional,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+    }
     state.last_result = delivered.clone();
     state.last_result_value_id = Some(resume_value_id.clone());
     state.last_operation_succeeded = true;
@@ -5124,7 +5418,7 @@ async fn resume_from_continuation(
                 .push(parked_node_execution_id.clone());
         }
     }
-    if host_capability_ref.is_none() {
+    if host_capability_ref.is_none() && !new_invocation {
         // A delivered event payload is external data the program never asked
         // for, so it may not become a Capability argument. A host capability
         // settlement is not that: it is the authored result of the node the

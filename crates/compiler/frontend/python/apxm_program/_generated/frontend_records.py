@@ -13,7 +13,7 @@ bound-tree record is one of these directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, TypeAlias, Union
+from typing import Literal, Optional, TypeAlias, Union
 
 from .frontend_graph import (
     ControlKind,
@@ -22,14 +22,11 @@ from .frontend_graph import (
     HookReturnMode,
     HookScope,
     InputContract,
+    InputSchemaType,
     IntentKind,
     ParameterRole,
-    PredicateComparator,
-    PredicateScalarType,
     ReceiverKind,
     RegionRole,
-    SkillInstructionKind,
-    ValueExpressionKind,
     ValueOrigin,
 )
 
@@ -44,8 +41,34 @@ class ProgramDefinition:
     input_type_ref: str
     output_type_ref: str
     has_default_context: bool
+    authoring: Optional[ProgramAuthoring] = None
     context_type_ref: Optional[str] = None
+    default_context: Optional[ValueExpression] = None
     input_contract: Optional[InputContract] = None
+    input_schema: Optional[EntrypointInputSchema] = None
+
+@dataclass(frozen=True, slots=True)
+class WorkflowAuthoring:
+    """One `WorkflowAuthoring` record from the apxm.frontend-graph contract."""
+
+    kind: Literal["workflow"]
+
+@dataclass(frozen=True, slots=True)
+class AgentAuthoring:
+    """One `AgentAuthoring` record from the apxm.frontend-graph contract."""
+
+    kind: Literal["agent"]
+    primary_model_ref: str
+
+@dataclass(frozen=True, slots=True)
+class EntrypointInputSchema:
+    """One `EntrypointInputSchema` record from the apxm.frontend-graph contract."""
+
+    type: InputSchemaType
+    additionalProperties: Optional[Literal[False]] = None
+    items: Optional[EntrypointInputSchema] = None
+    properties: Optional[dict[str, EntrypointInputSchema]] = None
+    required: Optional[tuple[str, ...]] = None
 
 @dataclass(frozen=True, slots=True)
 class ImportedProgramRef:
@@ -99,21 +122,21 @@ class Value:
 class SsaExpression:
     """One `SsaExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["ssa"]
     value_id: str
 
 @dataclass(frozen=True, slots=True)
 class ContextExpression:
     """One `ContextExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["context"]
     property_path: tuple[str, ...]
 
 @dataclass(frozen=True, slots=True)
 class ProjectionExpression:
     """One `ProjectionExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["projection"]
     root: ValueExpression
     property_path: tuple[str, ...]
 
@@ -121,7 +144,7 @@ class ProjectionExpression:
 class ObjectExpression:
     """One `ObjectExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["object"]
     fields: tuple[ValueField, ...]
 
 @dataclass(frozen=True, slots=True)
@@ -135,35 +158,35 @@ class ValueField:
 class ArrayExpression:
     """One `ArrayExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["array"]
     items: tuple[ValueExpression, ...]
 
 @dataclass(frozen=True, slots=True)
 class StringExpression:
     """One `StringExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["string"]
     value: str
 
 @dataclass(frozen=True, slots=True)
 class IntegerExpression:
     """One `IntegerExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["integer"]
     value: int
 
 @dataclass(frozen=True, slots=True)
 class BooleanExpression:
     """One `BooleanExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["boolean"]
     value: bool
 
 @dataclass(frozen=True, slots=True)
 class NullExpression:
     """One `NullExpression` record from the apxm.frontend-graph contract."""
 
-    kind: ValueExpressionKind
+    kind: Literal["null"]
 
 @dataclass(frozen=True, slots=True)
 class Block:
@@ -223,7 +246,7 @@ class TruthyPredicate:
 
     root_value_id: str
     property_path: tuple[str, ...]
-    comparator: PredicateComparator
+    comparator: Literal["truthy"]
 
 @dataclass(frozen=True, slots=True)
 class EqualsPredicate:
@@ -231,7 +254,7 @@ class EqualsPredicate:
 
     root_value_id: str
     property_path: tuple[str, ...]
-    comparator: PredicateComparator
+    comparator: Literal["equals"]
     literal: PredicateLiteral
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +263,7 @@ class NotEqualsPredicate:
 
     root_value_id: str
     property_path: tuple[str, ...]
-    comparator: PredicateComparator
+    comparator: Literal["not_equals"]
     literal: PredicateLiteral
 
 @dataclass(frozen=True, slots=True)
@@ -294,15 +317,17 @@ class SkillRequirement:
 class SkillEntrySource:
     """One `SkillEntrySource` record from the apxm.frontend-graph contract."""
 
-    kind: SkillInstructionKind
+    kind: Literal["entry"]
     path: str
 
 @dataclass(frozen=True, slots=True)
 class SkillInlineSource:
     """One `SkillInlineSource` record from the apxm.frontend-graph contract."""
 
-    kind: SkillInstructionKind
+    kind: Literal["inline"]
     text: str
+
+ProgramAuthoring: TypeAlias = Union[WorkflowAuthoring, AgentAuthoring]
 
 ValueExpression: TypeAlias = Union[SsaExpression, ContextExpression, ProjectionExpression, ObjectExpression, ArrayExpression, StringExpression, IntegerExpression, BooleanExpression, NullExpression]
 
@@ -314,33 +339,36 @@ SkillInstructionSource: TypeAlias = Union[SkillEntrySource, SkillInlineSource]
 class BooleanLiteral:
     """One `BooleanLiteral` record from the apxm.frontend-graph contract."""
 
-    scalar_type: PredicateScalarType
+    scalar_type: Literal["boolean"]
     value: bool
 
 @dataclass(frozen=True, slots=True)
 class StringLiteral:
     """One `StringLiteral` record from the apxm.frontend-graph contract."""
 
-    scalar_type: PredicateScalarType
+    scalar_type: Literal["string"]
     value: str
 
 @dataclass(frozen=True, slots=True)
 class IntegerLiteral:
     """One `IntegerLiteral` record from the apxm.frontend-graph contract."""
 
-    scalar_type: PredicateScalarType
+    scalar_type: Literal["integer"]
     value: int
 
 @dataclass(frozen=True, slots=True)
 class NullLiteral:
     """One `NullLiteral` record from the apxm.frontend-graph contract."""
 
-    scalar_type: PredicateScalarType
+    scalar_type: Literal["null"]
 
 PredicateLiteral: TypeAlias = Union[BooleanLiteral, StringLiteral, IntegerLiteral, NullLiteral]
 
 __all__ = [
     "ProgramDefinition",
+    "WorkflowAuthoring",
+    "AgentAuthoring",
+    "EntrypointInputSchema",
     "ImportedProgramRef",
     "Declaration",
     "FunctionDef",
@@ -371,6 +399,7 @@ __all__ = [
     "SkillRequirement",
     "SkillEntrySource",
     "SkillInlineSource",
+    "ProgramAuthoring",
     "ValueExpression",
     "ControlPredicate",
     "SkillInstructionSource",

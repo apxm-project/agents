@@ -15,14 +15,11 @@ import type {
   HookReturnMode,
   HookScope,
   InputContract,
+  InputSchemaType,
   IntentKind,
   ParameterRole,
-  PredicateComparator,
-  PredicateScalarType,
   ReceiverKind,
   RegionRole,
-  SkillInstructionKind,
-  ValueExpressionKind,
   ValueOrigin,
 } from "./frontend-graph.js";
 
@@ -34,8 +31,28 @@ export type ProgramDefinition = {
   readonly input_type_ref: string;
   readonly output_type_ref: string;
   readonly has_default_context: boolean;
+  readonly authoring?: ProgramAuthoring;
   readonly context_type_ref?: string;
+  readonly default_context?: ValueExpression;
   readonly input_contract?: InputContract;
+  readonly input_schema?: EntrypointInputSchema;
+};
+
+export type WorkflowAuthoring = {
+  readonly kind: "workflow";
+};
+
+export type AgentAuthoring = {
+  readonly kind: "agent";
+  readonly primary_model_ref: string;
+};
+
+export type EntrypointInputSchema = {
+  readonly type: InputSchemaType;
+  readonly additionalProperties?: false;
+  readonly items?: EntrypointInputSchema;
+  readonly properties?: Readonly<Record<string, EntrypointInputSchema>>;
+  readonly required?: readonly string[];
 };
 
 export type ImportedProgramRef = {
@@ -77,23 +94,23 @@ export type Value = {
 };
 
 export type SsaExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "ssa";
   readonly value_id: string;
 };
 
 export type ContextExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "context";
   readonly property_path: readonly string[];
 };
 
 export type ProjectionExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "projection";
   readonly root: ValueExpression;
   readonly property_path: readonly string[];
 };
 
 export type ObjectExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "object";
   readonly fields: readonly ValueField[];
 };
 
@@ -103,27 +120,27 @@ export type ValueField = {
 };
 
 export type ArrayExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "array";
   readonly items: readonly ValueExpression[];
 };
 
 export type StringExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "string";
   readonly value: string;
 };
 
 export type IntegerExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "integer";
   readonly value: number;
 };
 
 export type BooleanExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "boolean";
   readonly value: boolean;
 };
 
 export type NullExpression = {
-  readonly kind: ValueExpressionKind;
+  readonly kind: "null";
 };
 
 export type Block = {
@@ -171,20 +188,20 @@ export type ControlIntent = {
 export type TruthyPredicate = {
   readonly root_value_id: string;
   readonly property_path: readonly string[];
-  readonly comparator: PredicateComparator;
+  readonly comparator: "truthy";
 };
 
 export type EqualsPredicate = {
   readonly root_value_id: string;
   readonly property_path: readonly string[];
-  readonly comparator: PredicateComparator;
+  readonly comparator: "equals";
   readonly literal: PredicateLiteral;
 };
 
 export type NotEqualsPredicate = {
   readonly root_value_id: string;
   readonly property_path: readonly string[];
-  readonly comparator: PredicateComparator;
+  readonly comparator: "not_equals";
   readonly literal: PredicateLiteral;
 };
 
@@ -226,14 +243,18 @@ export type SkillRequirement = {
 };
 
 export type SkillEntrySource = {
-  readonly kind: SkillInstructionKind;
+  readonly kind: "entry";
   readonly path: string;
 };
 
 export type SkillInlineSource = {
-  readonly kind: SkillInstructionKind;
+  readonly kind: "inline";
   readonly text: string;
 };
+
+export type ProgramAuthoring =
+  | WorkflowAuthoring
+  | AgentAuthoring;
 
 export type ValueExpression =
   | SsaExpression
@@ -256,22 +277,22 @@ export type SkillInstructionSource =
   | SkillInlineSource;
 
 export type BooleanLiteral = {
-  readonly scalar_type: PredicateScalarType;
+  readonly scalar_type: "boolean";
   readonly value: boolean;
 };
 
 export type StringLiteral = {
-  readonly scalar_type: PredicateScalarType;
+  readonly scalar_type: "string";
   readonly value: string;
 };
 
 export type IntegerLiteral = {
-  readonly scalar_type: PredicateScalarType;
+  readonly scalar_type: "integer";
   readonly value: number;
 };
 
 export type NullLiteral = {
-  readonly scalar_type: PredicateScalarType;
+  readonly scalar_type: "null";
 };
 
 export type PredicateLiteral =

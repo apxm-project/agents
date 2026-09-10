@@ -202,7 +202,7 @@ fn render_authoring_vocabulary() -> String {
     let mut buf = String::new();
     let _ = write!(
         buf,
-        "The everyday authoring vocabulary is {}, plus ordinary language control flow.\n{} are focused advanced declarations.",
+        "The everyday authoring vocabulary is {}, plus ordinary language control flow.\n{} are focused advanced declarations and executable types.",
         code_list(strings(&manifest, "everyday").into_iter()),
         code_list(strings(&manifest, "advanced").into_iter()),
     );
@@ -299,6 +299,15 @@ fn render_declaration_surface() -> String {
             code(&projected(declaration, "typescript", "signature")),
         );
     }
+    for contract in manifest["types"].as_array().into_iter().flatten() {
+        let _ = writeln!(
+            buf,
+            "| {} | executable type | {} | {} |",
+            cell(contract["concept"].as_str().expect("a concept name")),
+            code(&projected(contract, "python", "signature")),
+            code(&projected(contract, "typescript", "signature"))
+        );
+    }
     buf
 }
 
@@ -390,6 +399,9 @@ mod tests {
             for code in strings(declaration, "diagnostics") {
                 assert!(diagnostics.contains(&code), "{code}");
             }
+        }
+        for contract in manifest["types"].as_array().into_iter().flatten() {
+            assert!(surface.contains(contract["concept"].as_str().unwrap()));
         }
     }
 

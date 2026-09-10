@@ -27,6 +27,41 @@ export const INPUT_CONTRACTS = [
   INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
 ] as const satisfies readonly InputContract[];
 
+export type InputSchemaType =
+  | "object"
+  | "array"
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "null";
+export const INPUT_SCHEMA_TYPE_OBJECT = "object" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_ARRAY = "array" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_STRING = "string" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_NUMBER = "number" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_INTEGER = "integer" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_BOOLEAN = "boolean" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPE_NULL = "null" satisfies InputSchemaType;
+export const INPUT_SCHEMA_TYPES = [
+  INPUT_SCHEMA_TYPE_OBJECT,
+  INPUT_SCHEMA_TYPE_ARRAY,
+  INPUT_SCHEMA_TYPE_STRING,
+  INPUT_SCHEMA_TYPE_NUMBER,
+  INPUT_SCHEMA_TYPE_INTEGER,
+  INPUT_SCHEMA_TYPE_BOOLEAN,
+  INPUT_SCHEMA_TYPE_NULL,
+] as const satisfies readonly InputSchemaType[];
+
+export type ProgramAuthoringKind =
+  | "workflow"
+  | "agent";
+export const PROGRAM_AUTHORING_KIND_WORKFLOW = "workflow" satisfies ProgramAuthoringKind;
+export const PROGRAM_AUTHORING_KIND_AGENT = "agent" satisfies ProgramAuthoringKind;
+export const PROGRAM_AUTHORING_KINDS = [
+  PROGRAM_AUTHORING_KIND_WORKFLOW,
+  PROGRAM_AUTHORING_KIND_AGENT,
+] as const satisfies readonly ProgramAuthoringKind[];
+
 export type DeclKind =
   | "context"
   | "model_binding"

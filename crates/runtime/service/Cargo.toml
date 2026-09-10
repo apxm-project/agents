@@ -34,3 +34,6 @@ tempfile.workspace = true
 toml.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "process", "sync", "io-util"] }
 uuid.workspace = true
+
+[dev-dependencies]
+apxm-source-port.workspace = true

@@ -16,9 +16,9 @@ use apxm_core::types::host_capability::{
 };
 use apxm_execution::{
     CancellationToken, CapabilityGrantSet, CapabilityInvocationAdmission, CapturedHookBodyHandler,
-    CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
-    EventOutcome, EventPort, ExecutionRequest, NodeOutcome, ObservationFailurePolicy,
-    ObservationSink, RunOutcome, RuntimeProfile,
+    CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    ExecutionRequest, NodeOutcome, ObservationFailurePolicy, ObservationSink, RunOutcome,
+    RuntimeProfile,
 };
 use apxm_inference::{
     InferenceTargetCommitment, ModelBindingAdmission, ModelCallRequestMetadataPort, ModelOutcome,
@@ -35,7 +35,7 @@ use apxm_kernel::{
     digest_serializable, verify_invocation_admission,
 };
 use apxm_program::CapabilityInvocationAuthority;
-use apxm_program::air::{AirModule, SemanticOpKind, StructuralOpKind};
+use apxm_program::air::{AirModule, SemanticOpKind};
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use async_trait::async_trait;
@@ -374,25 +374,43 @@ impl EventPort for ParkedEvents {
     }
 }
 
-struct DevComposition;
+/// This service has no admitted child-artifact resolver or child invocation
+/// transport. A fabricated instance reference would incorrectly claim execution.
+struct UnavailableComposition;
+
+#[cfg(test)]
+mod composition_availability_tests {
+    use super::*;
+    use apxm_execution::CompositionReceiver;
+
+    #[tokio::test]
+    async fn unimplemented_child_execution_never_fabricates_a_successful_instance() {
+        let request = CompositionRequest {
+            node_id: "child.create".into(),
+            receiver: CompositionReceiver::Program {
+                program_ref: "child.program".into(),
+            },
+        };
+        assert!(
+            matches!(UnavailableComposition.program_new(request.clone()).await, CompositionOutcome::Failed { message } if message.contains("unavailable"))
+        );
+        assert!(
+            matches!(UnavailableComposition.program_invoke(request).await, CompositionOutcome::Failed { message } if message.contains("unavailable"))
+        );
+    }
+}
 
 #[async_trait]
-impl CompositionPort for DevComposition {
-    async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
-        CompositionOutcome::Created {
-            child_instance_ref: format!("dev.child.{}", request.receiver.reference()),
+impl CompositionPort for UnavailableComposition {
+    async fn program_new(&self, _request: CompositionRequest) -> CompositionOutcome {
+        CompositionOutcome::Failed {
+            message: "child program execution is unavailable in this runtime composition".into(),
         }
     }
 
-    async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
-        let child = match &request.receiver {
-            CompositionReceiver::Instance {
-                program_instance_ref,
-            } => program_instance_ref.clone(),
-            CompositionReceiver::Program { program_ref } => format!("dev.child.{program_ref}"),
-        };
-        CompositionOutcome::Invoked {
-            child_instance_ref: child,
+    async fn program_invoke(&self, _request: CompositionRequest) -> CompositionOutcome {
+        CompositionOutcome::Failed {
+            message: "child program execution is unavailable in this runtime composition".into(),
         }
     }
 }
@@ -826,6 +844,20 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
     input: Value,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
+    let artifact = ExecutableArtifact::decode(artifact_bytes).map_err(|error| error.to_string())?;
+    let initial_context = match artifact.entrypoints.as_slice() {
+        [entrypoint] => entrypoint
+            .default_context
+            .as_ref()
+            .map(|default| default.literal_json())
+            .transpose()?
+            .unwrap_or(Value::Null),
+        _ => {
+            return Err(
+                "root Context initialization requires one exact artifact entrypoint".into(),
+            );
+        }
+    };
     let descriptor = canonical_runtime_descriptor();
     if admission.port_bindings_digest != canonical_port_bindings_digest()
         || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
@@ -879,11 +911,9 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         .map(|binding| binding.binding_digest.clone())
         .ok_or_else(|| "reference runtime model binding is absent".to_owned())?;
     let hook_bindings = apxm_program::air_hook_bindings(&air);
-    let mut initial_values = initial_model_request_values(&air);
-    if let Some(input_value_id) = entrypoint_input_value_id(&air) {
-        initial_values.insert(input_value_id, input);
-    }
+    let initial_values = initial_model_request_values(&air);
     let request = ExecutionRequest {
+        entrypoint_input: Some(apxm_execution::EntrypointInput::new(input)),
         model_admission: model_admission(&air, &model_binding_digest),
         initial_values,
         air,
@@ -894,6 +924,11 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         commit_id: format!("canonical.commit.{}", admission.invocation_id),
         write_set: reference_write_set(&admission.invocation_id),
     };
+    let resumes_yield = resumable
+        && commit
+            .load_continuation_with_integrity(&request.program_instance_ref)
+            .await
+            .is_some();
     let model = Arc::new(
         LocalModelInferencePort::from_backend_roster().map_err(|error| error.to_string())?,
     );
@@ -913,7 +948,12 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         None => profile,
     };
     let outcome = if resumable {
-        match profile.execute_resumable(request, Value::Null).await {
+        let outcome = if resumes_yield {
+            profile.resume_invocation(request).await
+        } else {
+            profile.execute_resumable(request, initial_context).await
+        };
+        match outcome {
             Ok(apxm_execution::RunOutcome::Completed(report)) => {
                 return Ok(run_report_json(&report, &model));
             }
@@ -935,7 +975,7 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         }
     } else {
         profile
-            .execute(request, Value::Null)
+            .execute(request, initial_context)
             .await
             .map_err(|error| error.to_string())?
     };
@@ -1025,7 +1065,7 @@ async fn runtime_profile_from_invocation(
                     }
                 }
                 PortSlot::ProgramComposition => {
-                    PortImplementation::ProgramComposition(Arc::new(DevComposition))
+                    PortImplementation::ProgramComposition(Arc::new(UnavailableComposition))
                 }
             };
             (binding.clone(), implementation)
@@ -1086,19 +1126,6 @@ fn initial_model_request_values(air: &AirModule) -> BTreeMap<String, Value> {
             .then(|| (value_id.clone(), json!({"value_id": value_id})))
         })
         .collect()
-}
-
-/// Locate the canonical entrypoint input parameter in AIR.  Frontends encode
-/// this parameter as `<program>.param.input`; unlike an arbitrary initial SSA
-/// value it is an explicit entrypoint binding and may safely receive the
-/// invocation input supplied by Runtime/1.
-fn entrypoint_input_value_id(air: &AirModule) -> Option<String> {
-    air.structural_ir
-        .iter()
-        .filter(|region| region.kind == StructuralOpKind::Function)
-        .flat_map(|region| &region.block_arguments)
-        .find(|argument| argument.value_id.ends_with(".param.input"))
-        .map(|argument| argument.value_id.clone())
 }
 
 fn local_capability_invocation_admissions(

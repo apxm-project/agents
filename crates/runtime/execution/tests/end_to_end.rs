@@ -509,6 +509,7 @@ struct FakeCommit {
     invocation_refs: Mutex<Vec<String>>,
     observations: Mutex<Vec<Value>>,
     output_refs: Mutex<Vec<Value>>,
+    prepared_contents: Mutex<Vec<Vec<u8>>>,
     fail: bool,
 }
 
@@ -535,6 +536,7 @@ impl FakeCommit {
             invocation_refs: Mutex::new(Vec::new()),
             observations: Mutex::new(Vec::new()),
             output_refs: Mutex::new(Vec::new()),
+            prepared_contents: Mutex::new(Vec::new()),
             fail: false,
         }
     }
@@ -545,6 +547,7 @@ impl FakeCommit {
             invocation_refs: Mutex::new(Vec::new()),
             observations: Mutex::new(Vec::new()),
             output_refs: Mutex::new(Vec::new()),
+            prepared_contents: Mutex::new(Vec::new()),
             fail: true,
         }
     }
@@ -570,6 +573,10 @@ impl ExecutionCommitPort for FakeCommit {
         &self,
         preparation: SessionOutputPreparation,
     ) -> Result<PreparedSessionOutputRef, String> {
+        self.prepared_contents
+            .lock()
+            .unwrap()
+            .push(preparation.content.clone());
         let content_digest = format!("sha256:{:x}", Sha256::digest(&preparation.content));
         Ok(PreparedSessionOutputRef {
             contract: SESSION_OUTPUT_REF_CONTRACT.to_owned(),
@@ -895,6 +902,7 @@ fn typed_tool_request(mut air: AirModule, hook_bindings: Vec<HookBinding>) -> Ex
     }
     ExecutionRequest {
         air,
+        entrypoint_input: None,
         initial_values: BTreeMap::new(),
         hook_bindings,
         model_admission: admission(),
@@ -1356,9 +1364,160 @@ fn ports_with_capability(
     )
 }
 
+#[tokio::test]
+async fn compiled_pure_locals_preserve_inline_arguments_and_false_branch_silence() {
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .unwrap();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for frontend in [Frontend::Python, Frontend::Typescript] {
+        for named in [false, true] {
+            let source = match frontend {
+                Frontend::Typescript => r#"import { Workflow, Capability } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+source(import.meta.url);
+type Input = {reference: string; state: string};
+const Notes = Capability<unknown, unknown>("read");
+export const Transform = Workflow<Input, unknown>({name: "Transform", async run(agent, input) {
+  if (input.state === "submitted") {
+    MAPPING
+    const result = await Notes(ARGUMENT);
+    const output = {result: result};
+    return output;
+  }
+  return {ignored: true};
+}});
+"#
+                .replace(
+                    "MAPPING",
+                    if named {
+                        "const mapped = {reference: input.reference};"
+                    } else {
+                        ""
+                    },
+                )
+                .replace(
+                    "ARGUMENT",
+                    if named {
+                        "mapped"
+                    } else {
+                        "{reference: input.reference}"
+                    },
+                ),
+                Frontend::Python => r#"from typing import TypedDict
+from apxm_program import Workflow, Capability
+class Input(TypedDict):
+    reference: str
+    state: str
+Notes = Capability[object, object]("read")
+@Workflow(input=Input, output=object)
+async def Transform(agent, input):
+    if input["state"] == "submitted":
+        MAPPING
+        result = await Notes(ARGUMENT)
+        output = {"result": result}
+        return output
+    return {"ignored": True}
+"#
+                .replace(
+                    "        MAPPING\n",
+                    if named {
+                        "        mapped = {\"reference\": input[\"reference\"]}\n"
+                    } else {
+                        ""
+                    },
+                )
+                .replace(
+                    "ARGUMENT",
+                    if named {
+                        "mapped"
+                    } else {
+                        "{\"reference\": input[\"reference\"]}"
+                    },
+                ),
+            };
+            let compiled = compile_source_bundle(
+                &SourceBundleRequest::new(frontend, "Transform", source),
+                &roots,
+                &drivers,
+            )
+            .unwrap();
+            assert_eq!(compiled.air.semantic_operations.len(), 1);
+            for state in ["submitted", "draft"] {
+                let capability = Arc::new(RecordingCapability::default());
+                let commit = Arc::new(FakeCommit::new());
+                let mut execution = request();
+                execution.air = compiled.air.clone();
+                execution.hook_bindings.clear();
+                execution.entrypoint_input = Some(apxm_execution::EntrypointInput::new(
+                    json!({"reference": "R-42", "state": state}),
+                ));
+                execution.capability_invocations = BTreeMap::from([(
+                    compiled.air.semantic_operations[0].node_id.clone(),
+                    CapabilityInvocationAdmission {
+                        capability_ref: "read".into(),
+                        authority: CapabilityInvocationAuthority::new(
+                            "principal.user.1",
+                            "agent.gao.1",
+                            "grant.notes",
+                            Vec::new(),
+                        )
+                        .unwrap(),
+                        permission: code_allow(),
+                    },
+                )]);
+                execute(
+                    &ports_with_capability(commit.clone(), capability.clone()),
+                    execution,
+                    Value::Null,
+                )
+                .await
+                .unwrap();
+                let arguments: Vec<_> = capability
+                    .requests()
+                    .iter()
+                    .map(|request| request.arguments().value().unwrap())
+                    .collect();
+                assert_eq!(
+                    arguments,
+                    if state == "submitted" {
+                        vec![json!({"reference": "R-42"})]
+                    } else {
+                        vec![]
+                    }
+                );
+                let expected_output = if state == "submitted" {
+                    json!({"result": "ok"})
+                } else {
+                    json!({"ignored": true})
+                };
+                assert_eq!(
+                    serde_json::from_slice::<Value>(
+                        commit.prepared_contents.lock().unwrap().last().unwrap()
+                    )
+                    .unwrap(),
+                    expected_output
+                );
+            }
+        }
+    }
+}
+
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
+        entrypoint_input: None,
         initial_values: BTreeMap::from([]),
         hook_bindings: vec![HookBinding {
             hook_id: "hook.after.model".into(),
@@ -2374,6 +2533,39 @@ async fn capability_arguments_cannot_be_initialized_through_an_entry_block_argum
 }
 
 #[tokio::test]
+async fn explicit_entrypoint_input_rejects_duplicate_and_alternate_bindings() {
+    for (parameters, duplicate) in [
+        (vec!["Transform.param.input"], true),
+        (vec!["Other.param.input"], false),
+        (vec!["Transform.param.input", "Other.param.input"], false),
+    ] {
+        let mut execution = request();
+        execution.air = serde_json::from_value(json!({
+            "schema_version":"apxm.air", "value_assemblies":[], "semantic_operations":[],
+            "structural_ir":[{"region_id":"Transform.body", "kind":"function", "execution_order":0,
+                "block_arguments": parameters.iter().map(|value_id| json!({"value_id":value_id,"type_ref":"Input"})).collect::<Vec<_>>()
+            }],
+            "context_flow":[], "source_map":{"schema_version":"apxm.source-map","source_language":"typescript","node_spans":[],"region_annotations":[]}
+        })).unwrap();
+        execution.hook_bindings.clear();
+        execution.capability_invocations.clear();
+        execution.entrypoint_input = Some(apxm_execution::EntrypointInput::new(
+            json!({"reference":"R-42"}),
+        ));
+        if duplicate {
+            execution.initial_values.insert(
+                "Transform.param.input".into(),
+                json!({"reference":"forged"}),
+            );
+        }
+        assert!(matches!(
+            execute(&ports(Arc::new(FakeCommit::new())), execution, Value::Null).await,
+            Err(ExecutionError::InvalidAir { .. })
+        ));
+    }
+}
+
+#[tokio::test]
 async fn capability_argument_assemblies_cannot_read_initial_values() {
     let mut bypass = request();
     let mut air = serde_json::to_value(&bypass.air).expect("AIR encodes");
@@ -3088,6 +3280,7 @@ async fn unbound_model_target_fails_closed() {
     assert!(bad_air.verify().is_accepted());
     let request = ExecutionRequest {
         air: bad_air,
+        entrypoint_input: None,
         initial_values: BTreeMap::from([("value.model.request".into(), json!({"prompt": "test"}))]),
         hook_bindings: Vec::new(),
         model_admission: admission(),

@@ -4,10 +4,18 @@ A conversational Agent is an ordinary Agent Program with explicit Context,
 Model and Tool calls, and an authored loop. It is a teaching shape, not a
 separate runtime, package-level `ConversationalAgent`, or core `Turn` type.
 
-The executable references are:
+The source and lowering references are:
 
 - [Python example](../../examples/agents/conversational/python/agent.py)
 - [TypeScript example](../../examples/agents/conversational/src/conversational-agent.ts)
+
+These references declare domain-specific Model request/response types. Their
+installed-package checks prove capture and lowering parity, not compatibility
+with the shipped local Model port. That port currently accepts its closed
+`prompt`/`messages` request envelope and returns `content`, `model`,
+`finish_reason` and `tool_calls`; it does not parse `content` into the examples'
+`kind`/`reply` union. A local executable conversation uses an admitted prompt
+and explicitly projects `response.content` into its yielded output.
 
 Both examples lower through the same source-first path:
 
@@ -46,10 +54,10 @@ class ConversationContext:
     last_reply: str = ""
 
 
-@Agent(input=ConversationInput, output=ConversationOutput,
+@Agent(input=ConversationInput, output=ConversationOutput, model=SupportModel,
        context=ConversationContext)
 async def ConversationalExample(agent, incoming):
-    while incoming["message"]:
+    while incoming["message"] != "":
         response = await SupportModel({
             "messages": agent.context.messages,
             "incoming": incoming,
@@ -86,6 +94,11 @@ that state and returns the next input; an Event wait parks the invocation
 without inventing a second conversational runtime. Normal language control
 flow (`if`, `match`/`switch`, loops, exceptions, and returns) remains the source
 of behavior.
+
+Bare predicates require boolean values. Compare strings explicitly, as in
+`incoming["message"] != ""`; the runtime does not apply Python or JavaScript
+truthiness coercion. Known nonboolean entrypoint inputs are rejected during
+shared graph validation.
 
 ## Admission and execution
 

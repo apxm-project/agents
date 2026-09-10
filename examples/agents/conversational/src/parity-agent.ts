@@ -1,7 +1,7 @@
 // Paired TypeScript source covering the complete canonical frontend seam.
 
 import {
-  Agent,
+  Workflow,
   Capability,
   Context,
   Event,
@@ -18,7 +18,7 @@ source(import.meta.url);
 type Input = unknown;
 type Output = unknown;
 type ParityContext = { iterations: number };
-type ParityProgram = ReturnType<typeof Agent<Input, Output, ParityContext>>;
+type ParityProgram = ReturnType<typeof Workflow<Input, Output, ParityContext>>;
 
 const ParityModel = Model<Input, Output>("parity.model");
 const ParityTool = Tool<Input, Output>(SEARCH_WEB);
@@ -26,7 +26,7 @@ const ParityCapability = Capability<Input, Output>(COUNT_TOKENS);
 const ParityEvent = Event<Output>("parity.event");
 const ParityContext: ReturnType<typeof Context> = Context<ParityContext>({ iterations: 0 });
 
-const ParityChild = Agent<Input, Output, ParityContext>({
+const ParityChild = Workflow<Input, Output, ParityContext>({
   name: "ParityChild",
   context: ParityContext,
   async run(_agent, request) {
@@ -34,7 +34,7 @@ const ParityChild = Agent<Input, Output, ParityContext>({
   },
 });
 
-export const ParityCorpus: ParityProgram = Agent<Input, Output, ParityContext>({
+export const ParityCorpus: ParityProgram = Workflow<Input, Output, ParityContext>({
   name: "ParityCorpus",
   context: ParityContext,
   async run(agent, request) {

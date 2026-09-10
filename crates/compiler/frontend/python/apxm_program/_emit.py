@@ -176,7 +176,10 @@ def emit_frontend_graph(
                     input_type_ref=program.input_type_ref,
                     output_type_ref=program.output_type_ref,
                     has_default_context=program.has_default_context,
+                    default_context=program.default_context,
                     context_type_ref=program.context_type_ref,
+                    input_schema=program.input_schema,
+                    authoring=program.authoring,
                 )
             )
         ],

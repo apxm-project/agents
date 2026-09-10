@@ -182,6 +182,16 @@ pub struct ControlPredicate {
     pub literal: Option<PredicateLiteral>,
 }
 
+/// The source declaration's role, not a separate execution engine or authority.
+/// Unclassified low-level programs omit this projection; a model call alone
+/// does not turn a Workflow into an Agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProgramAuthoring {
+    Workflow {},
+    Agent { primary_model_ref: String },
+}
+
 /// A program authored in this graph.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -193,8 +203,14 @@ pub struct ProgramDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_contract: Option<EntrypointInputContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<crate::input_schema::EntrypointInputSchema>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring: Option<ProgramAuthoring>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_type_ref: Option<String>,
     pub has_default_context: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context: Option<ValueExpression>,
 }
 
 /// A compiler-owned proof that the typed entrypoint input admits `{}`.
@@ -733,6 +749,64 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
 
     for program in &graph.program_definitions {
         check_identifier(verdict, &program.program_id, "program program_id");
+        if program.authoring.is_some()
+            && program.has_default_context != program.default_context.is_some()
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                program.program_id.clone(),
+                "authored Context default presence must match its carried literal",
+            ));
+        }
+        if let Some(default) = &program.default_context {
+            if program.context_type_ref.is_none() || !program.has_default_context {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    program.program_id.clone(),
+                    "a default Context requires its declared Context type",
+                ));
+            }
+            if let Err(reason) = default.literal_json() {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    program.program_id.clone(),
+                    reason,
+                ));
+            }
+        }
+        if let Some(ProgramAuthoring::Agent { primary_model_ref }) = &program.authoring {
+            check_identifier(verdict, primary_model_ref, "Agent primary_model_ref");
+            let called = graph.call_intents.iter().any(|intent| {
+                intent.intent_kind == IntentKind::ModelInvocation
+                    && intent.binding_ref.as_deref().is_some_and(|binding| {
+                        graph.declarations.iter().any(|declaration| {
+                            declaration.decl_id == binding
+                                && declaration.decl_kind == DeclKind::ModelBinding
+                                && declaration.target_ref.as_ref() == Some(primary_model_ref)
+                        })
+                    })
+            });
+            let required = graph
+                .model_requirements
+                .iter()
+                .any(|requirement| requirement.model_target_ref == *primary_model_ref);
+            if !called || !required {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    program.program_id.clone(),
+                    "an Agent primary model must have a captured model invocation and exact model requirement",
+                ));
+            }
+        }
+        if let Some(schema) = &program.input_schema
+            && let Err(reason) = schema.validate()
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                program.program_id.clone(),
+                reason,
+            ));
+        }
         if !functions.contains_key(program.entrypoint.as_str()) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
@@ -958,7 +1032,7 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
                 "a loop intent owns exactly one body region",
             ));
         }
-        validate_control_predicate(verdict, intent, &values);
+        validate_control_predicate(verdict, intent, &values, graph);
     }
     let nodes = graph
         .call_intents
@@ -1142,20 +1216,6 @@ fn validate_ssa_dominance(
         // typed slots for lowering, but dominance must not disappear merely
         // because a malformed graph omitted one of those edges.
         for value_id in &intent.operand_values {
-            if matches!(
-                intent.intent_kind,
-                IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
-            ) && value_reaches_resume_input(value_id, values, &mut HashSet::new())
-            {
-                verdict.push(Diagnostic::new(
-                    DiagnosticCode::SchemaViolation,
-                    intent.node_id.clone(),
-                    format!(
-                        "resume input '{value_id}' cannot become an authored capability argument"
-                    ),
-                ));
-                continue;
-            }
             if !check_use(value_id, &intent.node_id) {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
@@ -1219,27 +1279,6 @@ fn value_expression_cycle<'a>(
         });
     state.insert(value_id, 2);
     cycle
-}
-
-fn value_reaches_resume_input(
-    value_id: &str,
-    values: &HashMap<&str, &Value>,
-    visiting: &mut HashSet<String>,
-) -> bool {
-    if !visiting.insert(value_id.to_string()) {
-        return false;
-    }
-    let Some(value) = values.get(value_id) else {
-        return false;
-    };
-    if value.origin == ValueOrigin::ResumeInput {
-        return true;
-    }
-    value.expression.as_ref().is_some_and(|expression| {
-        expression_references(expression)
-            .into_iter()
-            .any(|dependency| value_reaches_resume_input(&dependency, values, visiting))
-    })
 }
 
 fn consumer_location(
@@ -1473,6 +1512,7 @@ fn validate_control_predicate(
     verdict: &mut Verdict,
     intent: &ControlIntent,
     values: &HashMap<&str, &Value>,
+    graph: &FrontendGraph,
 ) {
     let Some(predicate) = &intent.predicate else {
         if matches!(
@@ -1532,6 +1572,31 @@ fn validate_control_predicate(
                 DiagnosticCode::SchemaViolation,
                 intent.node_id.clone(),
                 "equals predicate requires a typed scalar literal",
+            ));
+        }
+    }
+    // Both source frontends commit this schema. A loop-carried input retains
+    // its declared type, so the same check covers initial and later messages
+    // without language-specific truthiness or a runtime coercion rule.
+    if predicate.comparator == PredicateComparator::Truthy
+        && let [program] = graph.program_definitions.as_slice()
+        && let Some(value) = values.get(predicate.root_value_id.as_str())
+        && value.type_ref == program.input_type_ref
+        && let Some(schema) = &program.input_schema
+    {
+        let projected = predicate
+            .property_path
+            .iter()
+            .try_fold(schema, |schema, property| {
+                schema.properties.as_ref()?.get(property)
+            });
+        if projected
+            .is_some_and(|schema| schema.kind != crate::input_schema::InputSchemaType::Boolean)
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "truthy predicate requires a boolean typed input; compare nonboolean values explicitly",
             ));
         }
     }

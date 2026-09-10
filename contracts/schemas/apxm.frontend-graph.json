@@ -158,10 +158,52 @@
           "type": "string",
           "enum": ["accepts_empty_object"]
         },
+        "input_schema": { "$ref": "#/$defs/EntrypointInputSchema" },
+        "authoring": { "$ref": "#/$defs/ProgramAuthoring" },
         "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "default_context": { "$ref": "#/$defs/ValueExpression" },
         "has_default_context": { "type": "boolean" }
       },
       "additionalProperties": false
+    },
+    "ProgramAuthoring": {
+      "description": "Source declaration classification. Agent requires a captured call and exact requirement for its primary model. Workflow may use models but does not require one. Absence leaves low-level programs unclassified.",
+      "oneOf": [
+        { "$ref": "#/$defs/WorkflowAuthoring" },
+        { "$ref": "#/$defs/AgentAuthoring" }
+      ]
+    },
+    "WorkflowAuthoring": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "const": "workflow" } },
+      "additionalProperties": false
+    },
+    "AgentAuthoring": {
+      "type": "object",
+      "required": ["kind", "primary_model_ref"],
+      "properties": {
+        "kind": { "const": "agent" },
+        "primary_model_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+      },
+      "additionalProperties": false
+    },
+    "EntrypointInputSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["object", "array", "string", "number", "integer", "boolean", "null"] },
+        "properties": { "type": "object", "additionalProperties": { "$ref": "#/$defs/EntrypointInputSchema" } },
+        "required": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "additionalProperties": { "type": "boolean", "const": false },
+        "items": { "$ref": "#/$defs/EntrypointInputSchema" }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        { "properties": { "type": { "const": "object" } }, "required": ["properties", "required", "additionalProperties"], "not": { "required": ["items"] } },
+        { "properties": { "type": { "const": "array" } }, "required": ["items"], "not": { "anyOf": [{ "required": ["properties"] }, { "required": ["required"] }, { "required": ["additionalProperties"] }] } },
+        { "properties": { "type": { "enum": ["string", "number", "integer", "boolean", "null"] } }, "not": { "anyOf": [{ "required": ["properties"] }, { "required": ["required"] }, { "required": ["additionalProperties"] }, { "required": ["items"] }] } }
+      ]
     },
     "ImportedProgramRef": {
       "type": "object",

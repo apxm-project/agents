@@ -478,27 +478,8 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
             .iter()
             .filter(|operand| is_authored_invocation_operand(operation.op, operand))
         {
-            if operation.op == SemanticOpKind::CapabilityInvoke
-                && resume_values.contains(operand.value_id.as_str())
-            {
-                verdict.push(Diagnostic::new(
-                    DiagnosticCode::SchemaViolation,
-                    operation.node_id.clone(),
-                    format!(
-                        "resume input '{}' cannot become an authored capability argument",
-                        operand.value_id
-                    ),
-                ));
-                continue;
-            }
             let mut visiting = HashSet::new();
-            if !air_value_dominates(
-                &operand.value_id,
-                &use_location,
-                operation.op == SemanticOpKind::ModelCall,
-                &context,
-                &mut visiting,
-            ) {
+            if !air_value_dominates(&operand.value_id, &use_location, &context, &mut visiting) {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
                     operation.node_id.clone(),
@@ -525,7 +506,6 @@ fn is_authored_invocation_operand(op: SemanticOpKind, operand: &Operand) -> bool
 fn air_value_dominates(
     value_id: &str,
     use_location: &AirSsaLocation,
-    allow_resume_value: bool,
     context: &AirSsaValidationContext<'_>,
     visiting: &mut HashSet<String>,
 ) -> bool {
@@ -542,7 +522,10 @@ fn air_value_dominates(
     // declared as a result or block argument still goes through the strict
     // lexical dominance check above.
     let base_ok = if context.resume_values.contains(value_id) {
-        allow_resume_value
+        // A structural yield supplies the next admitted invocation's typed
+        // input. Event payloads are separate semantic results, and the runtime
+        // requires their terminal application before any resume dispatch.
+        true
     } else {
         match location {
             Some(definition) => air_dominates_location(definition, use_location, context.regions),
@@ -559,15 +542,9 @@ fn air_value_dominates(
     let expression_ok = context.assemblies.get(value_id).is_none_or(|expression| {
         let mut references = Vec::new();
         collect_expression_references(expression, &mut references);
-        references.into_iter().all(|dependency| {
-            air_value_dominates(
-                &dependency,
-                use_location,
-                allow_resume_value,
-                context,
-                visiting,
-            )
-        })
+        references
+            .into_iter()
+            .all(|dependency| air_value_dominates(&dependency, use_location, context, visiting))
     });
     visiting.remove(value_id);
     expression_ok

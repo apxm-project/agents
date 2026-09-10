@@ -45,7 +45,7 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
     match frontend {
         Frontend::Python => format!(
             "{import}\n\
-             from apxm_program import Agent, Model\n\
+             from apxm_program import Workflow, Model\n\
              \n\
              {reach}\n\
              \n\
@@ -61,13 +61,13 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
              ReviewModel = Model[ReviewRequest, Review](\"review.model\")\n\
              \n\
              \n\
-             @Agent(input=ReviewRequest, output=Review)\n\
+             @Workflow(input=ReviewRequest, output=Review)\n\
              async def Reviewer(agent, request):\n\
              \x20   return await ReviewModel(request)\n"
         ),
         Frontend::Typescript => format!(
             "{import}\n\
-             import {{ Agent, Model }} from \"@apxm/frontend\";\n\
+             import {{ Workflow, Model }} from \"@apxm/frontend\";\n\
              import {{ source }} from \"@apxm/frontend/node\";\n\
              \n\
              source(import.meta.url);\n\
@@ -79,7 +79,7 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
              \n\
              const ReviewModel = Model<ReviewRequest, Review>(\"review.model\");\n\
              \n\
-             export const Reviewer = Agent<ReviewRequest, Review>({{\n\
+             export const Reviewer = Workflow<ReviewRequest, Review>({{\n\
              \x20 name: \"Reviewer\",\n\
              \x20 async run(agent, request) {{\n\
              \x20   return await ReviewModel(request);\n\
@@ -431,7 +431,41 @@ fn submitted_source_cannot_forge_input_contract() {
     }
 }
 
-/// A marker record is part of the capture input before the Agent is built. Its
+#[test]
+fn submitted_source_cannot_replace_compiler_owned_entrypoint_metadata() {
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let mut source = reaching_program(frontend, "", "");
+        source.push_str(match frontend {
+            Frontend::Python => "\ngraph = Reviewer.frontend_graph()\ngraph[\"program_definitions\"][0].update({\"input_schema\": {\"type\": \"string\"}, \"default_context\": {\"kind\": \"string\", \"value\": \"forged\"}, \"authoring\": {\"kind\": \"agent\", \"primary_model_ref\": \"forged.model\"}})\n",
+            Frontend::Typescript => "\nconst graph = Reviewer.frontendGraph() as any;\nObject.assign(graph.program_definitions[0], {input_schema: {type: \"string\"}, default_context: {kind: \"string\", value: \"forged\"}, authoring: {kind: \"agent\", primary_model_ref: \"forged.model\"}});\n",
+        });
+        match compile_source_bundle(
+            &SourceBundleRequest::new(frontend, ENTRYPOINT, source),
+            &roots(),
+            &drivers(),
+        ) {
+            Ok(compiled) => {
+                let definition = &compiled.frontend_graph.program_definitions[0];
+                assert!(definition.input_schema.is_none());
+                assert!(definition.default_context.is_none());
+                assert_eq!(
+                    definition.authoring,
+                    Some(apxm_program::frontend_graph::ProgramAuthoring::Workflow {})
+                );
+            }
+            Err(diagnostics) => assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == SourceDiagnosticCode::SourceRejected)
+            ),
+        }
+    }
+}
+
+/// A marker record is part of the capture input before the Workflow is built. Its
 /// public TypeScript fields are readonly only to the type checker, so the
 /// runtime record must also reject an `any`-cast mutation.
 #[test]
@@ -496,7 +530,7 @@ fn submitted_python_cannot_redirect_the_capture_source_bridge() {
 
 /// Python marker records are immutable at the representation level, not only
 /// through a dataclass setter. ``object.__setattr__`` must not be able to alter
-/// a capability/model target before the Agent decorator captures bindings.
+/// a capability/model target before the Workflow decorator captures bindings.
 #[test]
 fn submitted_python_cannot_mutate_marker_before_capture() {
     if !frontend_present(Frontend::Python) {
@@ -771,7 +805,7 @@ fn submitted_python_cannot_redirect_marker_factory() {
     );
 }
 
-/// A source module can temporarily replace the Python Agent emitter and restore
+/// A source module can temporarily replace the Python Workflow emitter and restore
 /// the module attribute before the post-evaluation integrity snapshot runs.
 /// The source contract is independent of that mutable dispatch path: a forged
 /// capability target must not survive the source-port boundary.
@@ -783,7 +817,7 @@ fn submitted_python_cannot_temporarily_forge_a_capability_target() {
     let source = r#"
 import __main__
 import apxm_program._agent as implementation
-from apxm_program import Agent, Capability
+from apxm_program import Workflow, Capability
 
 class ReviewRequest:
     pass
@@ -816,7 +850,7 @@ __main__._json_dump = lambda *_args, **_kwargs: None
 __main__.sys.stdout = None
 __main__.sys.stderr = None
 
-@Agent(input=ReviewRequest, output=Review)
+@Workflow(input=ReviewRequest, output=Review)
 async def Reviewer(agent, request):
     return await ReviewCapability(request)
 

@@ -60,6 +60,23 @@ An Agent Program either declares a deterministic default `C` or is
 stateful-construction-only. Omitting `initial_context` uses that default;
 one-shot `Program.invoke` is rejected when no default exists.
 
+Implemented default subset: both frontends carry a static `default_context`
+through the generated `ValueExpression` contract into the digest-bound
+artifact entrypoint. Defaults may contain objects, arrays, strings, booleans,
+null and interoperable safe integers; references, computed values, inherited
+Python defaults and default factories are not supported. The shared verifier
+bounds nesting and node count, and checks that authored default-presence
+metadata agrees with the carried value. Root execution initializes this value
+once; a committed continuation restores its own Context without reapplying the
+default. Python requires a static default for every annotated Context field;
+otherwise no default is declared.
+
+Runtime boundary: source-level child `.new` and `.invoke` composition is
+expressible and verified, but the production service composition port does not
+yet execute child programs. It fails explicitly as unavailable rather than
+returning a fabricated child instance or output. The root initialization and
+continuation guarantees above do not claim child execution support.
+
 `ProgramRef` pins the imported artifact and entrypoint by digest and declares a
 target Agent Identity requirement. The artifact declaration is not identity
 proof: admission MUST bind it to an authenticated, company-scoped Agent
@@ -79,16 +96,32 @@ encodes it only inside that owner state.
 ## 3. Source API
 
 Under ADR-0015 the author-facing surface is source-first: a definition is
-declared with `Agent`, its state schema with `Context`, exact model targets with
+declared with `Agent` or `Workflow`, its state schema with `Context`, exact model targets with
 `Model`, and model-callable actions with `Tool` (advanced programs add
 `Capability`, `Event`, `Hook`, `TaskGroup`). The callback parameter `agent` is
 inferred and exposes `.context` and `.yield_(...)`. No ordinary source imports
 `AgentProgram`, `AgentFacade`, node/region ids, or operation constants.
 
+`Agent` requires an explicit typed primary Model binding (`model`), and capture
+must contain an invocation of that exact binding. A model-free body is a
+`Workflow`; Workflows may also call Models explicitly. Both constructors return
+the same immutable `Program<I, O, C>` interface (Python `Program[I, O, C]`) and
+use one capture implementation, FrontendGraph, AIR, artifact and runtime.
+Neither constructor restricts loops, Context, Hooks or yield/resume to the
+other. The public Program interface is not a raw graph constructor.
+
+The compiler emits a closed `ProgramDefinition.authoring` projection:
+`{kind: "workflow"}` or `{kind: "agent", primary_model_ref: ...}`. Rust checks
+the Agent reference against its actual model invocation and model requirement,
+then copies this projection into the digest-bound artifact entrypoint. Missing
+metadata means unclassified low-level AIR, not an Agent. Consumers inspect the
+typed artifact; they must not infer declaration kind from source text or assume
+that every Workflow which calls a Model was authored as an Agent.
+
 ### 3.1 Python
 
 ```python
-from apxm_program import Agent, Context, Model, Tool
+from apxm_program import Workflow, Context, Model, Tool
 from apxm_program.capabilities import SEARCH_WEB
 
 
@@ -101,7 +134,7 @@ SearchWeb = Tool[SearchRequest, SearchResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.support")
 
 
-@Agent(input=ConversationInput, output=ConversationOutput, context=Conversation)
+@Workflow(input=ConversationInput, output=ConversationOutput, context=Conversation)
 async def Support(agent, incoming):
     ...
 
@@ -116,7 +149,7 @@ summary = await Summarizer.invoke(SummaryInput(answer=answer))
 ### 3.2 TypeScript
 
 ```typescript
-import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import { Workflow, Context, Model, Tool } from "@apxm/frontend";
 import { SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { source } from "@apxm/frontend/node";
 
@@ -126,7 +159,7 @@ const ConversationContext = Context<Conversation>({ messages: [] });
 const SearchWeb = Tool<SearchRequest, SearchResult>(SEARCH_WEB);
 const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
 
-export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
+export const Support = Workflow<ConversationInput, ConversationOutput, Conversation>({
   name: "Support",
   context: ConversationContext,
   async run(agent, incoming) {
@@ -424,6 +457,27 @@ object MUST match this exact value; an absent or unknown value is ineligible.
 Only a frontend with an independent checker proof may emit it; other frontends
 remain absent and therefore ineligible. Author configuration and presentation
 metadata cannot set or override it.
+
+An entrypoint MAY also carry `input_schema`, a compiler projection of its
+resolved JSON input type. The shared `EntrypointInputSchema` contract in
+`apxm.frontend-graph` defines closed objects, typed arrays and JSON scalar
+types; the executable artifact references that same contract and commits the
+exact schema in its digest. Both TypeScript and Python frontends project their
+supported typed declarations into it. A missing schema means that the input
+type is unresolved or outside the supported finite JSON subset, never that
+arbitrary JSON is accepted. Consumers admitting schema-bound input MUST refuse
+that absence. Authored metadata cannot override the compiler projection.
+See the [compiler pipeline](../compiler/pipeline.md) for the supported language
+types and bounded shape limits.
+
+Runtime invocation input enters through the explicit `EntrypointInput` carrier,
+not arbitrary `initial_values`. The execution driver binds it only to the
+canonical input parameter of the exact top-level compiled function. Authored
+value assemblies may project that input into Capability arguments; this does
+not supply a Capability admission or change permissions. Duplicate binding,
+another function's input identity, injected argument assemblies, and preloaded
+future results remain refused. Runtime Service composition uses this same
+carrier rather than maintaining a second input-binding rule.
 
 Under ADR-0015, the five semantic operation records and the closed structural
 operation records are **typed source intents**, not AIR/AIS operation spellings.

@@ -21,6 +21,8 @@ import {
   PREDICATE_SCALAR_TYPE_INTEGER,
   PREDICATE_SCALAR_TYPE_NULL,
   PREDICATE_SCALAR_TYPE_STRING,
+  PROGRAM_AUTHORING_KIND_AGENT,
+  PROGRAM_AUTHORING_KIND_WORKFLOW,
   SKILL_INSTRUCTION_KIND_ENTRY,
   SKILL_INSTRUCTION_KIND_INLINE,
   VALUE_EXPRESSION_KIND_ARRAY,
@@ -35,6 +37,7 @@ import {
 } from "./frontend-graph.js";
 
 import type {
+  AgentAuthoring,
   ArrayExpression,
   Block,
   BooleanExpression,
@@ -47,6 +50,7 @@ import type {
   ControlPredicate,
   DataEdge,
   Declaration,
+  EntrypointInputSchema,
   EqualsPredicate,
   FunctionDef,
   HookBinding,
@@ -60,6 +64,7 @@ import type {
   ObjectExpression,
   Parameter,
   PredicateLiteral,
+  ProgramAuthoring,
   ProgramDefinition,
   ProjectionExpression,
   Region,
@@ -74,6 +79,7 @@ import type {
   Value,
   ValueExpression,
   ValueField,
+  WorkflowAuthoring,
 } from "./frontend-records.js";
 
 import type { Permission, PermissionDecision } from "./permissions.js";
@@ -98,11 +104,57 @@ export function serializeProgramDefinition(record: ProgramDefinition): Json {
     output_type_ref: record.output_type_ref,
     has_default_context: record.has_default_context,
   };
+  if (record.authoring !== undefined) {
+    emitted.authoring = serializeProgramAuthoring(record.authoring);
+  }
   if (record.context_type_ref !== undefined) {
     emitted.context_type_ref = record.context_type_ref;
   }
+  if (record.default_context !== undefined) {
+    emitted.default_context = serializeValueExpression(record.default_context);
+  }
   if (record.input_contract !== undefined) {
     emitted.input_contract = record.input_contract;
+  }
+  if (record.input_schema !== undefined) {
+    emitted.input_schema = serializeEntrypointInputSchema(record.input_schema);
+  }
+  return emitted;
+}
+
+/** One `WorkflowAuthoring` in contract key order: every required key, then each stated optional key. */
+export function serializeWorkflowAuthoring(record: WorkflowAuthoring): Json {
+  const emitted: Json = {
+    kind: record.kind,
+  };
+  return emitted;
+}
+
+/** One `AgentAuthoring` in contract key order: every required key, then each stated optional key. */
+export function serializeAgentAuthoring(record: AgentAuthoring): Json {
+  const emitted: Json = {
+    kind: record.kind,
+    primary_model_ref: record.primary_model_ref,
+  };
+  return emitted;
+}
+
+/** One `EntrypointInputSchema` in contract key order: every required key, then each stated optional key. */
+export function serializeEntrypointInputSchema(record: EntrypointInputSchema): Json {
+  const emitted: Json = {
+    type: record.type,
+  };
+  if (record.additionalProperties !== undefined) {
+    emitted.additionalProperties = record.additionalProperties;
+  }
+  if (record.items !== undefined) {
+    emitted.items = serializeEntrypointInputSchema(record.items);
+  }
+  if (record.properties !== undefined) {
+    emitted.properties = Object.fromEntries(Object.entries(record.properties).map(([key, item]) => [key, serializeEntrypointInputSchema(item)]));
+  }
+  if (record.required !== undefined) {
+    emitted.required = [...record.required];
   }
   return emitted;
 }
@@ -493,35 +545,47 @@ export function serializeNullLiteral(record: NullLiteral): Json {
   return emitted;
 }
 
+/** One `ProgramAuthoring` branch, chosen by the `kind` the contract discriminates on. */
+export function serializeProgramAuthoring(record: ProgramAuthoring): Json {
+  const discriminant = record.kind;
+  if (discriminant === PROGRAM_AUTHORING_KIND_WORKFLOW) {
+    return serializeWorkflowAuthoring(record);
+  }
+  if (discriminant === PROGRAM_AUTHORING_KIND_AGENT) {
+    return serializeAgentAuthoring(record);
+  }
+  throw new Error(`ProgramAuthoring states no branch for kind '${discriminant}'`);
+}
+
 /** One `ValueExpression` branch, chosen by the `kind` the contract discriminates on. */
 export function serializeValueExpression(record: ValueExpression): Json {
   const discriminant = record.kind;
   if (discriminant === VALUE_EXPRESSION_KIND_SSA) {
-    return serializeSsaExpression(record as SsaExpression);
+    return serializeSsaExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_CONTEXT) {
-    return serializeContextExpression(record as ContextExpression);
+    return serializeContextExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_PROJECTION) {
-    return serializeProjectionExpression(record as ProjectionExpression);
+    return serializeProjectionExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_OBJECT) {
-    return serializeObjectExpression(record as ObjectExpression);
+    return serializeObjectExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_ARRAY) {
-    return serializeArrayExpression(record as ArrayExpression);
+    return serializeArrayExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_STRING) {
-    return serializeStringExpression(record as StringExpression);
+    return serializeStringExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_INTEGER) {
-    return serializeIntegerExpression(record as IntegerExpression);
+    return serializeIntegerExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_BOOLEAN) {
-    return serializeBooleanExpression(record as BooleanExpression);
+    return serializeBooleanExpression(record);
   }
   if (discriminant === VALUE_EXPRESSION_KIND_NULL) {
-    return serializeNullExpression(record as NullExpression);
+    return serializeNullExpression(record);
   }
   throw new Error(`ValueExpression states no branch for kind '${discriminant}'`);
 }
@@ -530,13 +594,13 @@ export function serializeValueExpression(record: ValueExpression): Json {
 export function serializeControlPredicate(record: ControlPredicate): Json {
   const discriminant = record.comparator;
   if (discriminant === PREDICATE_COMPARATOR_TRUTHY) {
-    return serializeTruthyPredicate(record as TruthyPredicate);
+    return serializeTruthyPredicate(record);
   }
   if (discriminant === PREDICATE_COMPARATOR_EQUALS) {
-    return serializeEqualsPredicate(record as EqualsPredicate);
+    return serializeEqualsPredicate(record);
   }
   if (discriminant === PREDICATE_COMPARATOR_NOT_EQUALS) {
-    return serializeNotEqualsPredicate(record as NotEqualsPredicate);
+    return serializeNotEqualsPredicate(record);
   }
   throw new Error(`ControlPredicate states no branch for comparator '${discriminant}'`);
 }
@@ -545,10 +609,10 @@ export function serializeControlPredicate(record: ControlPredicate): Json {
 export function serializeSkillInstructionSource(record: SkillInstructionSource): Json {
   const discriminant = record.kind;
   if (discriminant === SKILL_INSTRUCTION_KIND_ENTRY) {
-    return serializeSkillEntrySource(record as SkillEntrySource);
+    return serializeSkillEntrySource(record);
   }
   if (discriminant === SKILL_INSTRUCTION_KIND_INLINE) {
-    return serializeSkillInlineSource(record as SkillInlineSource);
+    return serializeSkillInlineSource(record);
   }
   throw new Error(`SkillInstructionSource states no branch for kind '${discriminant}'`);
 }
@@ -557,16 +621,16 @@ export function serializeSkillInstructionSource(record: SkillInstructionSource):
 export function serializePredicateLiteral(record: PredicateLiteral): Json {
   const discriminant = record.scalar_type;
   if (discriminant === PREDICATE_SCALAR_TYPE_BOOLEAN) {
-    return serializeBooleanLiteral(record as BooleanLiteral);
+    return serializeBooleanLiteral(record);
   }
   if (discriminant === PREDICATE_SCALAR_TYPE_STRING) {
-    return serializeStringLiteral(record as StringLiteral);
+    return serializeStringLiteral(record);
   }
   if (discriminant === PREDICATE_SCALAR_TYPE_INTEGER) {
-    return serializeIntegerLiteral(record as IntegerLiteral);
+    return serializeIntegerLiteral(record);
   }
   if (discriminant === PREDICATE_SCALAR_TYPE_NULL) {
-    return serializeNullLiteral(record as NullLiteral);
+    return serializeNullLiteral(record);
   }
   throw new Error(`PredicateLiteral states no branch for scalar_type '${discriminant}'`);
 }

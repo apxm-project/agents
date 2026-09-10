@@ -28,4 +28,5 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 sha2.workspace = true
 
 [dev-dependencies]
+apxm-source-port.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }

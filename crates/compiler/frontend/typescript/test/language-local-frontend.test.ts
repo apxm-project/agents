@@ -1,6 +1,6 @@
 // The TypeScript frontend facts the shared conformance corpus cannot state.
 //
-// Everything about authoring a program — what an Agent binds, what the
+// Everything about authoring a program — what an Workflow binds, what the
 // FrontendGraph says, what the canonical AIR lowers to, and what authoring is
 // rejected — is stated once in
 // `contracts/vectors/apxm.frontend-conformance.json` and run from the generated
@@ -18,7 +18,7 @@
 //   real file it was captured from — so only TypeScript, which is handed its
 //   source, can state a file name that escapes the workspace.
 // * The generated runtime-evidence binding. It is a generated contract binding
-//   rather than an authored Agent, so it has no source fixture to capture and no
+//   rather than an authored Workflow, so it has no source fixture to capture and no
 //   FrontendGraph to compare.
 // * A `Skill` stating both an entry and inline text. The corpus's
 //   `declaration_rejections` vocabulary states one reference per marker and
@@ -30,7 +30,7 @@
 //   only TypeScript, which reads the scope back out of the AST, can resolve one
 //   wrongly or refuse one it cannot resolve.
 // * A Hook whose target names nothing. A Python Hook binds through the module
-//   globals its Agent resolves, so a Hook nobody declares a target for is a fact
+//   globals its Workflow resolves, so a Hook nobody declares a target for is a fact
 //   about a whole module rather than about one authored program, and a corpus
 //   vector authors its programs inside one shared module. The Python frontend
 //   carries the same test for the same reason.
@@ -38,7 +38,7 @@
 import { describe, expect, it } from "vitest";
 
 import { source } from "../src/node.ts";
-import { Agent, Capability, Context, Event, Model, Skill, Tool } from "../src/index.ts";
+import { Workflow, Capability, Context, Event, Model, Skill, Tool } from "../src/index.ts";
 import { CaptureError, captureProgram } from "../src/capture.ts";
 import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
@@ -61,9 +61,9 @@ source(import.meta.url);
 type Input = any;
 type Output = any;
 
-void Agent;
+void Workflow;
 
-function capturedInputContract(inputType: string, config = ""): unknown {
+function capturedInputContract(inputType: string, config = "", body = "return input;"): unknown {
   return captureProgram({
     programId: "InputContractAgent",
     entrypoint: "InputContractAgent",
@@ -71,7 +71,7 @@ function capturedInputContract(inputType: string, config = ""): unknown {
     source: {
       fileName: "input-contract.ts",
       text: `
-        import { Agent } from "@apxm/frontend";
+        import { Workflow } from "@apxm/frontend";
         type OptionalInput = { label?: string };
         type ListInput = string[];
         type TupleInput = [string];
@@ -83,10 +83,11 @@ function capturedInputContract(inputType: string, config = ""): unknown {
         type DynamicAnyInput = GenericInput<any>;
         type ConditionalOptionalInput = unknown extends string ? { required: string } : {};
         type ConditionalRequiredInput = string extends string ? { required: string } : {};
-        const InputContractAgent = Agent<${inputType}, unknown>({
+        type RecursiveInput = { child?: RecursiveInput };
+        const InputContractAgent = Workflow<${inputType}, unknown>({
           name: "InputContractAgent",
           ${config}
-          async run(agent, input) { return input; },
+          async run(agent, input) { ${body} },
         });
       `,
     },
@@ -106,10 +107,10 @@ function capturedScope(
     source: {
       fileName: `${programId}.ts`,
       text: `
-        import { Agent, Hook, Model } from "@apxm/frontend";
+        import { Workflow, Hook, Model } from "@apxm/frontend";
         ${declared.imports}
         const ScopedModel = Model<Input, Output>("${modelRef}");
-        const ${programId} = Agent<Input, Output>({
+        const ${programId} = Workflow<Input, Output>({
           name: "${programId}",
           async run(agent, input) {
             return await ScopedModel(input);
@@ -174,6 +175,79 @@ describe("language-local TypeScript frontend facts", () => {
       'input_contract: "accepts_empty_object",',
     ) as { program_definitions: Array<{ input_contract?: string }> };
     expect(graph.program_definitions[0]?.input_contract).toBeUndefined();
+  });
+
+  it("projects resolved JSON input types into closed compiler-owned schemas", () => {
+    const graph = capturedInputContract(
+      "{ reference: string; count: number; accepted: boolean; absent: null; labels: string[]; details?: { note?: string; enabled?: boolean } }",
+    ) as { program_definitions: Array<{ input_schema?: unknown }> };
+    expect(graph.program_definitions[0]?.input_schema).toEqual({
+      type: "object",
+      additionalProperties: false,
+      required: ["reference", "count", "accepted", "absent", "labels"],
+      properties: {
+        reference: { type: "string" },
+        count: { type: "number" },
+        accepted: { type: "boolean" },
+        absent: { type: "null" },
+        labels: { type: "array", items: { type: "string" } },
+        details: {
+          type: "object", additionalProperties: false, required: [],
+          properties: { note: { type: "string" }, enabled: { type: "boolean" } },
+        },
+      },
+    });
+    for (const inputType of ["OptionalInput", "MappedInput"]) {
+      const graph = capturedInputContract(inputType) as { program_definitions: Array<{ input_schema?: unknown }> };
+      expect(graph.program_definitions[0]?.input_schema).toEqual({
+        type: "object", additionalProperties: false, required: [], properties: { label: { type: "string" } },
+      });
+    }
+    for (const inputType of ["ListInput", "ArrayInput", "ReadonlyArrayInput"]) {
+      const graph = capturedInputContract(inputType) as { program_definitions: Array<{ input_schema?: unknown }> };
+      expect(graph.program_definitions[0]?.input_schema).toEqual({ type: "array", items: { type: "string" } });
+    }
+  });
+
+  it("leaves unsupported input types without a schema instead of widening them", () => {
+    for (const inputType of [
+      "unknown", "any", "never", "MissingInput", "DynamicAnyInput", "RecursiveInput",
+      '"literal"', "123", "true", "bigint", "undefined", "symbol", "object",
+      "TupleInput", "Promise<string>", "{ value: string | null }", "{ value: unknown }",
+      "{ [key: string]: string }", "{ left: string } & { right: number }", "() => string", "Date",
+    ]) {
+      const graph = capturedInputContract(inputType) as { program_definitions: Array<{ input_schema?: unknown }> };
+      expect(graph.program_definitions[0]?.input_schema).toBeUndefined();
+    }
+  });
+
+  it("ignores authored metadata that attempts to replace the checked input schema", () => {
+    const graph = capturedInputContract(
+      "{ reference: string }",
+      'input_schema: { type: "object", properties: {}, required: [], additionalProperties: true },',
+    ) as { program_definitions: Array<{ input_schema?: unknown }> };
+    expect(graph.program_definitions[0]?.input_schema).toEqual({
+      type: "object", additionalProperties: false, required: ["reference"], properties: { reference: { type: "string" } },
+    });
+  });
+
+  it("captures named pure data without adding an effect operation", () => {
+    const graph = capturedInputContract("{ reference: string }", "", "const mapped = {reference: input.reference}; return mapped;") as { values: Array<{ expression?: unknown }>; call_intents: unknown[] };
+    expect(graph.call_intents).toEqual([]);
+    expect(graph.values.some((value) => (value.expression as { kind?: string })?.kind === "object")).toBe(true);
+  });
+
+  it.each([
+    "let mapped = {}; return mapped;",
+    'const mapped = {}; mapped.value = "changed"; return mapped;',
+    "const mapped = []; mapped.push(1); return mapped;",
+    "const mapped = agent.context; return mapped;",
+    "if (input.reference) { const mapped = {}; } return mapped;",
+    "const mapped = missing; return mapped;",
+    "const mapped = input; input.reference = 'changed'; return mapped;",
+    "const mapped = {__proto__: input}; return mapped;",
+  ])("refuses mutation, mutable Context and escaped pure local bindings: %s", (body) => {
+    expect(() => capturedInputContract("{ reference: string }", "", body)).toThrow(CaptureError);
   });
 
   it("emits standard SHA-256 digests without a Node-only root import", () => {
@@ -246,9 +320,9 @@ describe("language-local TypeScript frontend facts", () => {
         source: {
           fileName: "stray-hook.ts",
           text: `
-            import { Agent, Hook, Model } from "@apxm/frontend";
+            import { Workflow, Hook, Model } from "@apxm/frontend";
             const StrayModel = Model<Input, Output>("stray.hook.model");
-            const StrayHookTarget = Agent<Input, Output>({
+            const StrayHookTarget = Workflow<Input, Output>({
               name: "StrayHookTarget",
               async run(agent, input) {
                 return await StrayModel(input);
@@ -279,9 +353,9 @@ describe("language-local TypeScript frontend facts", () => {
       source: {
         fileName: "../../outside-workspace/agent.ts",
         text: `
-          import { Agent, Model } from "@apxm/frontend";
+          import { Workflow, Model } from "@apxm/frontend";
           const EscapingModel = Model<Input, Output>("escaping.source.model");
-          const EscapingSource = Agent<Input, Output>({
+          const EscapingSource = Workflow<Input, Output>({
             async run(agent, input) {
               return await EscapingModel(input);
             },

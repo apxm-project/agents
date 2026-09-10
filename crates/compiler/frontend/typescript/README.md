@@ -16,13 +16,20 @@ const SummarizerModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
+  model: SummarizerModel,
   async run(agent, request) {
     return await SummarizerModel(request);
   },
 });
 ```
 
-`Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
+`Agent` requires an explicit typed `model` binding invoked by the captured body.
+`Workflow` declares general orchestration and needs no model when it makes no
+model call. Both return the same sealed `Program<Input, Output, Context>` with
+typed `invoke(input)` and `new({context})`; neither exposes a raw graph constructor.
+Loops, Context, Hooks and yield/resume are shared program behavior.
+
+`Agent`, `Workflow`, `Context`, `Tool`, and `Model` cover ordinary programs;
 `Capability`, `Event`, `Hook`, `Skill`, and `TaskGroup` are focused extensions.
 `Skill` declares instructions the program can load — carried as a package file
 with `{ entry }`, or written in the source with `{ text }`, never both — and

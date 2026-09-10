@@ -13,6 +13,7 @@ type FixtureProgram = ReturnType<typeof Agent<Input, Output>>;
 
 export const ExternalFixture: FixtureProgram = Agent<Input, Output>({
   name: "ExternalFixture",
+  model: Answer,
   async run(agent, input) {
     while (true) {
       let facts = "";

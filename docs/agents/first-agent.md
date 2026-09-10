@@ -5,8 +5,8 @@ that source statically into `apxm.frontend-graph`; Rust alone validates it,
 constructs CFG/SSA and AIR, and produces the artifact admitted by the host.
 
 <!-- BEGIN AUTHORING VOCABULARY -->
-The everyday authoring vocabulary is `Agent`, `agent`, `Context`, `Tool`, `Model`, plus ordinary language control flow.
-`Capability`, `capability`, `Event`, `Hook`, `TaskGroup`, `Skill`, `source` are focused advanced declarations.
+The everyday authoring vocabulary is `Agent`, `Workflow`, `agent`, `Context`, `Tool`, `Model`, plus ordinary language control flow.
+`Capability`, `capability`, `Event`, `Hook`, `TaskGroup`, `Skill`, `source`, `Program` are focused advanced declarations and executable types.
 <!-- END AUTHORING VOCABULARY -->
 
 Graph builders, AIR text, node ids, and `AgentFacade` are not author APIs. The
@@ -32,7 +32,7 @@ class Summary(TypedDict):
 SummaryModel = Model[SummaryRequest, Summary]("model.summary")
 
 
-@Agent(input=SummaryRequest, output=Summary)
+@Agent(input=SummaryRequest, output=Summary, model=SummaryModel)
 async def summarize(agent, request):
     return await SummaryModel(request)
 ```
@@ -52,6 +52,7 @@ const SummaryModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
+  model: SummaryModel,
   async run(agent, request) {
     return await SummaryModel(request);
   },
@@ -61,6 +62,11 @@ export const Summarizer = Agent<SummaryRequest, Summary>({
 Both forms are semantically equivalent. The callback parameter is inferred;
 authors use `agent.context` and `agent.yield_(...)` when their program carries
 context across stateful invocations.
+
+An `Agent` must invoke its explicit primary `Model`. Use `Workflow` instead for
+general orchestration: a model-free Workflow compiles and executes without a
+model deployment. Both declarations return the shared typed `Program<I, O, C>`
+handle and compile through the same FrontendGraph, AIR and runtime.
 
 Both forms state the program's typed interface as the types themselves —
 `@Agent(input=SummaryRequest, ...)` and `Agent<SummaryRequest, Summary>` — never

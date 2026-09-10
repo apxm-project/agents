@@ -1,4 +1,4 @@
-"""An Agent Program that invokes the Capability this package ships.
+"""An Workflow Program that invokes the Capability this package ships.
 
 Every argument is a literal, so executing it exercises exactly one thing:
 whether a `capability.invoke` for a Capability this package supplies in Python
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import TypedDict
 
-from apxm_program import Agent, Capability
+from apxm_program import Workflow, Capability
 
 # Loading by path must not leave build litter in the package directory.
 sys.dont_write_bytecode = True
@@ -46,7 +46,7 @@ class NoInput(TypedDict):
 Normalize = Capability[NormalizeRequest, NormalizeResult](_MODULE.normalize)
 
 
-@Agent(input=NoInput, output=NormalizeResult)
+@Workflow(input=NoInput, output=NormalizeResult)
 async def PythonHandlerFixture(agent, request):
     """Invoke the shipped Capability with an authored literal."""
     return await Normalize({"label": "  Shipped   BY   Python  "})

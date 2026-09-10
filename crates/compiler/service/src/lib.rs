@@ -459,14 +459,13 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
                     continue;
                 }
                 let after = after.trim_start();
-                if !after.starts_with("Agent")
-                    || !after["Agent".len()..]
-                        .chars()
-                        .next()
-                        .is_some_and(|character| {
+                if !["Agent", "Workflow"].iter().any(|name| {
+                    after.strip_prefix(name).is_some_and(|tail| {
+                        tail.chars().next().is_some_and(|character| {
                             character == '<' || character == '(' || character.is_whitespace()
                         })
-                {
+                    })
+                }) {
                     continue;
                 }
                 found = Some(name.to_owned());
@@ -477,10 +476,10 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
 }
 
 fn is_python_agent_decorator(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix("@Agent") else {
-        return false;
-    };
-    rest.is_empty() || rest.trim_start().starts_with('(')
+    ["@Agent", "@Workflow"].iter().any(|name| {
+        line.strip_prefix(name)
+            .is_some_and(|rest| rest.is_empty() || rest.trim_start().starts_with('('))
+    })
 }
 
 fn parenthesis_depth(line: &str) -> usize {
@@ -779,7 +778,7 @@ ReviewModel = Model[ReviewRequest, Review]("review.model")
 SearchWeb = Tool[ReviewRequest, Review]("search_web")
 
 
-@Agent(input=ReviewRequest, output=Review)
+@Agent(input=ReviewRequest, output=Review, model=ReviewModel)
 async def Reviewer(agent, request):
     evidence = await SearchWeb(request)
     return await ReviewModel(evidence)
@@ -798,6 +797,7 @@ const SearchWeb = Tool<ReviewRequest, Review>("search_web");
 
 export const Reviewer = Agent<ReviewRequest, Review>({
   name: "Reviewer",
+  model: ReviewModel,
   async run(agent, request) {
     const evidence = await SearchWeb(request);
     return await ReviewModel(evidence);
@@ -917,7 +917,7 @@ export const Reviewer = Agent<ReviewRequest, Review>({
         }
         let source = r#"
 from typing import TypedDict
-from apxm_program import Agent, Event, Model
+from apxm_program import Agent, Workflow, Event, Model
 
 class In(TypedDict):
     message: str
@@ -928,11 +928,11 @@ class Out(TypedDict):
 ChildModel = Model[In, Out]("model.child")
 Approval = Event[In]("event.harness.approval")
 
-@Agent(input=In, output=Out)
+@Agent(input=In, output=Out, model=ChildModel)
 async def Child(agent, request):
     return await ChildModel(request)
 
-@Agent(input=In, output=Out)
+@Workflow(input=In, output=Out)
 async def Harness(agent, request):
     while True:
         child = Child.new()
@@ -1072,6 +1072,10 @@ async def NotAnAgentFacade(agent, request):
             authored_program_name(Frontend::Python, python).unwrap(),
             "Real"
         );
+        assert_eq!(
+            authored_program_name(Frontend::Python, &python.replace("Agent", "Workflow")).unwrap(),
+            "Real"
+        );
 
         let typescript = r#"
 // export const CommentOnly = Agent<In, Out>({});
@@ -1084,6 +1088,14 @@ const AgentFacade = AgentFacade<In, Out>({});
 "#;
         assert_eq!(
             authored_program_name(Frontend::Typescript, typescript).unwrap(),
+            "Real"
+        );
+        assert_eq!(
+            authored_program_name(
+                Frontend::Typescript,
+                &typescript.replace("Agent", "Workflow")
+            )
+            .unwrap(),
             "Real"
         );
     }

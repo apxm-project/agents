@@ -30,6 +30,8 @@ from .frontend_graph import (
     PREDICATE_SCALAR_TYPE_INTEGER,
     PREDICATE_SCALAR_TYPE_NULL,
     PREDICATE_SCALAR_TYPE_STRING,
+    PROGRAM_AUTHORING_KIND_AGENT,
+    PROGRAM_AUTHORING_KIND_WORKFLOW,
     SKILL_INSTRUCTION_KIND_ENTRY,
     SKILL_INSTRUCTION_KIND_INLINE,
     VALUE_EXPRESSION_KIND_ARRAY,
@@ -44,6 +46,7 @@ from .frontend_graph import (
 )
 
 from .frontend_records import (
+    AgentAuthoring,
     ArrayExpression,
     Block,
     BooleanExpression,
@@ -56,6 +59,7 @@ from .frontend_records import (
     ControlPredicate,
     DataEdge,
     Declaration,
+    EntrypointInputSchema,
     EqualsPredicate,
     FunctionDef,
     HookBinding,
@@ -69,6 +73,7 @@ from .frontend_records import (
     ObjectExpression,
     Parameter,
     PredicateLiteral,
+    ProgramAuthoring,
     ProgramDefinition,
     ProjectionExpression,
     Region,
@@ -83,6 +88,7 @@ from .frontend_records import (
     Value,
     ValueExpression,
     ValueField,
+    WorkflowAuthoring,
 )
 
 from .permissions import Permission, PermissionDecision
@@ -111,12 +117,58 @@ def serialize_program_definition(record: ProgramDefinition) -> dict[str, Any]:
         "output_type_ref": _field(record, "output_type_ref"),
         "has_default_context": _field(record, "has_default_context"),
     }
+    authoring = _field(record, "authoring")
+    if authoring is not None:
+        emitted["authoring"] = serialize_program_authoring(authoring)
     context_type_ref = _field(record, "context_type_ref")
     if context_type_ref is not None:
         emitted["context_type_ref"] = context_type_ref
+    default_context = _field(record, "default_context")
+    if default_context is not None:
+        emitted["default_context"] = serialize_value_expression(default_context)
     input_contract = _field(record, "input_contract")
     if input_contract is not None:
         emitted["input_contract"] = input_contract
+    input_schema = _field(record, "input_schema")
+    if input_schema is not None:
+        emitted["input_schema"] = serialize_entrypoint_input_schema(input_schema)
+    return emitted
+
+
+def serialize_workflow_authoring(record: WorkflowAuthoring) -> dict[str, Any]:
+    """One `WorkflowAuthoring` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "kind": _field(record, "kind"),
+    }
+    return emitted
+
+
+def serialize_agent_authoring(record: AgentAuthoring) -> dict[str, Any]:
+    """One `AgentAuthoring` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "kind": _field(record, "kind"),
+        "primary_model_ref": _field(record, "primary_model_ref"),
+    }
+    return emitted
+
+
+def serialize_entrypoint_input_schema(record: EntrypointInputSchema) -> dict[str, Any]:
+    """One `EntrypointInputSchema` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "type": _field(record, "type"),
+    }
+    additionalProperties = _field(record, "additionalProperties")
+    if additionalProperties is not None:
+        emitted["additionalProperties"] = additionalProperties
+    items = _field(record, "items")
+    if items is not None:
+        emitted["items"] = serialize_entrypoint_input_schema(items)
+    properties = _field(record, "properties")
+    if properties is not None:
+        emitted["properties"] = {key: serialize_entrypoint_input_schema(item) for key, item in properties.items()}
+    required = _field(record, "required")
+    if required is not None:
+        emitted["required"] = list(required)
     return emitted
 
 
@@ -506,6 +558,16 @@ def serialize_null_literal(record: NullLiteral) -> dict[str, Any]:
     return emitted
 
 
+def serialize_program_authoring(record: ProgramAuthoring) -> dict[str, Any]:
+    """One `ProgramAuthoring` branch, chosen by the `kind` the contract discriminates on."""
+    discriminant = _field(record, "kind")
+    if discriminant == PROGRAM_AUTHORING_KIND_WORKFLOW:
+        return serialize_workflow_authoring(record)
+    if discriminant == PROGRAM_AUTHORING_KIND_AGENT:
+        return serialize_agent_authoring(record)
+    raise ValueError(f"ProgramAuthoring states no branch for kind {discriminant!r}")
+
+
 def serialize_value_expression(record: ValueExpression) -> dict[str, Any]:
     """One `ValueExpression` branch, chosen by the `kind` the contract discriminates on."""
     discriminant = _field(record, "kind")
@@ -569,6 +631,9 @@ def serialize_predicate_literal(record: PredicateLiteral) -> dict[str, Any]:
 __all__ = [
     "serialize_permission",
     "serialize_program_definition",
+    "serialize_workflow_authoring",
+    "serialize_agent_authoring",
+    "serialize_entrypoint_input_schema",
     "serialize_imported_program_ref",
     "serialize_declaration",
     "serialize_function_def",
@@ -603,6 +668,7 @@ __all__ = [
     "serialize_string_literal",
     "serialize_integer_literal",
     "serialize_null_literal",
+    "serialize_program_authoring",
     "serialize_value_expression",
     "serialize_control_predicate",
     "serialize_skill_instruction_source",

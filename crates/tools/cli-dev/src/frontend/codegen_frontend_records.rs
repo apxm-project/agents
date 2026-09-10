@@ -7,10 +7,10 @@
 //! `additionalProperties: false`, emit one record type named for its `$defs`
 //! key. A `$defs` entry that is instead a `oneOf` discriminated by a `const`
 //! property (`ValueExpression`, `ControlPredicate`, `PredicateLiteral`) emits
-//! a union of one record per branch. Enum- and const-typed fields resolve
-//! through the same `FAMILIES` table `codegen_frontend_vocabulary` projects,
-//! via `family_for_def_enum` / `family_for_discriminated_const`, so a set the
-//! schema widens or narrows moves here without a second schema-path resolver.
+//! a union of one record per branch. Enum fields use the same `FAMILIES` table
+//! as `codegen_frontend_vocabulary`. Const fields preserve the schema's exact
+//! literal type, so generated unions discriminate without branch casts;
+//! string constants also validate their registered vocabulary family.
 //!
 //! `PredicateLiteral`'s three-branch `oneOf` is the one place the schema does
 //! not name its branches: unlike `ValueExpression` and `ControlPredicate`,
@@ -54,6 +54,9 @@ const PERMISSION_DECISION_REF: &str = "#/$defs/PermissionDecision";
 /// `PermissionDecision` (owned by `codegen_permissions`).
 pub(crate) const RECORDS: &[&str] = &[
     "ProgramDefinition",
+    "WorkflowAuthoring",
+    "AgentAuthoring",
+    "EntrypointInputSchema",
     "ImportedProgramRef",
     "Declaration",
     "FunctionDef",
@@ -103,6 +106,13 @@ pub(crate) enum Branch {
 }
 
 pub(crate) const UNIONS: &[UnionDef] = &[
+    UnionDef {
+        name: "ProgramAuthoring",
+        branches: &[
+            Branch::Named("WorkflowAuthoring"),
+            Branch::Named("AgentAuthoring"),
+        ],
+    },
     UnionDef {
         name: "ValueExpression",
         branches: &[
@@ -177,6 +187,8 @@ pub(crate) enum FieldKind {
     Str,
     Int,
     Bool,
+    /// A schema `const` is an exact literal, never its wider vocabulary union.
+    Literal(Value),
     StrTuple,
     /// A FrontendGraph vocabulary type this generator does not own —
     /// projected by `codegen_frontend_vocabulary` and imported here.
@@ -186,6 +198,7 @@ pub(crate) enum FieldKind {
     /// A record or union this generator emits, referenced by name.
     Local(String),
     LocalTuple(String),
+    LocalMap(String),
 }
 
 pub(crate) struct RecordField {
@@ -222,16 +235,22 @@ fn field_kind(
         });
         return FieldKind::Vocabulary(family.type_name);
     }
-    if let Some(constant) = prop_schema.get("const")
-        && constant.is_string()
-    {
-        let family = family_for_discriminated_const(discriminant_owner, prop_name)
-            .unwrap_or_else(|| {
+    if let Some(constant) = prop_schema.get("const") {
+        if constant.is_string() {
+            family_for_discriminated_const(discriminant_owner, prop_name).unwrap_or_else(|| {
                 panic!(
                     "frontend-records: no vocabulary family for {discriminant_owner}.{prop_name} const"
                 )
             });
-        return FieldKind::Vocabulary(family.type_name);
+        }
+        assert!(
+            constant.is_string()
+                || constant.is_boolean()
+                || constant.is_null()
+                || constant.is_i64(),
+            "frontend-records: unsupported literal at {own_def}.{prop_name}"
+        );
+        return FieldKind::Literal(constant.clone());
     }
     match prop_schema.get("type").and_then(Value::as_str) {
         Some("integer") => FieldKind::Int,
@@ -247,6 +266,15 @@ fn field_kind(
                 }
             }
         }
+        Some("object") => match field_kind(
+            &prop_schema["additionalProperties"],
+            own_def,
+            discriminant_owner,
+            prop_name,
+        ) {
+            FieldKind::Local(name) => FieldKind::LocalMap(name),
+            _ => panic!("frontend-records: unhandled map value shape at {own_def}.{prop_name}"),
+        },
         other => {
             panic!("frontend-records: unhandled property shape {other:?} at {own_def}.{prop_name}")
         }
@@ -302,11 +330,21 @@ fn py_type(kind: &FieldKind) -> String {
         FieldKind::Str => "str".to_string(),
         FieldKind::Int => "int".to_string(),
         FieldKind::Bool => "bool".to_string(),
+        FieldKind::Literal(value) => format!(
+            "Literal[{}]",
+            match value {
+                Value::Bool(true) => "True".to_string(),
+                Value::Bool(false) => "False".to_string(),
+                Value::Null => "None".to_string(),
+                _ => value.to_string(),
+            }
+        ),
         FieldKind::StrTuple => "tuple[str, ...]".to_string(),
         FieldKind::Vocabulary(name) => (*name).to_string(),
         FieldKind::Permission => "Permission".to_string(),
         FieldKind::Local(name) => name.clone(),
         FieldKind::LocalTuple(name) => format!("tuple[{name}, ...]"),
+        FieldKind::LocalMap(name) => format!("dict[str, {name}]"),
     }
 }
 
@@ -315,11 +353,13 @@ fn ts_type(kind: &FieldKind) -> String {
         FieldKind::Str => "string".to_string(),
         FieldKind::Int => "number".to_string(),
         FieldKind::Bool => "boolean".to_string(),
+        FieldKind::Literal(value) => value.to_string(),
         FieldKind::StrTuple => "readonly string[]".to_string(),
         FieldKind::Vocabulary(name) => (*name).to_string(),
         FieldKind::Permission => "Permission".to_string(),
         FieldKind::Local(name) => name.clone(),
         FieldKind::LocalTuple(name) => format!("readonly {name}[]"),
+        FieldKind::LocalMap(name) => format!("Readonly<Record<string, {name}>>"),
     }
 }
 
@@ -417,7 +457,7 @@ pub fn render_frontend_records_python() -> String {
          bound-tree record is one of these directly.\n\"\"\"\n\n\
          from __future__ import annotations\n\n\
          from dataclasses import dataclass\n\
-         from typing import Optional, TypeAlias, Union\n",
+         from typing import Literal, Optional, TypeAlias, Union\n",
     );
 
     if !families.is_empty() {
@@ -609,13 +649,49 @@ mod tests {
         let python = render_frontend_records_python();
         assert!(python.contains("decl_kind: DeclKind"));
         assert!(python.contains("scope: HookScope"));
-        assert!(python.contains("comparator: PredicateComparator"));
-        assert!(python.contains("kind: ValueExpressionKind"));
+        assert!(python.contains("comparator: Literal[\"truthy\"]"));
+        assert!(python.contains("kind: Literal[\"ssa\"]"));
         assert!(python.contains("from .frontend_graph import"));
 
         let typescript = render_frontend_records_typescript();
         assert!(typescript.contains("readonly decl_kind: DeclKind;"));
         assert!(typescript.contains("from \"./frontend-graph.js\";"));
+    }
+
+    #[test]
+    fn every_schema_const_is_an_exact_literal_in_both_languages() {
+        let schema = schema();
+        let verify = |definition: &Value, name: &str| {
+            for field in fields_for(definition, name) {
+                if let Some(constant) = definition["properties"][&field.name].get("const") {
+                    assert!(
+                        matches!(&field.kind, FieldKind::Literal(value) if value == constant),
+                        "{name}.{} widened its const",
+                        field.name
+                    );
+                    assert_eq!(ts_type(&field.kind), constant.to_string());
+                    assert!(py_type(&field.kind).starts_with("Literal["));
+                }
+            }
+        };
+        for name in RECORDS {
+            verify(&schema["$defs"][name], name);
+        }
+        for union in UNIONS {
+            for branch in union.branches {
+                if let Branch::Inline { index, .. } = branch {
+                    verify(&schema["$defs"][union.name]["oneOf"][index], union.name);
+                }
+            }
+        }
+        let closed = field_kind(
+            &serde_json::json!({"const":false}),
+            "Test",
+            "Test",
+            "closed",
+        );
+        assert_eq!(ts_type(&closed), "false");
+        assert_eq!(py_type(&closed), "Literal[False]");
     }
 
     /// `PermissionDecision` is imported as `codegen_permissions`'s `Permission`,

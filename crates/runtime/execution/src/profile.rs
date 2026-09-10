@@ -31,6 +31,7 @@ use crate::driver::{
     execute_resumable_with_resource_ceilings as drive_execute_resumable,
     execute_with_resource_ceilings as drive_execute,
     resume_event_with_resource_ceilings as drive_resume_event,
+    resume_invocation_with_resource_ceilings as drive_resume_invocation,
     resume_with_resource_ceilings as drive_resume,
 };
 use crate::observe::{ObservationFailurePolicy, ObservationSink};
@@ -346,6 +347,26 @@ impl RuntimeProfile {
                 .map_err(RuntimeProfileError::Execution)
             },
         ))
+        .await
+    }
+
+    /// Admit a new invocation from an exact committed structural yield.
+    pub async fn resume_invocation(
+        &self,
+        request: ExecutionRequest,
+    ) -> Result<RunOutcome, RuntimeProfileError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(RuntimeProfileError::Closed);
+        }
+        enforce_wall_time_with_token(
+            self.resource_ceilings.max_wall_ms,
+            self.cancellation.clone(),
+            async {
+                drive_resume_invocation(&self.ports, request, Some(&self.resource_ceilings))
+                    .await
+                    .map_err(RuntimeProfileError::Execution)
+            },
+        )
         .await
     }
 

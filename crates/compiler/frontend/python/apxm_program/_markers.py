@@ -8,7 +8,7 @@ endpoint, or runtime object.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple, Optional, TypeVar
+from typing import Any, Generic, NamedTuple, Optional, TypeVar
 
 from ._generated.capabilities import BUILTIN_CAPABILITIES
 from ._host_capabilities import (
@@ -141,11 +141,25 @@ class SkillDecl(NamedTuple):
         )
 
 
-class ContextSchema(NamedTuple):
+class ContextSchema(tuple, Generic[T]):
     """The typed initial and persistent Program Context schema."""
 
-    type_ref: str
-    default_present: bool
+    __slots__ = ()
+
+    def __new__(cls, type_ref: str, default_present: bool, schema_type: type[T]) -> ContextSchema[T]:
+        return tuple.__new__(cls, (type_ref, default_present, schema_type))
+
+    @property
+    def type_ref(self) -> str:
+        return self[0]
+
+    @property
+    def default_present(self) -> bool:
+        return self[1]
+
+    @property
+    def schema_type(self) -> type[T]:
+        return self[2]
 
 
 class _FrozenFactoryType(type):
@@ -240,14 +254,13 @@ class _EventFactory(_TypedFactory):
         return EventType(type_ref="Event", target_ref=ref)
 
 
-def Context(schema: Any) -> ContextSchema:
+def Context(schema: type[T]) -> ContextSchema[T]:
     """Declare a typed Program Context schema from one typed class."""
     if not isinstance(schema, type):
         raise TypeError(f"{CONTEXT_NOT_TYPED}: Context decorates one typed class")
-    default_present = any(
-        not name.startswith("__") for name in getattr(schema, "__annotations__", {})
-    )
-    return ContextSchema(type_ref=schema.__name__, default_present=default_present)
+    fields = [name for name in getattr(schema, "__annotations__", {}) if not name.startswith("__")]
+    default_present = all(name in vars(schema) for name in fields)
+    return ContextSchema(type_ref=schema.__name__, default_present=default_present, schema_type=schema)
 
 
 def Skill(

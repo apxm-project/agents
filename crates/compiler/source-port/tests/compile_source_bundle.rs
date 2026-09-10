@@ -21,7 +21,7 @@ use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 // by exactly the construct under test, so a rejection is attributable to that
 // construct and not to unrelated damage in the fixture.
 
-const PYTHON_PROGRAM: &str = r#"from apxm_program import Agent, Model, Tool
+const PYTHON_PROGRAM: &str = r#"from apxm_program import Workflow, Model, Tool
 
 
 class ReviewRequest:
@@ -36,12 +36,12 @@ ReviewModel = Model[ReviewRequest, Review]("@MODEL@")
 SearchWeb = Tool[ReviewRequest, Review]("search_web")
 
 
-@Agent(input=ReviewRequest, output=Review)
+@Workflow(input=ReviewRequest, output=Review)
 async def Reviewer(agent, request):
 @BODY@
 "#;
 
-const TYPESCRIPT_PROGRAM: &str = r#"import { Agent, Model, Tool } from "@apxm/frontend";
+const TYPESCRIPT_PROGRAM: &str = r#"import { Workflow, Model, Tool } from "@apxm/frontend";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -52,7 +52,7 @@ type Review = object;
 const ReviewModel = Model<ReviewRequest, Review>("@MODEL@");
 const SearchWeb = Tool<ReviewRequest, Review>("search_web");
 
-export const Reviewer = Agent<ReviewRequest, Review>({
+export const Reviewer = Workflow<ReviewRequest, Review>({
   name: "Reviewer",
   async run(agent, request) {
 @BODY@
@@ -92,6 +92,225 @@ fn accepted_body(frontend: Frontend) -> &'static str {
 /// The accepted program for a selector.
 fn accepted(frontend: Frontend) -> SourceBundleRequest {
     request(frontend, "review.model", accepted_body(frontend))
+}
+
+#[test]
+fn context_defaults_are_static_closed_values_in_both_frontends() {
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Context } from "@apxm/frontend";
+type State = { count: number };
+type Input = {};
+const StateContext = Context<State>({ count: 1 });
+export const Reviewer = Workflow<Input, unknown, State>({
+  name: "Reviewer", context: StateContext,
+  async run() { return {}; }
+});
+"#
+            }
+            Frontend::Python => {
+                r#"from apxm_program import Workflow, Context
+@Context
+class State:
+    count: int = 1
+@Workflow(input=dict, output=dict, context=State)
+async def Reviewer(agent, incoming):
+    return {}
+"#
+            }
+        };
+        let compiled = compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, source));
+        let definition = &compiled.frontend_graph.program_definitions[0];
+        assert!(definition.has_default_context);
+        assert_eq!(
+            definition
+                .default_context
+                .as_ref()
+                .unwrap()
+                .literal_json()
+                .unwrap(),
+            serde_json::json!({"count": 1})
+        );
+        let computed = match frontend {
+            Frontend::Typescript => source.replace("count: 1", "count: 1 + 1"),
+            Frontend::Python => source.replace("count: int = 1", "count: int = 1 + 1"),
+        };
+        assert!(
+            compile_source_bundle(
+                &SourceBundleRequest::new(frontend, ENTRYPOINT, computed),
+                &roots(),
+                &drivers()
+            )
+            .is_err(),
+            "computed {} Context default must reject",
+            frontend.wire()
+        );
+
+        let no_default = match frontend {
+            Frontend::Typescript => {
+                source.replace("Context<State>({ count: 1 })", "Context<State>()")
+            }
+            Frontend::Python => source.replace("count: int = 1", "count: int"),
+        };
+        let compiled = compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, no_default));
+        assert!(!compiled.frontend_graph.program_definitions[0].has_default_context);
+        assert!(
+            compiled.frontend_graph.program_definitions[0]
+                .default_context
+                .is_none()
+        );
+
+        if frontend == Frontend::Python {
+            let inherited = source.replace(
+                "@Context\nclass State:",
+                "class Base:\n    inherited: int = 2\n@Context\nclass State(Base):",
+            );
+            assert!(
+                compile_source_bundle(
+                    &SourceBundleRequest::new(frontend, ENTRYPOINT, inherited),
+                    &roots(),
+                    &drivers()
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn nonboolean_typed_input_truthiness_rejects_before_execution() {
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow } from "@apxm/frontend";
+type Input = {value: string};
+export const Reviewer = Workflow<Input, unknown>({name: "Reviewer", async run(agent, input) {
+  if (input.value) { return {ok: true}; }
+  return {ok: false};
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow
+class Input(TypedDict):
+    value: str
+@Workflow(input=Input, output=object)
+async def Reviewer(agent, input):
+    if input["value"]:
+        return {"ok": True}
+    return {"ok": False}
+"#
+            }
+        };
+        for loop_condition in [false, true] {
+            let source = if loop_condition {
+                source
+                    .replace("if (input.value)", "while (input.value)")
+                    .replace("if input[\"value\"]:", "while input[\"value\"]:")
+            } else {
+                source.to_owned()
+            };
+            let diagnostics = compile_source_bundle(
+                &SourceBundleRequest::new(frontend, ENTRYPOINT, &source),
+                &roots(),
+                &drivers(),
+            )
+            .expect_err("known string truthiness must reject at compile time");
+            assert!(
+                diagnostics.iter().any(|diagnostic| diagnostic
+                    .message
+                    .contains("truthy predicate requires a boolean typed input")),
+                "{diagnostics:?}"
+            );
+            let boolean = source
+                .replace("value: string", "value: boolean")
+                .replace("value: str", "value: bool");
+            compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, boolean));
+            let equality = source
+                .replace("(input.value)", "(input.value !== \"\")")
+                .replace("input[\"value\"]:", "input[\"value\"] != \"\":");
+            compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, equality));
+        }
+    }
+}
+
+/// Both public declarations cross the same compiler boundary, but only Agent
+/// carries a checked primary model claim. Model-free orchestration has no
+/// model requirement to configure at execution.
+#[test]
+fn public_program_declarations_have_distinct_verified_authoring() {
+    use apxm_program::frontend_graph::ProgramAuthoring;
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let workflow = compile(&accepted(frontend));
+        assert_eq!(
+            workflow.frontend_graph.program_definitions[0].authoring,
+            Some(ProgramAuthoring::Workflow {})
+        );
+
+        let mut agent = accepted(frontend);
+        agent.source = agent.source.replace("Workflow", "Agent");
+        agent.source = match frontend {
+            Frontend::Python => agent
+                .source
+                .replace("@Agent(input=", "@Agent(model=ReviewModel, input="),
+            Frontend::Typescript => agent.source.replace(
+                "name: \"Reviewer\",",
+                "name: \"Reviewer\", model: ReviewModel,",
+            ),
+        };
+        let compiled = compile(&agent);
+        let authoring = Some(ProgramAuthoring::Agent {
+            primary_model_ref: "review.model".into(),
+        });
+        assert_eq!(
+            compiled.frontend_graph.program_definitions[0].authoring,
+            authoring
+        );
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap();
+        assert_eq!(artifact.entrypoints[0].authoring, authoring);
+
+        let mut missing = agent.clone();
+        missing.source = missing
+            .source
+            .replace("model=ReviewModel, ", "")
+            .replace(" model: ReviewModel,", "");
+        reject(&missing);
+        let mut unused = agent;
+        unused.source = unused
+            .source
+            .replace("return await ReviewModel(evidence)", "return evidence");
+        reject(&unused);
+
+        let body = match frontend {
+            Frontend::Python => {
+                "    mapped = {}\n    if True:\n        return {\"accepted\": True}\n    return None"
+            }
+            Frontend::Typescript => {
+                "    const mapped = {}; if (true) { return {accepted:true}; } return null;"
+            }
+        };
+        let pure = compile(&request(frontend, "unused.model", body));
+        assert!(pure.frontend_graph.call_intents.is_empty());
+        assert!(pure.frontend_graph.model_requirements.is_empty());
+        assert!(pure.air.semantic_operations.is_empty());
+        let false_body = body
+            .replace("if True", "if False")
+            .replace("if (true)", "if (false)");
+        compile(&request(frontend, "unused.model", &false_body));
+    }
 }
 
 /// The accepted body with its returned call replaced, keeping the preceding Tool
@@ -398,12 +617,12 @@ fn typescript_input_contract_reaches_the_digest_bound_service_artifact() {
         ("{ label?: string } | string", false),
     ] {
         let source = format!(
-            r#"import {{ Agent }} from "@apxm/frontend";
+            r#"import {{ Workflow }} from "@apxm/frontend";
 import {{ source }} from "@apxm/frontend/node";
 source(import.meta.url);
 type Input = {input_type};
 type Output = Input;
-export const InputContractAgent = Agent<Input, Output>({{
+export const InputContractAgent = Workflow<Input, Output>({{
   name: "InputContractAgent",
   async run(agent, input) {{ return input; }},
 }});
@@ -426,11 +645,111 @@ export const InputContractAgent = Agent<Input, Output>({{
 }
 
 #[test]
+fn both_frontends_bind_typed_json_input_to_the_service_artifact() {
+    let expected = serde_json::json!({
+        "type": "object", "additionalProperties": false, "required": ["reference", "count", "accepted", "labels"],
+        "properties": {
+            "reference": {"type": "string"}, "count": {"type": "number"},
+            "accepted": {"type": "boolean"}, "labels": {"type": "array", "items": {"type": "string"}},
+            "note": {"type": "string"}
+        }
+    });
+    for (frontend, source) in [
+        (
+            Frontend::Typescript,
+            r#"import { Workflow } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+source(import.meta.url);
+type Input = { reference: string; count: number; accepted: boolean; labels: string[]; note?: string };
+export const JsonInput = Workflow<Input, Input>({ name: "JsonInput", async run(agent, input) { return input; } });
+"#,
+        ),
+        (
+            Frontend::Python,
+            r#"from typing import TypedDict, NotRequired
+from apxm_program import Workflow
+class Input(TypedDict):
+    reference: str
+    count: float
+    accepted: bool
+    labels: list[str]
+    note: NotRequired[str]
+@Workflow(input=Input, output=Input)
+async def JsonInput(agent, input):
+    return input
+"#,
+        ),
+    ] {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let compiled = compile(&SourceBundleRequest::new(frontend, "JsonInput", source));
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap();
+        assert_eq!(
+            serde_json::to_value(&artifact.entrypoints[0].input_schema).unwrap(),
+            expected
+        );
+        assert_eq!(
+            artifact.canonical_digest().unwrap(),
+            artifact.artifact_digest
+        );
+    }
+}
+
+#[test]
+fn pure_locals_cannot_escape_their_branch_or_mutate_after_binding() {
+    for (frontend, source) in [
+        (
+            Frontend::Typescript,
+            r#"import { Workflow } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+source(import.meta.url);
+export const Transform = Workflow<unknown, unknown>({name: "Transform", async run(agent, input) {
+BODY
+}});
+"#,
+        ),
+        (
+            Frontend::Python,
+            "from apxm_program import Workflow\n@Workflow(input=object, output=object)\nasync def Transform(agent, input):\nBODY\n",
+        ),
+    ] {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let bodies = match frontend {
+            Frontend::Typescript => [
+                "const mapped = {}; mapped.value = 1; return mapped;",
+                "if (input) {const mapped = {};} return mapped;",
+                "const mapped = agent.context; return mapped;",
+            ],
+            Frontend::Python => [
+                "    mapped = {}\n    mapped[\"value\"] = 1\n    return mapped",
+                "    if input:\n        mapped = {}\n    return mapped",
+                "    mapped = agent.context\n    return mapped",
+            ],
+        };
+        for body in bodies {
+            assert!(
+                compile_source_bundle(
+                    &SourceBundleRequest::new(frontend, "Transform", source.replace("BODY", body)),
+                    &roots(),
+                    &drivers()
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
 fn typescript_public_permissions_compile_through_source_port_into_artifact_air() {
     if !frontend_present(Frontend::Typescript) {
         return;
     }
-    let source = r#"import { Agent, Model, Tool } from "@apxm/frontend";
+    let source = r#"import { Workflow, Model, Tool } from "@apxm/frontend";
 import { source } from "@apxm/frontend/node";
 import { Allow, Ask, Deny } from "@apxm/frontend/permissions";
 source(import.meta.url);
@@ -440,7 +759,7 @@ const Read = Tool<Input, Output>("read", { permission: Allow });
 const Write = Tool<Input, Output>("write", { permission: Ask("writes host state") });
 const Search = Tool<Input, Output>("search_web", { permission: Deny("no network") });
 const Result = Model<Input, Output>("permission.model");
-export const PermissionAgent = Agent<Input, Output>({
+export const PermissionAgent = Workflow<Input, Output>({
   name: "PermissionAgent",
   async run(agent, input) {
     await Read(input);
@@ -525,9 +844,9 @@ fn a_raw_ais_spelling_rejects_with_no_graph() {
         // unknown name, which rejects under the same umbrella code and would
         // prove nothing about this rule.
         let body = match frontend {
-            Frontend::Python => "    ais = agent\n    return await ais.model_call(request)",
+            Frontend::Python => "    ais = {}\n    return await ais.model_call(request)",
             Frontend::Typescript => {
-                "    const ais = { model_call: async (r: ReviewRequest): Promise<Review> => r };\n\
+                "    const ais: any = {};\n\
                  \x20   return await ais.model_call(request);"
             }
         };
@@ -550,9 +869,9 @@ fn a_raw_structural_ais_spelling_rejects_with_no_graph() {
             continue;
         }
         let body = match frontend {
-            Frontend::Python => "    ais = agent\n    return await ais.loop(request)",
+            Frontend::Python => "    ais = {}\n    return await ais.loop(request)",
             Frontend::Typescript => {
-                "    const ais = { loop: async (r: ReviewRequest): Promise<Review> => r };\n\
+                "    const ais: any = {};\n\
                  \x20   return await ais.loop(request);"
             }
         };

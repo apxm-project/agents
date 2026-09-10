@@ -53,7 +53,11 @@ from ._generated.diagnostics import (
     HOOK_TARGET_UNRESOLVED,
     SKILL_LOAD_OUTSIDE_BODY,
 )
-from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
+from ._generated.frontend_records import (
+    CallIntent, ControlIntent, SkillRequirement, ValueExpression, ValueField,
+    SsaExpression, ContextExpression, ProjectionExpression, ObjectExpression,
+    ArrayExpression, StringExpression, IntegerExpression, BooleanExpression, NullExpression,
+)
 from ._markers import (
     CapabilityBinding,
     ContextSchema,
@@ -131,6 +135,8 @@ class _Capture:
         self._order: dict[str, int] = {}
         self._declared: dict[str, str] = {}
         self._values_by_name: dict[str, str] = {}
+        self._pure_locals: set[str] = set()
+        self._await_assigned_names: set[str] = set()
         self._instance_programs: dict[str, str] = {}
         self._last_node_by_region: dict[str, str] = {}
         self._pending_context_by_region: dict[str, tuple[str, str]] = {}
@@ -366,6 +372,11 @@ class _Capture:
                 execution_order=0,
             )
         )
+        self._await_assigned_names = {
+            target.id for statement in ast.walk(func_ast)
+            if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Await)
+            for target in statement.targets if isinstance(target, ast.Name)
+        }
         self._visit_block(func_ast.body, self.body_region_id)
         self._capture_hooks()
 
@@ -393,8 +404,12 @@ class _Capture:
         )
 
     def _visit_block(self, body: list[ast.stmt], region_id: str) -> None:
+        outer_locals = set(self._pure_locals)
         for stmt in body:
             self._visit_stmt(stmt, region_id)
+        for name in self._pure_locals - outer_locals:
+            self._values_by_name.pop(name, None)
+        self._pure_locals.intersection_update(outer_locals)
 
     def _visit_stmt(self, stmt: ast.stmt, region_id: str) -> None:
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Await):
@@ -439,6 +454,11 @@ class _Capture:
 
     def _visit_assign(self, stmt: ast.Assign, region_id: str) -> None:
         target = stmt.targets[0]
+        root = target
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in self._pure_locals:
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings cannot be reassigned or mutated", stmt)
         # agent.context = ... produces an explicit typed Context transition.
         if (
             isinstance(target, ast.Attribute)
@@ -479,12 +499,27 @@ class _Capture:
         if isinstance(stmt.value, ast.Call) and isinstance(target, ast.Name):
             self._visit_new(stmt.value, region_id, assign_to=target.id)
             return
-        # Ordinary local binding of a literal or expression is not an effect.
-        return
+        if len(stmt.targets) != 1 or not isinstance(target, ast.Name):
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings use one static name", stmt)
+        if isinstance(stmt.value, ast.Constant) and stmt.value.value is None and target.id in self._await_assigned_names:
+            return
+        expression = self._expression_for_value(stmt.value)
+        def contains_context(value: object) -> bool:
+            if isinstance(value, ContextExpression):
+                return True
+            if isinstance(value, ProjectionExpression):
+                return contains_context(value.root)
+            if isinstance(value, ObjectExpression):
+                return any(contains_context(field.value) for field in value.fields)
+            return isinstance(value, ArrayExpression) and any(contains_context(item) for item in value.items)
+        if contains_context(expression):
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings read immutable input and prior results, not mutable Context", stmt)
+        self._values_by_name[target.id] = self._value_for_expression(stmt.value, region_id)
+        self._pure_locals.add(target.id)
 
     def _visit_await(
         self, await_node: ast.Await, region_id: str, assign_to: Optional[str]
-    ) -> None:
+    ) -> Optional[str]:
         call = await_node.value
         if not isinstance(call, ast.Call):
             raise CaptureError(
@@ -540,6 +575,7 @@ class _Capture:
         span = self._span(call)
         if span is not None:
             self.spans.append((node_id, span, intent))
+        return result_value
 
     def _resolve_call_target(
         self, call: ast.Call
@@ -699,16 +735,16 @@ class _Capture:
         )
         return value_id
 
-    def _expression_for_value(self, expression: ast.AST) -> dict[str, object]:
+    def _expression_for_value(self, expression: ast.AST) -> ValueExpression:
         """Capture one pure authored value without executing or flattening it."""
         self._reject_unbound_calls(expression)
         if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
-            return {"kind": "ssa", "value_id": self._values_by_name[expression.id]}
+            return SsaExpression(kind="ssa", value_id=self._values_by_name[expression.id])
         if isinstance(expression, ast.Constant):
             if expression.value is None:
-                return {"kind": "null"}
+                return NullExpression(kind="null")
             if isinstance(expression.value, bool):
-                return {"kind": "boolean", "value": expression.value}
+                return BooleanExpression(kind="boolean", value=expression.value)
             if isinstance(expression.value, int):
                 if abs(expression.value) > 9_007_199_254_740_991:
                     raise CaptureError(
@@ -716,9 +752,9 @@ class _Capture:
                         "integer exceeds the shared safe integer domain",
                         expression,
                     )
-                return {"kind": "integer", "value": expression.value}
+                return IntegerExpression(kind="integer", value=expression.value)
             if isinstance(expression.value, str):
-                return {"kind": "string", "value": expression.value}
+                return StringExpression(kind="string", value=expression.value)
             raise CaptureError(
                 AGENT_DYNAMIC_ARGUMENT,
                 "value expression admits only JSON scalar literals",
@@ -738,9 +774,9 @@ class _Capture:
                     "integer exceeds the shared safe integer domain",
                     expression,
                 )
-            return {"kind": "integer", "value": value}
+            return IntegerExpression(kind="integer", value=value)
         if isinstance(expression, (ast.Dict,)):
-            fields: list[dict[str, object]] = []
+            fields: list[ValueField] = []
             for key, value in zip(expression.keys, expression.values, strict=True):
                 if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
                     raise CaptureError(
@@ -748,8 +784,8 @@ class _Capture:
                         "object expression keys are static strings",
                         expression,
                     )
-                fields.append({"name": key.value, "value": self._expression_for_value(value)})
-            return {"kind": "object", "fields": fields}
+                fields.append(ValueField(name=key.value, value=self._expression_for_value(value)))
+            return ObjectExpression(kind="object", fields=tuple(fields))
         if isinstance(expression, (ast.List, ast.Tuple)):
             if any(isinstance(item, ast.Starred) for item in expression.elts):
                 raise CaptureError(
@@ -757,10 +793,7 @@ class _Capture:
                     "array expression does not admit spreads",
                     expression,
                 )
-            return {
-                "kind": "array",
-                "items": [self._expression_for_value(item) for item in expression.elts],
-            }
+            return ArrayExpression(kind="array", items=tuple(self._expression_for_value(item) for item in expression.elts))
         if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name):
             binding = self.bindings.get(expression.func.id)
             if isinstance(binding, ContextSchema):
@@ -777,19 +810,15 @@ class _Capture:
                             expression,
                         )
                     fields.append(
-                        {"name": keyword.arg, "value": self._expression_for_value(keyword.value)}
+                        ValueField(name=keyword.arg, value=self._expression_for_value(keyword.value))
                     )
-                return {"kind": "object", "fields": fields}
+                return ObjectExpression(kind="object", fields=tuple(fields))
         projection = self._projection_parts(expression)
         if projection is not None:
             root, path = projection
             if root == "context":
-                return {"kind": "context", "property_path": path}
-            return {
-                "kind": "projection",
-                "root": {"kind": "ssa", "value_id": root},
-                "property_path": path,
-            }
+                return ContextExpression(kind="context", property_path=tuple(path))
+            return ProjectionExpression(kind="projection", root=SsaExpression(kind="ssa", value_id=root), property_path=tuple(path))
         raise CaptureError(
             AGENT_DYNAMIC_ARGUMENT, "unsupported pure value expression", expression
         )
@@ -1202,6 +1231,15 @@ class _Capture:
 
     def _visit_conditional(self, stmt: ast.If, region_id: str) -> None:
         node_id = self._next("cond")
+        predicate = (
+            BoundPredicate(
+                root_value_id=self._value_for_expression(stmt.test, node_id),
+                property_path=(),
+                comparator="truthy",
+            )
+            if isinstance(stmt.test, ast.Constant) and isinstance(stmt.test.value, bool)
+            else self._predicate_for_expression(stmt.test, node_id)
+        )
         self.controls.append(
             BoundControl(
                 contract=ControlIntent(
@@ -1215,7 +1253,7 @@ class _Capture:
                 ),
                 span=self._span(stmt),
                 operands=(),
-                predicate=self._predicate_for_expression(stmt.test, node_id),
+                predicate=predicate,
             )
         )
         self._record_node(region_id, node_id)
@@ -1302,7 +1340,9 @@ class _Capture:
         node_id = self._next("return")
         operands: list[BoundOperand] = []
         if isinstance(stmt.value, ast.Await):
-            self._visit_await(stmt.value, region_id, assign_to=None)
+            result = self._visit_await(stmt.value, region_id, assign_to=None)
+            if result is not None:
+                operands.append(BoundOperand(value_id=result, slot="output"))
         elif stmt.value is not None:
             operands.append(
                 BoundOperand(
@@ -1675,6 +1715,35 @@ _source_for_function = _make_source_reader(_function_source_from_bundle)
 _SOURCE_READER = _source_for_function
 
 
+def _class_source_from_bundle(schema: type, source: str) -> str:
+    """Select a uniquely named schema from the same immutable source bundle."""
+    candidates = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef) and node.name == schema.__name__]
+    if len(candidates) != 1:
+        raise ValueError("Context schema must resolve one class in the sealed source")
+    node = candidates[0]
+    return textwrap.dedent("".join(source.splitlines(keepends=True)[node.lineno - 1:node.end_lineno]))
+
+
+_CONTEXT_SOURCE_READER = _make_source_reader(_class_source_from_bundle)
+
+
+def _context_default(schema: type, capture: _Capture) -> Optional[ValueExpression]:
+    """Read annotated literal defaults; never instantiate a class or a factory."""
+    module = ast.parse(_CONTEXT_SOURCE_READER(schema))
+    definition = next((node for node in module.body if isinstance(node, ast.ClassDef)), None)
+    if definition is None:
+        raise CaptureError(CONTEXT_NOT_TYPED, "Context requires a static typed class")
+    if any(not isinstance(base, ast.Name) or base.id not in {"object", "TypedDict"} for base in definition.bases):
+        raise CaptureError(CONTEXT_NOT_TYPED, "Context defaults do not infer inherited field values", definition)
+    fields = [node for node in definition.body if isinstance(node, ast.AnnAssign)]
+    if any(node.value is None for node in fields):
+        return None
+    if any(not isinstance(node.target, ast.Name) for node in fields):
+        raise CaptureError(CONTEXT_NOT_TYPED, "Context default fields have static names", definition)
+    literal = ast.Dict(keys=[ast.Constant(value=node.target.id) for node in fields], values=[node.value for node in fields])
+    return capture._expression_for_value(literal)
+
+
 def capture_program(
     func: Any,
     *,
@@ -1684,6 +1753,7 @@ def capture_program(
     context_type_ref: Optional[str],
     has_default_context: bool,
     bindings: dict[str, Any],
+    context_schema_type: Optional[type] = None,
 ) -> BoundProgram:
     """Parse and fold one authored Agent callback into a bound program."""
     # The source-port evaluates submitted code in this interpreter. A source
@@ -1713,7 +1783,8 @@ def capture_program(
         bindings=bindings,
         source_file=source_file,
     )
-    return capture.capture(func_ast)
+    default_context = _context_default(context_schema_type, capture) if context_schema_type is not None else None
+    return replace(capture.capture(func_ast), default_context=default_context, has_default_context=default_context is not None)
 
 
 def _source_reference(func: Any) -> str:

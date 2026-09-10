@@ -52,6 +52,26 @@ fn frontend_graph_vectors_match_verifier() {
     });
 }
 
+#[test]
+fn input_schema_vectors_match_shared_contract_and_published_schema() {
+    let contract = load_contract("schemas/apxm.frontend-graph.json");
+    let schema = json!({"$ref": "#/$defs/EntrypointInputSchema", "$defs": contract["$defs"]});
+    let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
+    for vector in load_vectors("apxm.input-schema.json") {
+        let accepted = serde_json::from_value::<apxm_program::input_schema::EntrypointInputSchema>(
+            vector.input.clone(),
+        )
+        .is_ok_and(|schema| schema.validate().is_ok());
+        assert_eq!(accepted, vector.expected_valid, "{}", vector.name);
+        assert_eq!(
+            validator.is_valid(&vector.input),
+            vector.expected_valid,
+            "{}",
+            vector.name
+        );
+    }
+}
+
 /// `CapabilityRequirement` is closed on both sides — `additionalProperties:
 /// false` in the published schema, `deny_unknown_fields` in Rust — so a field
 /// added to one side only either fails decode or is silently dropped. The two

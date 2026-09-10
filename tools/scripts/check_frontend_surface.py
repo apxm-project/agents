@@ -191,6 +191,10 @@ class SurfaceLanguage:
         """The names the authoring root publishes."""
         raise NotImplementedError
 
+    def type_arity(self, projection: dict) -> Optional[int]:
+        """Read a public executable type's generic arity from its source."""
+        raise NotImplementedError
+
     def root_bound_names(self) -> set[str]:
         """Every name bound in the authoring root's namespace."""
         raise NotImplementedError
@@ -295,6 +299,14 @@ class PythonLanguage(SurfaceLanguage):
     generated_capabilities = (
         "crates/compiler/frontend/python/apxm_program/_generated/capabilities.py"
     )
+
+    def type_arity(self, projection: dict) -> Optional[int]:
+        for node in self._module(REPO_ROOT / projection["module"]).body:
+            if isinstance(node, ast.ClassDef) and node.name == projection["symbol"]:
+                for base in node.bases:
+                    if isinstance(base, ast.Subscript) and isinstance(base.value, ast.Name) and base.value.id in {"Protocol", "Generic"}:
+                        return len(base.slice.elts) if isinstance(base.slice, ast.Tuple) else 1
+        return None
 
     @staticmethod
     def _module(path: Path) -> ast.Module:
@@ -707,6 +719,11 @@ class TypeScriptLanguage(SurfaceLanguage):
         "crates/compiler/frontend/typescript/src/generated/capabilities.ts"
     )
 
+    def type_arity(self, projection: dict) -> Optional[int]:
+        symbol = re.escape(projection["symbol"])
+        match = re.search(rf"\binterface\s+{symbol}\s*<([^>]+)>", self._source(REPO_ROOT / projection["module"]))
+        return len(split_top_level(match.group(1))) if match else None
+
     @staticmethod
     def _strip_comments(text: str) -> str:
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
@@ -775,7 +792,7 @@ class TypeScriptLanguage(SurfaceLanguage):
             for name, has_default in type_parameters
         ]
         for name, optional, annotation in parameters:
-            expanded = self._expand_object_type(text, annotation)
+            expanded = self._expand_object_type(text, annotation, REPO_ROOT / projection["module"])
             if expanded is not None:
                 shape.option_fields.extend(expanded)
                 continue
@@ -841,18 +858,28 @@ class TypeScriptLanguage(SurfaceLanguage):
             parameters.append((name.rstrip("?"), optional, annotation.strip()))
         return type_parameters, parameters
 
-    def _expand_object_type(self, text: str, annotation: str) -> Optional[list[Argument]]:
-        """Expand an options object — inline or named in the same module — into fields."""
+    def _expand_object_type(self, text: str, annotation: str, module: Path, seen: frozenset[tuple[Path, str]] = frozenset()) -> Optional[list[Argument]]:
+        """Expand shared local options and intersections without copying their fields."""
         annotation = annotation.strip()
         if annotation.startswith("{"):
             return self._object_fields(annotation[1 : matching_bracket(annotation, 0) - 1])
         name = annotation.split("<")[0].strip()
         if not re.fullmatch(r"\w+", name):
             return None
+        key = (module, name)
+        if key in seen:
+            return None
+        seen = seen | {key}
         match = re.search(
-            rf"(?:export\s+)?(?:type|interface)\s+{re.escape(name)}\s*", text
+            rf"(?:^|\n)\s*(?:export\s+)?(?:type|interface)\s+{re.escape(name)}\s*", text
         )
         if match is None:
+            for imported in re.finditer(r"import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+[\"']([^\"']+)[\"']", text):
+                names = {entry.strip().removeprefix("type ") for entry in imported.group(1).split(",")}
+                if name in names and imported.group(2).startswith("."):
+                    target = (module.parent / imported.group(2)).with_suffix(".ts").resolve()
+                    if target.is_relative_to(REPO_ROOT) and target.is_file():
+                        return self._expand_object_type(self._source(target), annotation, target, seen)
             return None
         cursor = match.end()
         if cursor < len(text) and text[cursor] == "<":
@@ -860,7 +887,17 @@ class TypeScriptLanguage(SurfaceLanguage):
         while cursor < len(text) and text[cursor] in " \t\r\n=":
             cursor += 1
         if cursor >= len(text) or text[cursor] != "{":
-            return None
+            expression = split_top_level(text[cursor:], ";")[0]
+            parts = split_top_level(expression, "&")
+            if not parts:
+                return None
+            fields: list[Argument] = []
+            for part in parts:
+                expanded = self._expand_object_type(text, part, module, seen)
+                if expanded is None:
+                    return None
+                fields.extend(expanded)
+            return fields
         return self._object_fields(text[cursor + 1 : matching_bracket(text, cursor) - 1])
 
     @staticmethod
@@ -1326,7 +1363,7 @@ def check_tiers(manifest: dict, failures: list[str]) -> None:
     for a tier to name and nothing here to check.
     """
     tiered = set(manifest["everyday"]) | set(manifest["advanced"])
-    for declaration in manifest["declarations"]:
+    for declaration in [*manifest["declarations"], *manifest.get("types", [])]:
         for language_id, projection in declaration["projections"].items():
             if projection.get("inferred"):
                 continue
@@ -1389,7 +1426,7 @@ def check_roots(
     """The authoring root publishes exactly the declarations that claim it."""
     expected = {
         declaration["projections"][language.id]["symbol"]
-        for declaration in manifest["declarations"]
+        for declaration in [*manifest["declarations"], *manifest.get("types", [])]
         if language.id in declaration["projections"]
         and declaration["projections"][language.id]["exported_from_root"]
     }
@@ -1748,6 +1785,10 @@ def check() -> list[str]:
         languages.append(layer(registration))
 
     for language in languages:
+        for contract in manifest.get("types", []):
+            projection = contract["projections"].get(language.id)
+            if projection is None or language.type_arity(projection) != len(contract["type_parameters"]):
+                failures.append(incomplete(language.id, contract["concept"], "missing executable type or mismatched generic parameters"))
         for declaration in manifest["declarations"]:
             check_declaration(language, declaration, failures)
         check_generated_diagnostics(language, manifest, failures)
@@ -1761,7 +1802,7 @@ def check() -> list[str]:
     # is a name a document may teach rather than one it may not.
     allowed = {
         projection["symbol"]
-        for declaration in manifest["declarations"]
+        for declaration in [*manifest["declarations"], *manifest.get("types", [])]
         for projection in declaration["projections"].values()
         if not projection.get("inferred")
     }

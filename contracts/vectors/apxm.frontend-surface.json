@@ -1,8 +1,8 @@
 {
   "schema_version": "apxm.frontend-surface",
   "surface_version": "apxm.frontend-graph",
-  "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
-  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source"],
+  "everyday": ["Agent", "Workflow", "agent", "Context", "Tool", "Model"],
+  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source", "Program"],
   "non_public": [
     "AgentProgram",
     "AgentFacade",
@@ -92,7 +92,41 @@
       }
     }
   ],
+  "types": [{
+    "concept": "Compiled Program",
+    "type_parameters": ["input", "output", "context"],
+    "projections": {
+      "python": {"module": "crates/compiler/frontend/python/apxm_program/_workflow.py", "symbol": "Program", "exported_from_root": true, "signature": "Program[Input, Output, Context] returned by @Agent and @Workflow; typed invoke(input) and new(context=...)"},
+      "typescript": {"module": "crates/compiler/frontend/typescript/src/workflow.ts", "symbol": "Program", "exported_from_root": true, "signature": "Program<Input, Output, Context> returned by Agent and Workflow; typed invoke(input) and new({context})"}
+    }
+  }],
   "declarations": [
+    {
+      "concept": "Workflow definition",
+      "tier": "everyday",
+      "bound_semantic_node": "ProgramDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_workflow.py",
+          "symbol": "Workflow", "exported_from_root": true,
+          "signature": "@Workflow(input=InputType, output=OutputType, context=ContextType) on one async def; no Model required"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/workflow.ts",
+          "symbol": "Workflow", "exported_from_root": true,
+          "signature": "Workflow<Input, Output, Context>({ name?, context?, async run(agent, input) }); no Model required"
+        }
+      },
+      "arguments": [
+        {"name": "input", "accepts": "type_ref", "required": true, "projected_as": {"python": ["keyword"], "typescript": ["type_parameter"]}},
+        {"name": "output", "accepts": "type_ref", "required": true, "projected_as": {"python": ["keyword"], "typescript": ["type_parameter"]}},
+        {"name": "context", "accepts": "type_ref", "required": false, "projected_as": {"python": ["keyword"], "typescript": ["type_parameter", "option_field"]}},
+        {"name": "name", "accepts": "literal", "required": false, "projected_as": {"python": ["inferred"], "typescript": ["option_field"]}},
+        {"name": "run", "accepts": "callback_body", "required": true, "projected_as": {"python": ["decorated_function"], "typescript": ["option_field"]}}
+      ],
+      "produces_intent": "none",
+      "diagnostics": ["AgentBodyNotAsync", "AgentMissingInputOutput", "AgentDynamicArgument"]
+    },
     {
       "concept": "Agent definition",
       "tier": "everyday",
@@ -102,16 +136,22 @@
           "module": "crates/compiler/frontend/python/apxm_program/_agent.py",
           "symbol": "Agent",
           "exported_from_root": true,
-          "signature": "@Agent(input=InputType, output=OutputType, context=ContextType) on one async def"
+          "signature": "@Agent(input=InputType, output=OutputType, model=PrimaryModel, context=ContextType) on one async def"
         },
         "typescript": {
           "module": "crates/compiler/frontend/typescript/src/agent.ts",
           "symbol": "Agent",
           "exported_from_root": true,
-          "signature": "Agent<Input, Output, Context>({ name?, context?, async run(agent, input) })"
+          "signature": "Agent<Input, Output, Context>({ model: PrimaryModel, name?, context?, async run(agent, input) })"
         }
       },
       "arguments": [
+        {
+          "name": "model",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        },
         {
           "name": "input",
           "accepts": "type_ref",

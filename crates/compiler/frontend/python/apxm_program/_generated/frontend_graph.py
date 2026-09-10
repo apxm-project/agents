@@ -32,6 +32,43 @@ INPUT_CONTRACTS: Final[tuple[InputContract, ...]] = (
     INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT,
 )
 
+InputSchemaType: TypeAlias = Literal[
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+]
+INPUT_SCHEMA_TYPE_OBJECT: Final[InputSchemaType] = "object"
+INPUT_SCHEMA_TYPE_ARRAY: Final[InputSchemaType] = "array"
+INPUT_SCHEMA_TYPE_STRING: Final[InputSchemaType] = "string"
+INPUT_SCHEMA_TYPE_NUMBER: Final[InputSchemaType] = "number"
+INPUT_SCHEMA_TYPE_INTEGER: Final[InputSchemaType] = "integer"
+INPUT_SCHEMA_TYPE_BOOLEAN: Final[InputSchemaType] = "boolean"
+INPUT_SCHEMA_TYPE_NULL: Final[InputSchemaType] = "null"
+INPUT_SCHEMA_TYPES: Final[tuple[InputSchemaType, ...]] = (
+    INPUT_SCHEMA_TYPE_OBJECT,
+    INPUT_SCHEMA_TYPE_ARRAY,
+    INPUT_SCHEMA_TYPE_STRING,
+    INPUT_SCHEMA_TYPE_NUMBER,
+    INPUT_SCHEMA_TYPE_INTEGER,
+    INPUT_SCHEMA_TYPE_BOOLEAN,
+    INPUT_SCHEMA_TYPE_NULL,
+)
+
+ProgramAuthoringKind: TypeAlias = Literal[
+    "workflow",
+    "agent",
+]
+PROGRAM_AUTHORING_KIND_WORKFLOW: Final[ProgramAuthoringKind] = "workflow"
+PROGRAM_AUTHORING_KIND_AGENT: Final[ProgramAuthoringKind] = "agent"
+PROGRAM_AUTHORING_KINDS: Final[tuple[ProgramAuthoringKind, ...]] = (
+    PROGRAM_AUTHORING_KIND_WORKFLOW,
+    PROGRAM_AUTHORING_KIND_AGENT,
+)
+
 DeclKind: TypeAlias = Literal[
     "context",
     "model_binding",
@@ -308,6 +345,19 @@ __all__ = [
     "InputContract",
     "INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT",
     "INPUT_CONTRACTS",
+    "InputSchemaType",
+    "INPUT_SCHEMA_TYPE_OBJECT",
+    "INPUT_SCHEMA_TYPE_ARRAY",
+    "INPUT_SCHEMA_TYPE_STRING",
+    "INPUT_SCHEMA_TYPE_NUMBER",
+    "INPUT_SCHEMA_TYPE_INTEGER",
+    "INPUT_SCHEMA_TYPE_BOOLEAN",
+    "INPUT_SCHEMA_TYPE_NULL",
+    "INPUT_SCHEMA_TYPES",
+    "ProgramAuthoringKind",
+    "PROGRAM_AUTHORING_KIND_WORKFLOW",
+    "PROGRAM_AUTHORING_KIND_AGENT",
+    "PROGRAM_AUTHORING_KINDS",
     "DeclKind",
     "DECL_KIND_CONTEXT",
     "DECL_KIND_MODEL_BINDING",

@@ -12,6 +12,51 @@ use common::{Vector, load_contract, load_vectors};
 use snapshots::load_contract_snapshot;
 
 #[test]
+fn authoring_codec_matches_closed_published_union() {
+    use apxm_program::frontend_graph::ProgramAuthoring;
+    use serde_json::json;
+
+    let contract = load_contract("schemas/apxm.frontend-graph.json");
+    let mut definitions = contract["$defs"].clone();
+    definitions["AgentAuthoring"]["properties"]["primary_model_ref"] =
+        load_contract_snapshot("apxm.contract-common.v1.json")["$defs"]["Identifier"].clone();
+    let schema = json!({"$ref":"#/$defs/ProgramAuthoring", "$defs":definitions});
+    let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
+    for (value, accepted) in [
+        (json!({"kind":"workflow"}), true),
+        (
+            json!({"kind":"agent", "primary_model_ref":"model.primary"}),
+            true,
+        ),
+        (json!({"kind":"agent"}), false),
+        (json!({"kind":"other"}), false),
+        (
+            json!({"kind":"workflow", "primary_model_ref":"model.primary"}),
+            false,
+        ),
+        (json!({"kind":"agent", "primary_model_ref":null}), false),
+        (
+            json!({"kind":"agent", "primary_model_ref":"model.primary", "credential":"extra"}),
+            false,
+        ),
+        (json!({"kind":"workflow", "ignored":true}), false),
+    ] {
+        assert_eq!(validator.is_valid(&value), accepted, "schema: {value}");
+        let decoded = serde_json::from_value::<ProgramAuthoring>(value.clone());
+        assert_eq!(decoded.is_ok(), accepted, "Rust: {value}");
+        if let Ok(decoded) = decoded {
+            assert_eq!(serde_json::to_value(decoded).unwrap(), value, "round trip");
+        }
+    }
+    let artifact = load_contract("schemas/apxm.executable-artifact.json");
+    assert_eq!(
+        artifact["$defs"]["Entrypoint"]["properties"]["authoring"]["$ref"],
+        "apxm.frontend-graph#/$defs/ProgramAuthoring",
+        "artifact consumes the same union, not a parallel definition"
+    );
+}
+
+#[test]
 fn artifact_vectors_match_validator() {
     for Vector {
         name,

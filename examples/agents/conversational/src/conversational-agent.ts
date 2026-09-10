@@ -86,6 +86,7 @@ export const ConversationalExample: ConversationalProgram = Agent<
   ConversationContext
 >({
   name: "ConversationalExample",
+  model: SupportModel,
   context: ConversationContext,
   async run(agent, incoming) {
     const persona = await PersonaSkill.load();

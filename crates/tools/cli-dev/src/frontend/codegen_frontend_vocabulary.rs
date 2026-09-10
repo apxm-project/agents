@@ -99,6 +99,24 @@ pub(crate) const FAMILIES: &[Family] = &[
         },
     },
     Family {
+        type_name: "InputSchemaType",
+        prefix: "INPUT_SCHEMA_TYPE_",
+        set_name: "INPUT_SCHEMA_TYPES",
+        source: Source::DefEnum {
+            def: "EntrypointInputSchema",
+            property: "type",
+        },
+    },
+    Family {
+        type_name: "ProgramAuthoringKind",
+        prefix: "PROGRAM_AUTHORING_KIND_",
+        set_name: "PROGRAM_AUTHORING_KINDS",
+        source: Source::DiscriminatedConst {
+            def: "ProgramAuthoring",
+            discriminant: "kind",
+        },
+    },
+    Family {
         type_name: "DeclKind",
         prefix: "DECL_KIND_",
         set_name: "DECL_KINDS",

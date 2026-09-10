@@ -18,7 +18,7 @@ class Summary(TypedDict):
 SummarizerModel = Model[SummaryRequest, Summary]("model.summary")
 
 
-@Agent(input=SummaryRequest, output=Summary)
+@Agent(input=SummaryRequest, output=Summary, model=SummarizerModel)
 async def Summarizer(agent, request):
     return await SummarizerModel(request)
 ```
@@ -28,7 +28,13 @@ strings naming them — a renamed type renames its reference, and a reference to
 type that does not exist is a `NameError` at the definition site. TypeScript
 states the same three as `Agent<Input, Output, Context>`.
 
-`Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
+`Agent` requires an explicit typed `model` binding invoked by the captured body.
+`Workflow` declares general orchestration and needs no model when it makes no
+model call. Both return the same sealed `Program[Input, Output, Context]` with
+typed `invoke(input)` and `new(context=...)`; the public Protocol is not a raw
+graph constructor. Loops, Context, Hooks and yield/resume are shared behavior.
+
+`Agent`, `Workflow`, `Context`, `Tool`, and `Model` cover ordinary programs;
 `Capability`, `Event`, `Hook`, `Skill`, and `TaskGroup` are focused extensions.
 `Skill` declares instructions the program can load — carried as a package file
 with `entry=`, or written in the source with `text=`, never both — and

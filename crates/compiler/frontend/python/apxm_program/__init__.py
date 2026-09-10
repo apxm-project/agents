@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from ._advanced import Hook, TaskGroup
 from ._agent import Agent
+from ._workflow import Program, Workflow
 from ._markers import Capability, Context, Event, Model, Skill, Tool
 
 __all__ = [
@@ -22,7 +23,9 @@ __all__ = [
     "Event",
     "Hook",
     "Model",
+    "Program",
     "Skill",
     "TaskGroup",
     "Tool",
+    "Workflow",
 ]

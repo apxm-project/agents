@@ -29,6 +29,7 @@ import type {
 } from "./bound-tree.js";
 import type { AuthoredSource } from "./authored-source.js";
 import { emitFrontendGraph } from "./emit.js";
+import { checkedInputSchema } from "./input-schema.js";
 import { type Json } from "./contract.js";
 import {
   HOOK_SCOPE_AGENT,
@@ -45,6 +46,7 @@ import {
 } from "./generated/frontend-graph.js";
 import type {
   CallIntent,
+  EntrypointInputSchema,
   PredicateLiteral,
   SkillRequirement,
   ValueExpression,
@@ -132,12 +134,14 @@ export type CaptureInput = {
   programId: string;
   entrypoint: string;
   contextSchema?: ContextSchema;
+  declarationKind?: "agent" | "workflow";
+  primaryModel?: ModelBinding<never, unknown>;
   declared: readonly object[];
   source: StaticSource;
 };
 
 /** The module-scope factories whose calls declare a binding an Agent can use. */
-const MARKER_FACTORIES = ["Model", "Tool", "Capability", "Event", "Context", "Skill", "Agent"] as const;
+const MARKER_FACTORIES = ["Model", "Tool", "Capability", "Event", "Context", "Skill", "Agent", "Workflow"] as const;
 
 /** The binding each factory produces, so a resolved pairing can be checked. */
 const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
@@ -148,6 +152,7 @@ const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
   Skill: "skill",
   Context: "context",
   Agent: "agent_definition",
+  Workflow: "agent_definition",
 };
 
 /**
@@ -237,8 +242,11 @@ class Capture {
   private contextBindingName: string | undefined;
   private inputTypeRef = "Input";
   private inputContract: InputContract | undefined;
+  private inputSchema: EntrypointInputSchema | undefined;
+  private readonly pureLocals = new Set<ts.Symbol>();
   private outputTypeRef = "Output";
   private contextTypeRef: string | undefined;
+  private defaultContext: ValueExpression | undefined;
 
   constructor(private readonly input: CaptureInput) {
     this.bodyRegionId = `${input.programId}.body`;
@@ -442,6 +450,16 @@ class Capture {
     }
     this.captureStaticHooks(source);
 
+    if (this.input.declarationKind === "agent") {
+      const primary = this.input.primaryModel;
+      const bindingNames = [...this.bindings.entries()]
+        .filter(([, binding]) => binding === primary)
+        .map(([name]) => this.bindingDeclIds.get(name));
+      if (primary === undefined || !this.calls.some((call) => call.contract.intent_kind === "model_invocation" && bindingNames.includes(call.contract.binding_ref))) {
+        throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "Agent must invoke its explicitly declared primary Model binding");
+      }
+    }
+
     return this.build();
   }
 
@@ -526,6 +544,7 @@ class Capture {
     }
     this.inputTypeRef = typeArguments[0].getText().trim();
     const inputType = this.checker.getTypeFromTypeNode(typeArguments[0]);
+    this.inputSchema = checkedInputSchema(this.checker, typeArguments[0], inputType);
     if (acceptsEmptyObject(this.checker, typeArguments[0], inputType, emptyObjectType)) {
       this.inputContract = INPUT_CONTRACT_ACCEPTS_EMPTY_OBJECT;
     }
@@ -580,6 +599,7 @@ class Capture {
       factory: string;
       typeArgument?: string;
       typeArgumentCount: number;
+      initial?: ts.Expression;
     }> = [];
     for (const statement of source.statements) {
       if (statement.getEnd() >= stop) {
@@ -609,6 +629,7 @@ class Capture {
           factory,
           typeArgument: initializer.typeArguments?.[0]?.getText().trim(),
           typeArgumentCount: initializer.typeArguments?.length ?? 0,
+          initial: initializer.arguments[0],
         });
       }
     }
@@ -636,6 +657,9 @@ class Capture {
         if (value === this.input.contextSchema) {
           this.contextBindingName = entry.name;
           this.contextTypeRef = bound.typeRef;
+          if (value.defaultPresent && entry.initial !== undefined) {
+            this.defaultContext = this.valueExpressionFor(entry.initial);
+          }
         }
         this.bindings.set(entry.name, bound);
         continue;
@@ -768,7 +792,7 @@ class Capture {
   }
 
   private isFrontendAgentFactory(expression: ts.Expression): boolean {
-    return ts.isIdentifier(expression) && this.isFrontendMarker(expression, "Agent");
+    return ts.isIdentifier(expression) && (this.isFrontendMarker(expression, "Agent") || this.isFrontendMarker(expression, "Workflow"));
   }
 
   private isFrontendMarker(identifier: ts.Identifier, expectedName: string): boolean {
@@ -808,8 +832,15 @@ class Capture {
     regionId: string,
     source: ts.SourceFile,
   ): void {
+    const outerLocals = new Set(this.pureLocals);
     for (const stmt of statements) {
       this.visitStatement(stmt, regionId, source);
+    }
+    for (const local of this.pureLocals) {
+      if (!outerLocals.has(local)) {
+        this.valuesBySymbol.delete(local);
+        this.pureLocals.delete(local);
+      }
     }
   }
 
@@ -824,11 +855,20 @@ class Capture {
       for (const decl of stmt.declarationList.declarations) {
         if (decl.initializer !== undefined) {
           const creation = this.visitExpression(decl.initializer, regionId, source);
-          if (creation === undefined || !ts.isIdentifier(decl.name)) {
-            continue;
-          }
+          if (!ts.isIdentifier(decl.name)) throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "local bindings use one static name");
           const nameSymbol = this.symbolAt(decl.name);
           if (nameSymbol === undefined) {
+            continue;
+          }
+          if (creation === undefined) {
+            if (!(stmt.declarationList.flags & ts.NodeFlags.Const) && decl.initializer.kind === ts.SyntaxKind.NullKeyword) continue;
+            if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings are immutable const declarations");
+            const expression = this.valueExpressionFor(decl.initializer);
+            const containsContext = (value: unknown): boolean => value !== null && typeof value === "object" && ((value as {kind?: string}).kind === "context" || Object.values(value).some(containsContext));
+            if (containsContext(expression)) throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings read immutable input and prior results, not mutable Context");
+            const valueId = this.valueForExpression(decl.initializer);
+            this.valuesBySymbol.set(nameSymbol, valueId);
+            this.pureLocals.add(nameSymbol);
             continue;
           }
           if (creation.programRef !== undefined) {
@@ -859,6 +899,17 @@ class Capture {
     regionId: string,
     source: ts.SourceFile,
   ): { programRef?: string; valueId?: string } | undefined {
+    const written = ts.isBinaryExpression(expr) && expr.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && expr.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? expr.left : (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) && (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken) ? expr.operand : undefined;
+    if (written) {
+      let root = written;
+      while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) root = root.expression;
+      const symbol = ts.isIdentifier(root) ? this.symbolAt(root) : undefined;
+      if (symbol && this.pureLocals.has(symbol)) throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings cannot be reassigned or mutated");
+      const contextAssignment = ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(written) && ts.isIdentifier(written.expression) && this.isFacadeIdentifier(written.expression) && written.name.text === "context";
+      const effectAssignment = ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(written) && ts.isAwaitExpression(expr.right);
+      if (!contextAssignment && !effectAssignment) throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "assignments replace Context or bind awaited results; input and pure data cannot be mutated");
+    }
     if (ts.isAwaitExpression(expr)) {
       const valueId = this.visitAwait(expr, regionId, source);
       return valueId === undefined ? undefined : { valueId };
@@ -905,6 +956,8 @@ class Capture {
       }
     } else if (ts.isCallExpression(expr) && this.isAgentCreation(expr)) {
       return this.recordAgentCreation(expr, regionId, source);
+    } else if (ts.isCallExpression(expr)) {
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "calls are awaited typed effects or Agent creation, never local mutation");
     }
     return undefined;
   }
@@ -1216,6 +1269,7 @@ class Capture {
       const fields = expression.properties.map((property) => {
         if (ts.isPropertyAssignment(property)) {
           const name = this.staticPropertyName(property.name);
+          if (name === "__proto__") throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "prototype setters are not JSON object fields");
           return { name, value: this.valueExpressionFor(property.initializer) };
         }
         if (ts.isShorthandPropertyAssignment(property)) {
@@ -1652,7 +1706,9 @@ class Capture {
     if (stmt.elseStatement !== undefined) {
       bodyRegions.push(`${nodeId}.else`);
     }
-    const predicate = this.predicateForExpression(stmt.expression);
+    const predicate = stmt.expression.kind === ts.SyntaxKind.TrueKeyword || stmt.expression.kind === ts.SyntaxKind.FalseKeyword
+      ? { root_value_id: this.valueForExpression(stmt.expression), property_path: [], comparator: "truthy" as const }
+      : this.predicateForExpression(stmt.expression);
     this.controls.push({
       contract: {
         node_id: nodeId,
@@ -1819,11 +1875,13 @@ class Capture {
       }
       return;
     }
+    const operands: BoundOperand[] = [];
     if (stmt.expression !== undefined) {
       if (ts.isAwaitExpression(stmt.expression)) {
-        this.visitAwait(stmt.expression, regionId, source);
+        const result = this.visitAwait(stmt.expression, regionId, source);
+        if (result !== undefined) operands.push({ value_id: result, slot: "output" });
       } else {
-        this.rejectUnboundCalls(stmt.expression);
+        operands.push({ value_id: this.valueForExpression(stmt.expression), slot: "output" });
       }
     }
     const nodeId = this.next("return");
@@ -1835,7 +1893,7 @@ class Capture {
         execution_order: this.orderIn(regionId),
       },
       span: this.spanOf(stmt, source),
-      operands: [],
+      operands,
     });
     this.recordNode(regionId, nodeId);
   }
@@ -2200,8 +2258,13 @@ class Capture {
       entrypoint: this.input.entrypoint,
       input_type_ref: this.inputTypeRef,
       input_contract: this.inputContract,
+      input_schema: this.inputSchema,
+      authoring: this.input.declarationKind === "agent"
+        ? { kind: "agent", primary_model_ref: this.input.primaryModel!.targetRef }
+        : { kind: "workflow" },
       output_type_ref: this.outputTypeRef,
-      has_default_context: (this.input.contextSchema?.defaultPresent ?? false),
+      has_default_context: this.defaultContext !== undefined,
+      default_context: this.defaultContext,
       context_type_ref: this.contextTypeRef,
       parameters: [
         {
@@ -2266,7 +2329,9 @@ interface ReadonlyArray<T> {
   readonly length: number;
   readonly [index: number]: T;
 }
-interface Promise<T> {}
+interface Promise<T> {
+  then(onfulfilled: (value: T) => unknown): Promise<unknown>;
+}
 `;
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.Latest,
@@ -2275,6 +2340,7 @@ interface Promise<T> {}
     allowJs: true,
     noLib: true,
     noResolve: true,
+    strictNullChecks: true,
     skipLibCheck: true,
   };
   const host: ts.CompilerHost = {

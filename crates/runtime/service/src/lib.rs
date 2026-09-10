@@ -2633,7 +2633,21 @@ impl RuntimeService {
                     code: "invocation_idempotency_conflict".to_owned(),
                 });
             }
-            if prior.result.is_none() {
+            let status = self
+                .execution_backend
+                .invocation_status(&prior.program_invocation_id);
+            if status == Some(apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn) {
+                return Err(RuntimeResult::Failed {
+                    request_id,
+                    code: "program_instance_completed".to_owned(),
+                });
+            }
+            if prior.result.is_none()
+                && (status != Some(apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield)
+                    || self
+                        .active_cancellations
+                        .contains_key(&prior.program_invocation_id))
+            {
                 return Err(RuntimeResult::Failed {
                     request_id,
                     code: "invocation_already_started".to_owned(),
@@ -2787,10 +2801,7 @@ impl RuntimeService {
     ) -> RuntimeResult {
         let suspended = execution
             .as_ref()
-            .ok()
-            .and_then(|output| output.get("status"))
-            .and_then(Value::as_str)
-            == Some("suspended");
+            .is_ok_and(|output| self.execution_is_waiting(&prepared.invocation_id, output));
         let result = match execution {
             Ok(output) => {
                 let result = invocation_result_from_execution_output(
@@ -2843,6 +2854,13 @@ impl RuntimeService {
         result
     }
 
+    /// A structural yield settles one invocation; only an Event wait stays open.
+    fn execution_is_waiting(&self, invocation_id: &str, output: &Value) -> bool {
+        output.get("status").and_then(Value::as_str) == Some("suspended")
+            && self.execution_backend.invocation_status(invocation_id)
+                != Some(ProgramInvocationStatus::CommittedYield)
+    }
+
     /// Rebuild the immutable execution lease for one durably admitted pending
     /// invocation. The active cancellation token is the process-local worker
     /// claim, so concurrent identical starts cannot enqueue a duplicate.
@@ -2864,7 +2882,11 @@ impl RuntimeService {
         if self
             .execution_backend
             .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
-            .is_some()
+            .and_then(|value| serde_json::from_value::<Continuation>(value.payload).ok())
+            .is_some_and(|continuation| {
+                continuation.program_invocation_ref.as_str() == invocation_id
+                    || continuation.event_ref.is_some()
+            })
         {
             return Ok(None);
         }
@@ -3100,10 +3122,7 @@ impl RuntimeService {
         self.active_cancellations.remove(&prepared.invocation_id);
         let suspended = output
             .as_ref()
-            .ok()
-            .and_then(|value| value.get("status"))
-            .and_then(Value::as_str)
-            == Some("suspended");
+            .is_ok_and(|output| self.execution_is_waiting(&prepared.invocation_id, output));
         let result = match output {
             Ok(output) => invocation_result_from_execution_output(
                 prepared.invocation_request_id.clone(),
@@ -3358,7 +3377,11 @@ impl RuntimeService {
             if self
                 .execution_backend
                 .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
-                .is_some()
+                .and_then(|value| serde_json::from_value::<Continuation>(value.payload).ok())
+                .is_some_and(|continuation| {
+                    continuation.program_invocation_ref.as_str() == invocation_id
+                        && continuation.event_ref.is_some()
+                })
             {
                 continue;
             }
@@ -3378,12 +3401,13 @@ impl RuntimeService {
                 .map(|invocation| invocation.request_id.clone())
                 .ok_or_else(|| "unknown_invocation".to_owned())?;
             let result = match self.execution_backend.invocation_status(&invocation_id) {
-                Some(apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn) => {
-                    RuntimeResult::ProgramInvocationStarted {
-                        request_id: request_id.clone(),
-                        program_invocation_id: invocation_id.clone(),
-                    }
-                }
+                Some(
+                    apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn
+                    | apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield,
+                ) => RuntimeResult::ProgramInvocationStarted {
+                    request_id: request_id.clone(),
+                    program_invocation_id: invocation_id.clone(),
+                },
                 Some(apxm_runtime_protocol::ProgramInvocationStatus::Failed) => {
                     RuntimeResult::Failed {
                         request_id: request_id.clone(),
@@ -3513,16 +3537,6 @@ impl RuntimeService {
             .map(|invocation| invocation.program_invocation_id.clone())
             .collect::<Vec<_>>();
         for invocation_id in invocation_ids {
-            let Some(instance_id) = self.invocation_index.get(&invocation_id).cloned() else {
-                return Err("unknown_invocation".to_owned());
-            };
-            if self
-                .execution_backend
-                .load_continuation(&ProgramInstanceRef::new(instance_id))
-                .is_some()
-            {
-                continue;
-            }
             if let Some(prepared) = self.claim_pending_invocation(&invocation_id)? {
                 return Ok(Some(prepared));
             }
@@ -4176,7 +4190,7 @@ impl RuntimeService {
             apxm_kernel::EventRef::new(event_id.to_owned()).map_err(|error| error.to_string())?,
             delivered,
         ))?;
-        if output.get("status").and_then(Value::as_str) != Some("suspended") {
+        if !self.execution_is_waiting(continuation.program_invocation_ref.as_str(), &output) {
             let result = invocation_result_from_execution_output(
                 self.instances
                     .get(&instance_id)
@@ -4447,6 +4461,28 @@ mod tests {
             .expect("canonical host capability fixture artifact JSON")
     }
 
+    /// A minimal stateful program with an explicit typed yield and return.
+    fn yielding_air_bytes() -> Vec<u8> {
+        let air: AirModule = serde_json::from_value(serde_json::json!({
+            "schema_version":"apxm.air", "semantic_operations":[],
+            "structural_ir":[
+                {"region_id":"root", "kind":"function", "execution_order":0},
+                {"region_id":"yield.next", "kind":"yield", "parent_region_id":"root", "execution_order":0,
+                 "operands":[{"slot":"output", "value_id":"reply", "type_ref":"Output"}],
+                 "block_arguments":[{"value_id":"next", "type_ref":"Input"}]},
+                {"region_id":"return.done", "kind":"return", "parent_region_id":"root", "execution_order":1,
+                 "operands":[{"slot":"output", "value_id":"next", "type_ref":"Input"}]}
+            ],
+            "value_assemblies":[{"value_id":"reply", "expression":{"kind":"string", "value":"ready"}}],
+            "context_flow":[],
+            "source_map":{"schema_version":"apxm.source-map", "source_language":"python", "node_spans":[], "region_annotations":[]}
+        })).unwrap();
+        ExecutableArtifact::from_air(&air)
+            .unwrap()
+            .encode()
+            .unwrap()
+    }
+
     fn read_context(purpose: ReadPurpose) -> ReadContext {
         ReadContext {
             request_id: RequestId::new("read.request").expect("request id"),
@@ -4537,6 +4573,119 @@ mod tests {
                 ..
             }) if program_invocation_id == invocation_id
         ));
+    }
+
+    #[test]
+    fn a_pending_next_invocation_reopens_over_the_previous_yield_without_restarting() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let (instance_id, claim, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance = create_started(&mut service, yielding_air_bytes());
+            let claim = owner_claim(&service, &instance);
+            let first = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "yield.first".into(),
+                        program_instance_id: instance.clone(),
+                        owner_claim: claim.clone(),
+                        input: Value::Null,
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id,
+                ..
+            } = first
+            else {
+                panic!("{first:?}");
+            };
+            assert_eq!(
+                service
+                    .execution_backend
+                    .invocation_status(&program_invocation_id),
+                Some(ProgramInvocationStatus::CommittedYield)
+            );
+            let next = service
+                .prepare_invocation(
+                    "yield.next".into(),
+                    instance.clone(),
+                    claim.clone(),
+                    serde_json::json!({"message":"next"}),
+                )
+                .unwrap();
+            let invocation_id = next.invocation_id.clone();
+            service.release_invocation_claim(&invocation_id);
+            (instance, claim, invocation_id)
+        };
+        let mut service = RuntimeService::default().with_runtime_state_dir(path);
+        let mut recovered = service.recover_invocations().unwrap();
+        assert_eq!(
+            recovered.len(),
+            1,
+            "a prior yield does not hide newly pending work"
+        );
+        let next = recovered.pop().unwrap();
+        assert_eq!(next.invocation_id, invocation_id);
+        assert_eq!(next.input, serde_json::json!({"message":"next"}));
+        assert!(service.begin_invocation(&invocation_id).unwrap());
+        let result = service.finish_invocation(&next, next.execute());
+        assert!(
+            matches!(result, RuntimeResult::ProgramInvocationStarted { .. }),
+            "{result:?}"
+        );
+        assert_eq!(
+            service.execution_backend.invocation_status(&invocation_id),
+            Some(ProgramInvocationStatus::CommittedReturn)
+        );
+        assert!(
+            matches!(service.handle(&handshake(), RuntimeRequest::ProgramInvocationStart {
+            request_id:"yield.after-return".into(), program_instance_id:instance_id, owner_claim:claim, input:Value::Null,
+        }).unwrap(), RuntimeResult::Failed { code, .. } if code == "program_instance_completed")
+        );
+    }
+
+    #[test]
+    fn a_running_next_invocation_is_not_redispatched_from_the_previous_yield() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let (instance, claim, invocation) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance = create_started(&mut service, yielding_air_bytes());
+            let claim = owner_claim(&service, &instance);
+            assert!(matches!(
+                service
+                    .handle(
+                        &handshake(),
+                        RuntimeRequest::ProgramInvocationStart {
+                            request_id: "yield.first".into(),
+                            program_instance_id: instance.clone(),
+                            owner_claim: claim.clone(),
+                            input: Value::Null,
+                        }
+                    )
+                    .unwrap(),
+                RuntimeResult::ProgramInvocationStarted { .. }
+            ));
+            let next = service
+                .prepare_invocation(
+                    "yield.crossed-send".into(),
+                    instance.clone(),
+                    claim.clone(),
+                    serde_json::json!({"message":"once"}),
+                )
+                .unwrap();
+            assert!(service.begin_invocation(&next.invocation_id).unwrap());
+            (instance, claim, next.invocation_id)
+        };
+        let mut service = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(service.recover_invocations().unwrap().is_empty());
+        assert!(
+            matches!(service.prepare_invocation("yield.crossed-send".into(), instance, claim, serde_json::json!({"message":"once"})),
+            Err(RuntimeResult::Failed { code, .. }) if code == "outcome_unknown")
+        );
+        assert!(!service.active_cancellations.contains_key(&invocation));
     }
 
     #[test]
@@ -5463,7 +5612,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_invocation_allows_next_and_replays_immutable_history() {
+    fn non_returned_invocation_allows_next_and_replays_immutable_history() {
         let mut service = RuntimeService::default();
         let bytes = capability_air_bytes();
         let instance = create_started(&mut service, bytes);
@@ -5541,13 +5690,19 @@ mod tests {
             } => (event_ref, owner_claim),
             other => panic!("event reservation failed: {other:?}"),
         };
-        let mut raw: Value = serde_json::from_slice(
+        let mut air: AirModule = serde_json::from_slice(
             &fs::read(fixture_dir().join("canonical-execute.air.json")).expect("fixture AIR"),
         )
         .expect("fixture AIR JSON");
-        raw["semantic_operations"][2]["operands"][0]["value_id"] =
-            Value::String(event_ref.event_id.clone());
-        let air: AirModule = serde_json::from_value(raw).expect("event AIR");
+        // Event continuation does not depend on unimplemented child execution.
+        air.semantic_operations
+            .retain(|operation| operation.op == apxm_program::air::SemanticOpKind::AwaitEvent);
+        let event = air
+            .semantic_operations
+            .first_mut()
+            .expect("fixture event wait");
+        event.execution_order = 0;
+        event.operands[0].value_id = event_ref.event_id.clone();
         let bytes = ExecutableArtifact::from_air(&air)
             .expect("event artifact")
             .encode()

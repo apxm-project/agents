@@ -139,6 +139,7 @@ async def RecordSearchContext(agent) -> None:
 
 
 @Agent(
+    model=SupportModel,
     input=ConversationInput,
     output=ConversationOutput,
     context=ConversationContext,

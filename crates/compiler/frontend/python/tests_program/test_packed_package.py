@@ -59,7 +59,7 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
 
         golden = temp / "clean_agent.py"
         golden.write_text(
-            "from apxm_program import Agent, Context, Model, Tool\n"
+            "from apxm_program import Workflow, Context, Model, Tool\n"
             "from apxm_program.capabilities import SEARCH_WEB\n"
             "\n"
             "\n"
@@ -80,7 +80,7 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
             "    legs: tuple = ()\n"
             "\n"
             "\n"
-            "@Agent(input=TripRequest, output=TripPlan, context=Trip)\n"
+            "@Workflow(input=TripRequest, output=TripPlan, context=Trip)\n"
             "async def Plan(agent, request):\n"
             "    while True:\n"
             "        if request is not None:\n"

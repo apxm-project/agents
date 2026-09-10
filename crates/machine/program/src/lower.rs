@@ -357,6 +357,16 @@ fn add_entry_block_arguments(
                     .or_insert_with(|| operand.type_ref.clone());
             }
         }
+        if let Some(predicate) = &node.predicate
+            && !definitions.contains(predicate.root_value_id.as_str())
+            && let Some(value) = values
+                .iter()
+                .find(|value| value.value_id == predicate.root_value_id)
+        {
+            entry_values
+                .entry(value.value_id.clone())
+                .or_insert_with(|| value.type_ref.clone());
+        }
     }
     for assembly in values.iter().filter(|value| {
         matches!(
