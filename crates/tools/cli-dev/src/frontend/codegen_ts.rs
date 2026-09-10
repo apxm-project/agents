@@ -16,6 +16,7 @@ use super::registry::{
 };
 
 pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
+pub const AUTHORING_TYPE_SOURCES_FILE: &str = "authoring-type-sources.ts";
 
 /// Every file `@apxm/frontend`'s `src/generated` directory may contain. The
 /// stray-file guard belongs to the directory rather than to one codegen arm:
@@ -28,6 +29,7 @@ pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
 /// rejection-code vocabulary, and `frontend-conformance` owns the shared
 /// conformance corpus harness — all eight write here.
 pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
+    AUTHORING_TYPE_SOURCES_FILE,
     TYPESCRIPT_CAPABILITIES_FILE,
     TYPESCRIPT_CONFORMANCE_FILE,
     TYPESCRIPT_DIAGNOSTICS_FILE,
@@ -40,10 +42,45 @@ pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
 ];
 
 pub fn render_typescript_frontend_files() -> Vec<(&'static str, String)> {
-    vec![(
-        RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
-        render_runtime_evidence_typescript(),
-    )]
+    vec![
+        (AUTHORING_TYPE_SOURCES_FILE, render_authoring_type_sources()),
+        (
+            RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
+            render_runtime_evidence_typescript(),
+        ),
+    ]
+}
+
+/// The checker reads the same public declarations that authors import. Keeping
+/// these sources in memory preserves browser-neutral capture without granting
+/// authored imports filesystem access or maintaining a second type interface.
+fn render_authoring_type_sources() -> String {
+    let sources = [
+        (
+            "index.ts",
+            include_str!("../../../../compiler/frontend/typescript/src/index.ts"),
+        ),
+        (
+            "markers.ts",
+            include_str!("../../../../compiler/frontend/typescript/src/markers.ts"),
+        ),
+        (
+            "workflow.ts",
+            include_str!("../../../../compiler/frontend/typescript/src/workflow.ts"),
+        ),
+        (
+            "agent.ts",
+            include_str!("../../../../compiler/frontend/typescript/src/agent.ts"),
+        ),
+    ];
+    let files: std::collections::BTreeMap<_, _> = sources
+        .into_iter()
+        .map(|(name, source)| (format!("/__apxm_frontend__/{name}"), source))
+        .collect();
+    format!(
+        "// AUTO-GENERATED from the public authoring modules; DO NOT EDIT.\n// Parsed for types only; these source strings are never evaluated.\nexport const AUTHORING_TYPE_SOURCES: Readonly<Record<string, string>> = {};\n",
+        serde_json::to_string_pretty(&files).expect("source strings serialize")
+    )
 }
 
 fn render_runtime_evidence_typescript() -> String {
@@ -441,8 +478,9 @@ mod tests {
         let rendered = render_typescript_frontend_files();
 
         // The authoring surface exposes no operation constants, so this arm's
-        // only generated frontend metadata is the runtime-evidence fact
-        // binding. The capability catalogue that shares `src/generated` is a
+        // generated metadata is runtime evidence plus the canonical source
+        // declarations used by its in-memory type checker. The capability
+        // catalogue that shares `src/generated` is a
         // bindable-name vocabulary, not an operation vocabulary, and is
         // rendered — and separately pinned — by `codegen_capabilities`.
         assert_eq!(
@@ -450,9 +488,12 @@ mod tests {
                 .iter()
                 .map(|(filename, _)| *filename)
                 .collect::<Vec<_>>(),
-            vec![RUNTIME_EVIDENCE_TYPESCRIPT_FILE]
+            vec![
+                AUTHORING_TYPE_SOURCES_FILE,
+                RUNTIME_EVIDENCE_TYPESCRIPT_FILE
+            ]
         );
-        let evidence = &rendered[0].1;
+        let evidence = &rendered[1].1;
         for required in [
             "LoopIterationCompletedFact",
             "NodeExecutionRecordedFact",
@@ -473,6 +514,33 @@ mod tests {
             .expect("specialized kind boundary");
         assert!(!generic.contains("attempt.recorded"));
         assert!(!generic.contains("node_execution.recorded"));
+    }
+
+    #[test]
+    fn authoring_type_library_is_the_canonical_source_not_a_parallel_interface() {
+        let rendered = render_authoring_type_sources();
+        let json = rendered
+            .split_once(" = ")
+            .unwrap()
+            .1
+            .trim()
+            .trim_end_matches(';');
+        let sources: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(json).unwrap();
+        assert_eq!(sources.len(), 4);
+        assert_eq!(
+            sources["/__apxm_frontend__/markers.ts"],
+            include_str!("../../../../compiler/frontend/typescript/src/markers.ts")
+        );
+        assert_eq!(
+            sources["/__apxm_frontend__/workflow.ts"],
+            include_str!("../../../../compiler/frontend/typescript/src/workflow.ts")
+        );
+        assert!(
+            sources
+                .values()
+                .all(|source| !source.contains("from \"node:"))
+        );
     }
 
     /// The generated TypeScript surface publishes no selection vocabulary.

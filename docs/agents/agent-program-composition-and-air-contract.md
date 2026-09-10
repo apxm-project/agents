@@ -606,10 +606,12 @@ invocation boundary. APXM contracts/runtime own the generic event lifecycle;
 the graph only consumes an `EventRef<T>` supplied as typed input or returned by
 an admitted Capability.
 
-An Event reference is unforgeable and binds event id, schema digest,
-company/authority scope, expiry policy, and creating identity. At first await,
-APXM atomically binds it to one program instance/invocation, static callsite,
-and logical occurrence. The lifecycle is:
+The public reference serializes as exactly `{event_id, generation}`. These
+fields are not authority: the runtime reservation binds the admitted program
+instance and owner claim to the exact Event type and payload-schema digest.
+Generation must be positive. At first await, APXM atomically binds the reserved
+reference to one invocation, static callsite, and logical occurrence. The
+lifecycle is:
 
 ```text
 pending -> fulfilled | expired | cancelled
@@ -648,6 +650,23 @@ and repairs it idempotently.
 AIR contains no polling URL, notification target, store, backend TTL, or
 `resume` operation. Approval products fulfill this APXM contract rather than
 defining another event state machine.
+
+The current ordinary-source form is `Event<Payload>("event.type").wait(ref)`
+in TypeScript, or `Event[Payload]("event.type").wait(ref)` in Python. `ref` has
+the opaque source type `EventRef<Payload>` / `EventRef[Payload]`; there is no
+public source constructor, no string-only wait, and no implicit per-run event
+name. The reference can be projected from typed invocation input or a typed
+Capability result. Both Workflow and Agent use this same contract. The source
+subset takes exactly one reference; timeout/cancellation arguments in the
+semantic signature above are not additional frontend methods.
+
+Each wait callsite carries one compiler-owned `EventRequirement` in AIR:
+`{node_id, type_id, payload_schema, schema_digest}`. The finite closed JSON
+payload schema and its canonical SHA-256 digest are committed by the executable
+artifact; neither is supplied as a claim inside the public reference. Invalid
+or unsupported payload types fail compilation. The shared schema owner checks
+payload data without coercion before the resumed value can reach a Capability;
+runtime instance/owner/generation/callsite checks remain independently required.
 
 ## 9. Structural AIS and durability
 

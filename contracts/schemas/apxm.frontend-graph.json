@@ -188,6 +188,17 @@
       },
       "additionalProperties": false
     },
+    "EventRequirement": {
+      "type": "object",
+      "required": ["node_id", "type_id", "payload_schema", "schema_digest"],
+      "properties": {
+        "node_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "payload_schema": { "$ref": "#/$defs/EntrypointInputSchema" },
+        "schema_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" }
+      },
+      "additionalProperties": false
+    },
     "EntrypointInputSchema": {
       "type": "object",
       "required": ["type"],
@@ -251,7 +262,8 @@
         "context_default_present": {
           "type": "boolean",
           "description": "For decl_kind=context, whether a typed default initializer is present."
-        }
+        },
+        "payload_schema": { "$ref": "#/$defs/EntrypointInputSchema" }
       },
       "additionalProperties": false
     },

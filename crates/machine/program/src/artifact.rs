@@ -51,6 +51,8 @@ pub struct SourceBundle {
     pub hook_bindings: Vec<crate::frontend_graph::HookBinding>,
     pub capability_requirements: Vec<crate::frontend_graph::CapabilityRequirement>,
     pub model_requirements: Vec<crate::frontend_graph::ModelRequirement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_requirements: Vec<crate::event::EventRequirement>,
     /// Declared Agent Skills. An inline skill's instructions are carried here
     /// verbatim, which is what makes `source_bundle_digest` their integrity
     /// anchor: editing the body changes the artifact digest through this
@@ -68,6 +70,7 @@ impl SourceBundle {
             hook_bindings: graph.hook_bindings.clone(),
             capability_requirements: graph.capability_requirements.clone(),
             model_requirements: graph.model_requirements.clone(),
+            event_requirements: crate::lower::event_requirements(graph),
             skill_requirements: graph.skill_requirements.clone(),
         }
     }
@@ -825,6 +828,13 @@ fn reconcile_requirements_with_air(
     air: &AirModule,
 ) -> Result<(), ArtifactBuildError> {
     let mut verdict = Verdict::accepted();
+    if crate::lower::event_requirements(graph) != air.event_requirements {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "event_requirements",
+            "AIR Event requirements differ from captured source declarations",
+        ));
+    }
 
     let declared_capabilities: std::collections::BTreeSet<&str> = graph
         .capability_requirements
@@ -1030,6 +1040,7 @@ mod from_air_tests {
             .collect();
         serde_json::from_value(serde_json::json!({
             "schema_version": "apxm.air",
+            "event_requirements": [crate::event::EventRequirement::new("node.await".into(), "event.input".into(), serde_json::from_value(serde_json::json!({"type":"string"})).unwrap()).unwrap()],
             "semantic_operations": ops,
             "structural_ir": [
                 { "region_id": "region.body", "kind": "region", "execution_order": 0 },

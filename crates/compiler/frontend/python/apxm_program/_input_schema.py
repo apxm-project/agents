@@ -30,6 +30,13 @@ def checked_input_schema(annotation: Any, bindings: dict[str, Any]) -> Entrypoin
         nodes += 1
         if depth > _MAX_SCHEMA_DEPTH or nodes > _MAX_SCHEMA_NODES or id(value) in ancestors:
             return None
+        from ._markers import EventRef
+        if get_origin(value) is EventRef:
+            return EntrypointInputSchema(
+                type=INPUT_SCHEMA_TYPE_OBJECT,
+                properties={"event_id": EntrypointInputSchema(type=INPUT_SCHEMA_TYPE_STRING), "generation": EntrypointInputSchema(type=INPUT_SCHEMA_TYPE_INTEGER)},
+                required=("event_id", "generation"), additionalProperties=False,
+            )
         for scalar, kind in (
             (str, INPUT_SCHEMA_TYPE_STRING),
             (float, INPUT_SCHEMA_TYPE_NUMBER),

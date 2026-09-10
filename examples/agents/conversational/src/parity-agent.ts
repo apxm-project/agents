@@ -5,6 +5,7 @@ import {
   Capability,
   Context,
   Event,
+  type EventRef,
   Hook,
   Model,
   TaskGroup,
@@ -15,14 +16,14 @@ import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
 
-type Input = unknown;
-type Output = unknown;
+type Input = { event: EventRef<Output> };
+type Output = { message: string };
 type ParityContext = { iterations: number };
 type ParityProgram = ReturnType<typeof Workflow<Input, Output, ParityContext>>;
 
 const ParityModel = Model<Input, Output>("parity.model");
-const ParityTool = Tool<Input, Output>(SEARCH_WEB);
-const ParityCapability = Capability<Input, Output>(COUNT_TOKENS);
+const ParityTool = Tool<unknown, Output>(SEARCH_WEB);
+const ParityCapability = Capability<unknown, Output>(COUNT_TOKENS);
 const ParityEvent = Event<Output>("parity.event");
 const ParityContext: ReturnType<typeof Context> = Context<ParityContext>({ iterations: 0 });
 
@@ -53,7 +54,7 @@ export const ParityCorpus: ParityProgram = Workflow<Input, Output, ParityContext
       }
       const child = ParityChild.new({ context: { iterations: 0 } });
       const childResult = await child.invoke(request);
-      const eventResult = await ParityEvent.wait();
+      const eventResult = await ParityEvent.wait(request.event);
       const response = await ParityModel(request);
       agent.context = { iterations: agent.context.iterations };
       request = await agent.yield_(response);

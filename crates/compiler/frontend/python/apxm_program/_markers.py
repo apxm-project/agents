@@ -8,7 +8,7 @@ endpoint, or runtime object.
 
 from __future__ import annotations
 
-from typing import Any, Generic, NamedTuple, Optional, TypeVar
+from typing import Any, Awaitable, Generic, NamedTuple, Optional, TypeVar
 
 from ._generated.capabilities import BUILTIN_CAPABILITIES
 from ._host_capabilities import (
@@ -92,18 +92,31 @@ class CapabilityBinding(NamedTuple):
     input_type_ref: str = "CapabilityInput"
     output_type_ref: str = "CapabilityOutput"
     permission: Optional[Permission] = None
+    output_annotation: Any = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Capability is invoked inside a compiled Agent body")
 
 
-class EventType(NamedTuple):
+class EventRef(Generic[T]):
+    """An opaque admitted reservation, never constructed by program source."""
+
+    __slots__ = ()
+    event_id: str
+    generation: int
+
+    def __new__(cls) -> EventRef[T]:
+        raise TypeError("EventRef values enter through admitted input or Capability results")
+
+
+class EventType(NamedTuple, Generic[T]):
     """A typed durable event reference whose wait records an event wait."""
 
     type_ref: str
     target_ref: str
+    payload_type: type[T]
 
-    def wait(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+    def wait(self, reference: EventRef[T]) -> Awaitable[T]:  # pragma: no cover
         raise RuntimeError(
             f"{EVENT_WAIT_OUTSIDE_BODY}: an Event is awaited inside a compiled Agent body"
         )
@@ -185,13 +198,16 @@ class _TypedFactory(metaclass=_FrozenFactoryType):
 
     def __init__(self, typed: bool = False) -> None:
         self._typed = typed
+        self._type_arguments: tuple[Any, ...] = ()
 
     def __getitem__(self, types: Any) -> "_TypedFactory":
         supplied = types if isinstance(types, tuple) else (types,)
         if len(supplied) != len(self._type_parameters):
             expected = ", ".join(self._type_parameters)
             raise TypeError(f"{type(self).__name__} takes [{expected}]")
-        return type(self)(typed=True)
+        factory = type(self)(typed=True)
+        factory._type_arguments = supplied
+        return factory
 
 
 class _ModelFactory(_TypedFactory):
@@ -228,30 +244,30 @@ class _CapabilityFactory(_TypedFactory):
         _require_exact_reference(ref, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED)
         _require_capability_reference(ref, "Capability", CAPABILITY_REF_NOT_EXACT)
         _require_permission(permission, "Capability")
-        return CapabilityBinding(target_ref=ref, permission=permission)
+        return CapabilityBinding(target_ref=ref, permission=permission, output_annotation=self._type_arguments[1] if self._typed else None)
 
 
-class _TypedEventFactory:
+class _TypedEventFactory(Generic[T]):
     """Binds a static Event payload type before its exact event reference."""
 
-    def __init__(self, type_ref: str) -> None:
-        self._type_ref = type_ref
+    def __init__(self, payload_type: type[T]) -> None:
+        self._payload_type = payload_type
 
-    def __call__(self, ref: str) -> EventType:
+    def __call__(self, ref: str) -> EventType[T]:
         _require_exact_reference(ref, "Event", EVENT_NOT_TYPED)
-        return EventType(type_ref=self._type_ref, target_ref=ref)
+        return EventType(type_ref=_type_name(self._payload_type, "Event"), target_ref=ref, payload_type=self._payload_type)
 
 
 class _EventFactory(_TypedFactory):
     _type_parameters = ("payload",)
 
-    def __getitem__(self, types: Any) -> _TypedEventFactory:
+    def __getitem__(self, types: type[T]) -> _TypedEventFactory[T]:
         super().__getitem__(types)
-        return _TypedEventFactory(_type_name(types, "Event"))
+        return _TypedEventFactory(types)
 
     def __call__(self, ref: str) -> EventType:
         _require_exact_reference(ref, "Event", EVENT_NOT_TYPED)
-        return EventType(type_ref="Event", target_ref=ref)
+        raise TypeError(f"{EVENT_NOT_TYPED}: Event requires an explicit finite payload type")
 
 
 def Context(schema: type[T]) -> ContextSchema[T]:

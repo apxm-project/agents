@@ -161,11 +161,20 @@ export type CapabilityBinding<I = unknown, O = unknown> = {
   (args: I): Promise<O>;
 };
 
+declare const eventRefPayload: unique symbol;
+
+/** An admitted runtime reservation; source cannot construct or widen this reference. */
+export interface EventRef<T> {
+  readonly event_id: string;
+  readonly generation: number;
+  readonly [eventRefPayload]: (payload: T) => T;
+}
+
 export type EventTypeBinding<T = unknown> = {
   readonly kind: "event_type";
   readonly typeRef: string;
   readonly targetRef: string;
-  wait(): Promise<T>;
+  wait(reference: EventRef<T>): Promise<T>;
 };
 
 export type ContextSchema = {

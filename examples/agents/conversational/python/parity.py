@@ -4,24 +4,25 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import TypedDict
 
-from apxm_program import Workflow, Capability, Context, Event, Hook, Model, TaskGroup, Tool
+from apxm_program import Workflow, Capability, Context, Event, EventRef, Hook, Model, TaskGroup, Tool
 from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
 from apxm_program.scopes import MODEL
 
 
-class Input:
-    """The paired program's opaque typed input."""
+class Input(TypedDict):
+    event: EventRef[Output]
 
 
-class Output:
-    """The paired program's opaque typed output."""
+class Output(TypedDict):
+    message: str
 
 
 ParityModel = Model[Input, Output]("parity.model")
-ParityTool = Tool[Input, Output](SEARCH_WEB)
-ParityCapability = Capability[Input, Output](COUNT_TOKENS)
-ParityEvent = Event("parity.event")
+ParityTool = Tool[object, Output](SEARCH_WEB)
+ParityCapability = Capability[object, Output](COUNT_TOKENS)
+ParityEvent = Event[Output]("parity.event")
 
 
 @Context
@@ -52,7 +53,7 @@ async def ParityCorpus(agent, request):
             tool_result = await ParityCapability(None)
         child = ParityChild.new(context=ParityContext(iterations=0))
         child_result = await child.invoke(request)
-        event_result = await ParityEvent.wait()
+        event_result = await ParityEvent.wait(request["event"])
         response = await ParityModel(request)
         agent.context = ParityContext(iterations=agent.context.iterations)
         request = await agent.yield_(response)

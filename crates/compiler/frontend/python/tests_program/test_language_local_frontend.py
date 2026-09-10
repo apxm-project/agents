@@ -32,7 +32,7 @@ from __future__ import annotations
 import pytest
 from typing import Any, Awaitable, Literal, NotRequired, Required, TypedDict, get_args, get_origin, get_overloads, get_type_hints
 
-from apxm_program import Agent, Workflow, Program, Capability, Context, Event, Hook, Model, Skill, Tool
+from apxm_program import Agent, Workflow, Program, Capability, Context, Event, EventRef, Hook, Model, Skill, Tool
 from apxm_program._workflow import InputT, OutputT, ContextT
 from apxm_program._capture import CaptureError
 from apxm_program._generated.capabilities import READ
@@ -133,6 +133,86 @@ def test_a_bare_typed_marker_factory_is_not_yet_a_declaration() -> None:
 
     event = bare_typed_factory("event.session.input")
     assert event.target_ref == "event.session.input"
+
+
+class EventPayload(TypedDict):
+    reference: str
+    approved: bool
+
+
+class EventInput(TypedDict):
+    event: EventRef[EventPayload]
+
+
+class WrongEventInput(TypedDict):
+    event: EventRef[str]
+
+
+class EquivalentPayload(TypedDict):
+    reference: str
+    approved: bool
+
+
+class EquivalentEventInput(TypedDict):
+    event: EventRef[EquivalentPayload]
+
+
+SubmittedEvent = Event[EventPayload]("event.submitted")
+EventRead = Capability[EventPayload, EventPayload](READ)
+
+
+def test_event_reference_and_payload_schema_are_typed_without_source_authority() -> None:
+    @Workflow(input=EventInput, output=EventPayload)
+    async def EventWorkflow(agent, input):
+        result = await SubmittedEvent.wait(input["event"])
+        return await EventRead(result)
+
+    graph = EventWorkflow.frontend_graph()
+    declaration = next(value for value in graph["declarations"] if value["decl_kind"] == "event_type")
+    assert declaration["payload_schema"] == {
+        "type": "object", "properties": {"reference": {"type": "string"}, "approved": {"type": "boolean"}},
+        "required": ["reference", "approved"], "additionalProperties": False,
+    }
+    assert graph["program_definitions"][0]["input_schema"]["properties"]["event"] == {
+        "type": "object", "properties": {"event_id": {"type": "string"}, "generation": {"type": "integer"}},
+        "required": ["event_id", "generation"], "additionalProperties": False,
+    }
+    wait = next(call for call in graph["call_intents"] if call["intent_kind"] == "event_wait")
+    assert len(wait["operand_values"]) == 1
+    assert next(value for value in graph["values"] if value["value_id"] == wait["operand_values"][0])["type_ref"] == "EventRef"
+    with pytest.raises(TypeError, match="admitted input"):
+        EventRef()
+
+
+def test_event_wait_refuses_missing_literal_and_wrong_payload_references() -> None:
+    with pytest.raises(CaptureError, match="EventRef"):
+        @Workflow(input=EventInput, output=EventPayload)
+        async def Missing(agent, input):
+            return await SubmittedEvent.wait()
+    with pytest.raises(CaptureError, match="EventRef"):
+        @Workflow(input=EventInput, output=EventPayload)
+        async def Literal(agent, input):
+            return await SubmittedEvent.wait("event.submitted")
+    with pytest.raises(CaptureError, match="EventRef"):
+        @Workflow(input=WrongEventInput, output=EventPayload)
+        async def Wrong(agent, input):
+            return await SubmittedEvent.wait(input["event"])
+
+
+def test_event_payload_names_are_nominal_but_closed_schemas_must_agree() -> None:
+    @Workflow(input=EquivalentEventInput, output=EventPayload)
+    async def Equivalent(agent, input):
+        return await SubmittedEvent.wait(input["event"])
+
+    assert Equivalent.diagnostics() is None
+
+
+def test_event_payload_requires_supported_finite_json_type() -> None:
+    UnsupportedEvent = Event[object]("event.unsupported")
+    with pytest.raises(CaptureError, match="finite JSON type"):
+        @Workflow(input=EventInput, output=EventPayload)
+        async def Unsupported(agent, input):
+            return await UnsupportedEvent.wait(input["event"])
 
 
 class _Payload:

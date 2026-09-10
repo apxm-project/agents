@@ -13,6 +13,7 @@ pub mod artifact;
 pub mod capability;
 pub mod common;
 pub mod diagnostic;
+pub mod event;
 pub mod execution_commit;
 pub mod external_agent;
 pub mod frontend_graph;

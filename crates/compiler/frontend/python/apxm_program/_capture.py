@@ -15,7 +15,7 @@ import inspect
 import textwrap
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Union, get_args, get_origin, get_type_hints
 
 from ._bound_tree import (
     BoundCall,
@@ -62,6 +62,7 @@ from ._markers import (
     CapabilityBinding,
     ContextSchema,
     EventType,
+    EventRef,
     ModelBinding,
     SkillDecl,
     ToolBinding,
@@ -104,6 +105,7 @@ class _Capture:
         has_default_context: bool,
         bindings: dict[str, Any],
         source_file: str,
+        input_annotation: Any = None,
     ) -> None:
         self.program_id = program_id
         self.entrypoint = entrypoint
@@ -113,6 +115,8 @@ class _Capture:
         self.has_default_context = has_default_context
         self.bindings = bindings
         self.source_file = source_file
+        self._input_annotation = input_annotation
+        self._types_by_name: dict[str, Any] = {}
 
         self.body_region_id = f"{program_id}.body"
         self.declarations: list[BoundDeclaration] = []
@@ -232,15 +236,20 @@ class _Capture:
                 )
                 self._require_capability(binding, tool_schema_present=False)
             elif isinstance(binding, EventType):
+                from ._input_schema import checked_input_schema
+                payload_schema = checked_input_schema(binding.payload_type, self.bindings)
+                if payload_schema is None:
+                    raise CaptureError(EVENT_NOT_TYPED, "Event payload requires an explicit supported finite JSON type")
                 decl_id = f"decl.event.{name}"
                 self._declared[name] = decl_id
                 self.declarations.append(
                     BoundDeclaration(
                         decl_id=decl_id,
                         decl_kind="event_type",
-                        input_type_ref=binding.type_ref,
-                        output_type_ref=binding.type_ref,
+                        input_type_ref=f"{decl_id}.payload",
+                        output_type_ref=f"{decl_id}.payload",
                         target_ref=binding.target_ref,
+                        payload_schema=payload_schema,
                     )
                 )
             elif isinstance(binding, ContextSchema):
@@ -515,6 +524,7 @@ class _Capture:
         if contains_context(expression):
             raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "pure local bindings read immutable input and prior results, not mutable Context", stmt)
         self._values_by_name[target.id] = self._value_for_expression(stmt.value, region_id)
+        self._types_by_name[target.id] = self._type_for_expression(stmt.value)
         self._pure_locals.add(target.id)
 
     def _visit_await(
@@ -572,6 +582,8 @@ class _Capture:
         self._record_node(region_id, node_id)
         if assign_to is not None and result_value is not None:
             self._values_by_name[assign_to] = result_value
+            binding = self.bindings.get(call.func.id) if isinstance(call.func, ast.Name) else None
+            self._types_by_name[assign_to] = binding.output_annotation if isinstance(binding, CapabilityBinding) else None
         span = self._span(call)
         if span is not None:
             self.spans.append((node_id, span, intent))
@@ -631,6 +643,18 @@ class _Capture:
                         "Event.wait resolves one static Event value",
                         call,
                     )
+                binding = self.bindings.get(func.value.id) if isinstance(func.value, ast.Name) else None
+                reference_type = self._type_for_expression(call.args[0]) if len(call.args) == 1 and not call.keywords else None
+                from ._input_schema import checked_input_schema
+                payload_arguments = get_args(reference_type)
+                if (
+                    not isinstance(binding, EventType)
+                    or get_origin(reference_type) is not EventRef
+                    or len(payload_arguments) != 1
+                    or checked_input_schema(payload_arguments[0], self.bindings)
+                    != checked_input_schema(binding.payload_type, self.bindings)
+                ):
+                    raise CaptureError(EVENT_NOT_TYPED, "Event.wait requires one admitted EventRef with the same payload type", call)
                 return "event_wait", binding_ref, None, "event_ref"
             raise CaptureError(
                 AGENT_DYNAMIC_ARGUMENT, f"unsupported call '.{func.attr}(...)'", call
@@ -922,8 +946,33 @@ class _Capture:
             )
         expression = call.args[0] if call.args else call.keywords[0].value
         value_id = self._value_for_expression(expression, node_id)
+        if slot == "event_ref":
+            reference = self._next("event_ref")
+            self.values.append(BoundValue(
+                value_id=reference,
+                type_ref="EventRef",
+                origin="literal",
+                expression=SsaExpression(kind="ssa", value_id=value_id),
+            ))
+            value_id = reference
         operands.append(BoundOperand(value_id=value_id, slot=slot))
         return operands
+
+    def _type_for_expression(self, expression: ast.expr) -> Any:
+        """Resolve reference provenance without evaluating authored expressions."""
+        if isinstance(expression, ast.Name):
+            return self._input_annotation if expression.id == self._input_name else self._types_by_name.get(expression.id)
+        if isinstance(expression, ast.Attribute):
+            root, field = expression.value, expression.attr
+        elif isinstance(expression, ast.Subscript) and isinstance(expression.slice, ast.Constant) and isinstance(expression.slice.value, str):
+            root, field = expression.value, expression.slice.value
+        else:
+            return None
+        annotation = self._type_for_expression(root)
+        try:
+            return get_type_hints(annotation, globalns=self.bindings, localns=self.bindings, include_extras=True).get(field)
+        except (TypeError, NameError, ValueError):
+            return None
 
     def _visit_yield(
         self, call: ast.Call, region_id: str, assign_to: Optional[str]
@@ -1754,6 +1803,7 @@ def capture_program(
     has_default_context: bool,
     bindings: dict[str, Any],
     context_schema_type: Optional[type] = None,
+    input_annotation: Any = None,
 ) -> BoundProgram:
     """Parse and fold one authored Agent callback into a bound program."""
     # The source-port evaluates submitted code in this interpreter. A source
@@ -1782,6 +1832,7 @@ def capture_program(
         has_default_context=has_default_context,
         bindings=bindings,
         source_file=source_file,
+        input_annotation=input_annotation,
     )
     default_context = _context_default(context_schema_type, capture) if context_schema_type is not None else None
     return replace(capture.capture(func_ast), default_context=default_context, has_default_context=default_context is not None)

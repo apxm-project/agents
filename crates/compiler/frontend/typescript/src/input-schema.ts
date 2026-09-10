@@ -4,6 +4,7 @@ import type { EntrypointInputSchema } from "./generated/frontend-records.js";
 import {
   INPUT_SCHEMA_TYPE_ARRAY,
   INPUT_SCHEMA_TYPE_BOOLEAN,
+  INPUT_SCHEMA_TYPE_INTEGER,
   INPUT_SCHEMA_TYPE_NULL,
   INPUT_SCHEMA_TYPE_NUMBER,
   INPUT_SCHEMA_TYPE_OBJECT,
@@ -34,6 +35,13 @@ export function checkedInputSchema(checker: ts.TypeChecker, location: ts.Node, i
     if (type.flags & ts.TypeFlags.Boolean) return { type: INPUT_SCHEMA_TYPE_BOOLEAN };
     if (type.flags & ts.TypeFlags.Null) return { type: INPUT_SCHEMA_TYPE_NULL };
     if (!(type.flags & ts.TypeFlags.Object) || type.isUnionOrIntersection() || checker.isTupleType(type)) return undefined;
+    if (type.getSymbol()?.getName() === "EventRef" && checker.getPropertiesOfType(type).some((property) => property.getName().startsWith("__@eventRefPayload"))) {
+      return {
+        type: INPUT_SCHEMA_TYPE_OBJECT,
+        properties: { event_id: { type: INPUT_SCHEMA_TYPE_STRING }, generation: { type: INPUT_SCHEMA_TYPE_INTEGER } },
+        required: ["event_id", "generation"], additionalProperties: false,
+      };
+    }
     ancestors.add(type);
     try {
       if (checker.isArrayType(type)) {

@@ -42,7 +42,8 @@
           "decl_kind": "event_type",
           "input_type_ref": "SessionInput",
           "output_type_ref": "SessionInput",
-          "target_ref": "event.input"
+          "target_ref": "event.input",
+          "payload_schema": { "type": "string" }
         }
       ],
       "functions": [
@@ -77,6 +78,12 @@
         "type_ref": "SpecialistInput",
         "origin": "parameter",
         "origin_id": "run"
+      },
+      {
+        "value_id": "value.event.ref",
+        "type_ref": "EventRef",
+        "origin": "literal",
+        "expression": { "kind": "projection", "root": { "kind": "ssa", "value_id": "value.input" }, "property_path": ["eventRef"] }
       },
       {
         "value_id": "value.context.next",
@@ -152,6 +159,11 @@
       ],
       "data_edges": [
         {
+          "from_value": "value.event.ref",
+          "to_consumer": "node.await.1",
+          "consumer_slot": "event_ref"
+        },
+        {
           "from_value": "value.input",
           "to_consumer": "node.model.1",
           "consumer_slot": "request"
@@ -215,6 +227,7 @@
           "parent_region_id": "region.loop.1",
           "execution_order": 4,
           "binding_ref": "decl.event.input",
+          "operand_values": ["value.event.ref"],
           "result_value": "value.event.output"
         }
       ],

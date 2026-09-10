@@ -55,6 +55,7 @@ import {
 } from "../src/generated/frontend-graph.ts";
 import { ASK, Ask } from "../src/generated/permissions.ts";
 import { READ } from "../src/capabilities.ts";
+import type { CallIntent, Declaration, ProgramDefinition, Value } from "../src/generated/frontend-records.ts";
 
 source(import.meta.url);
 
@@ -93,6 +94,62 @@ function capturedInputContract(inputType: string, config = "", body = "return in
     },
   });
 }
+
+type CapturedEventGraph = {
+  declarations: Declaration[];
+  program_definitions: ProgramDefinition[];
+  call_intents: CallIntent[];
+  values: Value[];
+};
+
+function capturedEventContract(reference = "input.event", payload = "Payload", referenceType = "Payload"): CapturedEventGraph {
+  return captureProgram({
+    programId: "EventWorkflow", entrypoint: "EventWorkflow",
+    declared: [Event<{ reference: string; approved: boolean }>("event.submitted"), Capability(READ)],
+    source: { fileName: "event-contract.ts", text: `
+      import { Workflow, Event, type EventRef, Capability } from "@apxm/frontend";
+      type Payload = { reference: string; approved: boolean };
+      type Input = { event: EventRef<${referenceType}> };
+      const Submitted = Event<${payload}>("event.submitted");
+      const Read = Capability<Payload, Payload>("read");
+      const EventWorkflow = Workflow<Input, Payload>({ async run(agent, input) {
+        const result = await Submitted.wait(${reference});
+        return await Read(result);
+      }});
+    ` },
+  }) as unknown as CapturedEventGraph;
+}
+
+describe("typed Event references", () => {
+  it("captures an admitted reference operand and finite payload schema", () => {
+    const graph = capturedEventContract();
+    expect(graph.declarations.find((value) => value.decl_kind === "event_type")!.payload_schema).toEqual({
+      type: "object", properties: { reference: { type: "string" }, approved: { type: "boolean" } },
+      required: ["reference", "approved"], additionalProperties: false,
+    });
+    expect(graph.program_definitions[0].input_schema!.properties!.event).toEqual({
+      type: "object", properties: { event_id: { type: "string" }, generation: { type: "integer" } },
+      required: ["event_id", "generation"], additionalProperties: false,
+    });
+    const wait = graph.call_intents.find((call) => call.intent_kind === "event_wait")!;
+    const operands = wait.operand_values!;
+    expect(operands).toHaveLength(1);
+    expect(graph.values.find((value) => value.value_id === operands[0])!.type_ref).toBe("EventRef");
+  });
+  it.each(["", "'event.submitted'", "{event_id:'evt-forged',generation:1}", "input.event as any"])("refuses an untyped or manufactured reference: %s", (reference) => {
+    expect(() => capturedEventContract(reference)).toThrow(CaptureError);
+  });
+  it("refuses mismatched and unsupported payload declarations", () => {
+    expect(() => capturedEventContract("input.event", "Payload", "string")).toThrow(CaptureError);
+    expect(() => capturedEventContract("input.event", "unknown")).toThrow(CaptureError);
+  });
+  it("gives inline payload types a stable declaration identity", () => {
+    const graph = capturedEventContract("input.event", "{ reference: string; approved: boolean }");
+    const declaration = graph.declarations.find((value) => value.decl_kind === "event_type")!;
+    expect(declaration.output_type_ref).toBe("decl.event.Submitted.payload");
+    expect(declaration.payload_schema!.type).toBe("object");
+  });
+});
 
 /** One module whose single Hook states `scope` exactly as `declared` writes it. */
 function capturedScope(

@@ -15,6 +15,11 @@
     "schema_version": {
       "const": "apxm.air"
     },
+    "event_requirements": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "apxm.frontend-graph#/$defs/EventRequirement" }
+    },
     "semantic_operations": {
       "type": "array",
       "items": {

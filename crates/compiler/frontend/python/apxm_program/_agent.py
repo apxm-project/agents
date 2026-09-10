@@ -64,6 +64,7 @@ def _define_program(
             func,
             program_id=func.__name__,
             input_type_ref=input_type_ref,
+            input_annotation=input,
             output_type_ref=output_type_ref,
             context_type_ref=context_type_ref,
             has_default_context=has_default_context,

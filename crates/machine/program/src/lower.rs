@@ -132,6 +132,7 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
 
     let air = AirModule {
         schema_version: AirVersion::V2,
+        event_requirements: event_requirements(graph),
         value_assemblies: graph
             .values
             .iter()
@@ -281,13 +282,7 @@ fn reference_operand(
             let target = declarations.get(binding_ref)?.target_ref.clone()?;
             Some(("capability_ref", target, "CapabilityRef".to_string()))
         }
-        IntentKind::EventWait => {
-            let target = declarations
-                .get(binding_ref)
-                .and_then(|decl| decl.target_ref.clone())
-                .unwrap_or_else(|| binding_ref.to_string());
-            Some(("event_ref", target, "EventRef".to_string()))
-        }
+        IntentKind::EventWait => None,
         IntentKind::AgentCreation => {
             let target = resolve_program_ref(binding_ref, graph);
             Some(("program_ref", target, "ProgramRef".to_string()))
@@ -303,6 +298,26 @@ fn reference_operand(
             Some(("receiver", target, type_ref.to_string()))
         }
     }
+}
+
+/// Derive wait contracts from declarations; runtime references are never static targets.
+pub(crate) fn event_requirements(graph: &FrontendGraph) -> Vec<crate::event::EventRequirement> {
+    graph
+        .call_intents
+        .iter()
+        .filter(|intent| intent.intent_kind == IntentKind::EventWait)
+        .filter_map(|intent| {
+            let declaration = graph.declarations.iter().find(|declaration| {
+                Some(declaration.decl_id.as_str()) == intent.binding_ref.as_deref()
+            })?;
+            crate::event::EventRequirement::new(
+                intent.node_id.clone(),
+                declaration.target_ref.clone()?,
+                declaration.payload_schema.clone()?,
+            )
+            .ok()
+        })
+        .collect()
 }
 
 /// Materialize every AIR operand that is not produced by a semantic operation

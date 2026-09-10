@@ -8,10 +8,13 @@ before the Server session family drives it.
 
 from __future__ import annotations
 
-from apxm_program import Workflow, Context, Event, Model
+from typing import TypedDict
+from apxm_program import Workflow, Context, Event, EventRef, Model
 
-class SessionRequest:
+class SessionRequest(TypedDict):
     """The typed message one session turn accepts."""
+    message: str
+    event: EventRef[SessionRequest]
 
 
 class SessionReply:
@@ -31,7 +34,7 @@ class SessionContext:
 async def SessionAgent(agent, incoming):
     while True:
         reply = await SessionModel(incoming)
-        incoming = await SessionInput.wait()
+        incoming = await SessionInput.wait(incoming["event"])
 
 
 if __name__ == "__main__":

@@ -396,6 +396,7 @@ mod tests {
     fn sample_air() -> serde_json::Value {
         json!({
             "schema_version": "apxm.air",
+            "event_requirements": [apxm_program::event::EventRequirement::new("node.await.1".into(), "event.ready".into(), serde_json::from_value(json!({"type":"string"})).unwrap()).unwrap()],
             "semantic_operations": [
                 {"node_id": "node.model.1", "op": "model.call", "parent_region_id": "region.loop.1", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.loop.input", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.out", "type_ref": "ModelOutput"}},
                 {"node_id": "node.cap.1", "op": "capability.invoke", "parent_region_id": "region.loop.1", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.args", "type_ref": "SearchRequest"}], "result": {"value_id": "value.cap.out", "type_ref": "SearchResult"}},

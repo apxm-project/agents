@@ -59,11 +59,12 @@ The whole declaration surface, in the form each language projects it:
 | Imported Capability | `advanced` | `Capability[Input, Output](ref, permission=...)` | `Capability<Input, Output>(ref, { permission })` |
 | Shipped Capability handler | `advanced` | `capability({ name, description, read_only, input, run }) -> CapabilityId` | `Tool.define({ name, description, readOnly, input, run }) -> CapabilityId` |
 | Static Hook | `advanced` | `@Hook.before(target=..., scope=...) / @Hook.after(target=..., scope=...)` | `Hook.before({ agent, target, scope?, run }) / Hook.after({ ... })` |
-| Durable Event value | `advanced` | `Event[Payload](ref), then await event.wait()` | `Event<Payload>(ref), then await event.wait()` |
+| Durable Event value | `advanced` | `Event[Payload](ref), then await event.wait(reference: EventRef[Payload])` | `Event<Payload>(ref), then await event.wait(reference: EventRef<Payload>)` |
 | Declared Agent Skill | `advanced` | `Skill(skill_id, entry=...) or Skill(skill_id, text=...), then await skill.load()` | `Skill(skillId, { entry }) or Skill(skillId, { text }), then await skill.load()` |
 | Structured task scope | `advanced` | `async with TaskGroup()` | `TaskGroup.run(async () => { ... })` |
 | Authored module source | `advanced` | `inferred — the frontend reads the decorated def back through inspect` | `source(import.meta.url), once above the module's Agent definitions` |
 | Compiled Program | executable type | `Program[Input, Output, Context] returned by @Agent and @Workflow; typed invoke(input) and new(context=...)` | `Program<Input, Output, Context> returned by Agent and Workflow; typed invoke(input) and new({context})` |
+| Admitted Event reservation | executable type | `EventRef[Payload] supplied through admitted input or Capability output` | `EventRef<Payload> supplied through admitted input or Capability output` |
 <!-- END DECLARATION SURFACE -->
 
 Markers are statically recognized by imported symbol identity. Compiling does

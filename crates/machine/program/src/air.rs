@@ -139,6 +139,8 @@ pub struct ContextEdge {
 pub struct AirModule {
     pub schema_version: AirVersion,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_requirements: Vec<crate::event::EventRequirement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub value_assemblies: Vec<ValueAssembly>,
     pub semantic_operations: Vec<SemanticOp>,
     pub structural_ir: Vec<StructuralNode>,
@@ -250,6 +252,7 @@ impl AirModule {
         }
 
         validate_capability_permission_requests(&mut verdict, self);
+        validate_event_requirements(&mut verdict, self);
 
         let mut seen_regions: HashSet<&str> = HashSet::new();
         for region in &self.structural_ir {
@@ -499,7 +502,7 @@ fn is_authored_invocation_operand(op: SemanticOpKind, operand: &Operand) -> bool
         SemanticOpKind::CapabilityInvoke => operand.slot != "capability_ref",
         SemanticOpKind::ProgramNew => operand.slot != "program_ref",
         SemanticOpKind::ProgramInvoke => operand.slot != "receiver",
-        SemanticOpKind::AwaitEvent => operand.slot != "event_ref",
+        SemanticOpKind::AwaitEvent => true,
     }
 }
 
@@ -753,6 +756,66 @@ fn validate_capability_permission_requests(verdict: &mut Verdict, air: &AirModul
                 DiagnosticCode::SchemaViolation,
                 capability_ref.clone(),
                 "a capability permission request carries an empty reason",
+            ));
+        }
+    }
+}
+
+/// Every Event wait has one digest-bound payload contract and a real SSA reference.
+fn validate_event_requirements(verdict: &mut Verdict, air: &AirModule) {
+    if air.event_requirements.len() > 4096 {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "event_requirements",
+            "Event requirements exceed the 4096 callsite limit",
+        ));
+    }
+    let mut nodes = HashSet::new();
+    let mut types = std::collections::BTreeMap::new();
+    for requirement in &air.event_requirements {
+        let valid_node = air.semantic_operations.iter().any(|operation| {
+            operation.node_id == requirement.node_id && operation.op == SemanticOpKind::AwaitEvent
+        });
+        if !nodes.insert(requirement.node_id.as_str()) || !valid_node {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                requirement.node_id.clone(),
+                "Event requirement must name exactly one await.event node",
+            ));
+        }
+        if let Err(reason) = requirement.validate() {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                requirement.node_id.clone(),
+                reason,
+            ));
+        }
+        if types
+            .insert(requirement.type_id.as_str(), &requirement.payload_schema)
+            .is_some_and(|prior| prior != &requirement.payload_schema)
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                requirement.node_id.clone(),
+                "one Event type cannot declare different payload schemas",
+            ));
+        }
+    }
+    for operation in air
+        .semantic_operations
+        .iter()
+        .filter(|operation| operation.op == SemanticOpKind::AwaitEvent)
+    {
+        if !nodes.contains(operation.node_id.as_str())
+            || !operation
+                .operands
+                .iter()
+                .any(|operand| operand.slot == "event_ref" && operand.type_ref == "EventRef")
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                "await.event requires an EventRef SSA operand and exact Event requirement",
             ));
         }
     }

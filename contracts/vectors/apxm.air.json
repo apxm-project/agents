@@ -3,6 +3,11 @@
     "name": "valid-air-five-semantic-ops-and-structural-ir",
     "input": {
       "schema_version": "apxm.air",
+      "event_requirements": [{
+        "node_id": "node.await.1", "type_id": "event.input",
+        "payload_schema": { "type": "string" },
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }],
       "semantic_operations": [
         {
           "node_id": "node.model.1",

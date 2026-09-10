@@ -60,6 +60,161 @@ export const Reviewer = Workflow<ReviewRequest, Review>({
 });
 "#;
 
+#[test]
+fn event_reference_source_and_payload_contract_are_shared_and_digest_bound() {
+    let mut schemas = Vec::new();
+    for frontend in FRONTENDS {
+        assert!(
+            frontend_present(frontend),
+            "typed Event qualification requires both installed frontends"
+        );
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Event, type EventRef, Capability } from "@apxm/frontend";
+type Payload = { reference: string; approved: boolean };
+type Input = { event: EventRef<Payload> };
+const Submitted = Event<Payload>("event.submitted");
+const Read = Capability<Payload, Payload>("read");
+export const Reviewer = Workflow<Input, Payload>({ name: "Reviewer", async run(agent, input) {
+  const payload = await Submitted.wait(input.event);
+  return await Read(payload);
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow, Event, EventRef, Capability
+class Payload(TypedDict):
+    reference: str
+    approved: bool
+class Input(TypedDict):
+    event: EventRef[Payload]
+Submitted = Event[Payload]("event.submitted")
+Read = Capability[Payload, Payload]("read")
+@Workflow(input=Input, output=Payload)
+async def Reviewer(agent, input):
+    payload = await Submitted.wait(input["event"])
+    return await Read(payload)
+"#
+            }
+        };
+        let compiled = compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, source));
+        assert_eq!(compiled.air.event_requirements.len(), 1);
+        let requirement = &compiled.air.event_requirements[0];
+        assert_eq!(requirement.type_id, "event.submitted");
+        assert_eq!(
+            requirement.schema_digest,
+            requirement.payload_schema.canonical_digest().unwrap()
+        );
+        schemas.push((
+            requirement.payload_schema.clone(),
+            requirement.schema_digest.clone(),
+        ));
+        let wait = compiled
+            .air
+            .semantic_operations
+            .iter()
+            .find(|operation| operation.node_id == requirement.node_id)
+            .unwrap();
+        assert_eq!(wait.operands[0].type_ref, "EventRef");
+        assert_ne!(wait.operands[0].value_id, "event.submitted");
+        assert!(
+            compiled
+                .air
+                .value_assemblies
+                .iter()
+                .any(|value| value.value_id == wait.operands[0].value_id)
+        );
+        assert!(
+            compiled.frontend_graph.program_definitions[0]
+                .input_schema
+                .is_some()
+        );
+        let array_source = match frontend {
+            Frontend::Typescript => source
+                .replace(
+                    "type Payload = { reference: string; approved: boolean };",
+                    "type Payload = string[];",
+                )
+                .replace("Event<Payload>(", "Event<string[]>("),
+            Frontend::Python => source.replace(
+                "class Payload(TypedDict):\n    reference: str\n    approved: bool",
+                "Payload = list[str]",
+            ),
+        };
+        let array = compile(&SourceBundleRequest::new(
+            frontend,
+            ENTRYPOINT,
+            array_source,
+        ));
+        assert_eq!(
+            serde_json::to_value(&array.air.event_requirements[0].payload_schema).unwrap(),
+            serde_json::json!({"type":"array","items":{"type":"string"}})
+        );
+        for invalid in match frontend {
+            Frontend::Typescript => vec![
+                source.replace("wait(input.event)", "wait()"),
+                source.replace("wait(input.event)", "wait('event.submitted')"),
+                source.replace("EventRef<Payload>", "EventRef<string>"),
+                source.replace("Event<Payload>(", "Event<unknown>("),
+            ],
+            Frontend::Python => vec![
+                source.replace("wait(input[\"event\"])", "wait()"),
+                source.replace("wait(input[\"event\"])", "wait('event.submitted')"),
+                source.replace("EventRef[Payload]", "EventRef[str]"),
+                source.replace("Event[Payload](", "Event[object]("),
+            ],
+        } {
+            reject(&SourceBundleRequest::new(frontend, ENTRYPOINT, invalid));
+        }
+    }
+    assert_eq!(schemas[0], schemas[1]);
+}
+
+#[test]
+fn event_references_can_arrive_from_a_typed_capability_result() {
+    for frontend in FRONTENDS {
+        assert!(frontend_present(frontend));
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Event, type EventRef, Capability } from "@apxm/frontend";
+type Payload = { accepted: boolean };
+type Input = {};
+type Reservation = { event: EventRef<Payload> };
+const Reserve = Capability<Input, Reservation>("read");
+const Ready = Event<Payload>("event.ready");
+export const Reviewer = Workflow<Input, Payload>({ name: "Reviewer", async run(agent, input) {
+  const reservation = await Reserve(input);
+  return await Ready.wait(reservation.event);
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow, Event, EventRef, Capability
+class Payload(TypedDict):
+    accepted: bool
+class Reservation(TypedDict):
+    event: EventRef[Payload]
+Reserve = Capability[dict, Reservation]("read")
+Ready = Event[Payload]("event.ready")
+@Workflow(input=dict, output=Payload)
+async def Reviewer(agent, input):
+    reservation = await Reserve(input)
+    return await Ready.wait(reservation["event"])
+"#
+            }
+        };
+        let compiled = compile(&SourceBundleRequest::new(frontend, ENTRYPOINT, source));
+        assert_eq!(compiled.air.event_requirements.len(), 1);
+        assert_eq!(compiled.air.event_requirements[0].type_id, "event.ready");
+        assert_eq!(
+            compiled.frontend_graph.call_intents[0].intent_kind,
+            IntentKind::CapabilityInvocation
+        );
+    }
+}
+
 /// Build a request for a selector from a model reference and a body.
 fn request(frontend: Frontend, model_reference: &str, body: &str) -> SourceBundleRequest {
     let template = match frontend {

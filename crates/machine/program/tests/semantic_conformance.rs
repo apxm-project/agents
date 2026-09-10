@@ -53,6 +53,108 @@ fn frontend_graph_vectors_match_verifier() {
 }
 
 #[test]
+fn event_waits_require_exact_digest_bound_payload_contracts_and_ssa_references() {
+    let valid = load_vectors("apxm.air.json")
+        .into_iter()
+        .find(|vector| vector.expected_valid && vector.input["event_requirements"].is_array())
+        .unwrap()
+        .input;
+    assert!(verify_air_json(&valid).is_accepted());
+    for mutation in [
+        "missing",
+        "duplicate",
+        "digest",
+        "node",
+        "schema",
+        "literal",
+    ] {
+        let mut invalid = valid.clone();
+        match mutation {
+            "missing" => {
+                invalid
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("event_requirements");
+            }
+            "duplicate" => {
+                let first = invalid["event_requirements"][0].clone();
+                invalid["event_requirements"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(first);
+            }
+            "digest" => {
+                invalid["event_requirements"][0]["schema_digest"] =
+                    json!(format!("sha256:{}", "0".repeat(64)))
+            }
+            "node" => invalid["event_requirements"][0]["node_id"] = json!("missing.node"),
+            "schema" => {
+                invalid["event_requirements"][0]["payload_schema"] = json!({"type":"boolean"})
+            }
+            "literal" => {
+                let wait = invalid["semantic_operations"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|op| op["op"] == "await.event")
+                    .unwrap();
+                wait["operands"][0]["value_id"] = json!("event.literal");
+                wait["operands"][0]["type_ref"] = json!("EventType");
+            }
+            _ => unreachable!(),
+        }
+        assert!(!verify_air_json(&invalid).is_accepted(), "{mutation}");
+    }
+    let valid = load_vectors("apxm.frontend-graph.json")
+        .into_iter()
+        .find(|vector| {
+            vector.expected_valid
+                && vector.input["declarations"]
+                    .as_array()
+                    .is_some_and(|declarations| {
+                        declarations
+                            .iter()
+                            .any(|declaration| declaration["decl_kind"] == "event_type")
+                    })
+        })
+        .unwrap()
+        .input;
+    for mutation in ["schema", "operand", "edge"] {
+        let mut invalid = valid.clone();
+        match mutation {
+            "schema" => {
+                invalid["declarations"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|declaration| declaration["decl_kind"] == "event_type")
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("payload_schema");
+            }
+            "operand" => {
+                invalid["call_intents"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|call| call["intent_kind"] == "event_wait")
+                    .unwrap()["operand_values"] = json!([])
+            }
+            "edge" => invalid["data_edges"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|edge| edge["consumer_slot"] != "event_ref"),
+            _ => unreachable!(),
+        }
+        assert!(
+            !verify_frontend_graph_json(&invalid).is_accepted(),
+            "{mutation}"
+        );
+    }
+}
+
+#[test]
 fn input_schema_vectors_match_shared_contract_and_published_schema() {
     let contract = load_contract("schemas/apxm.frontend-graph.json");
     let schema = json!({"$ref": "#/$defs/EntrypointInputSchema", "$defs": contract["$defs"]});

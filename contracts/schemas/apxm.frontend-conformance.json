@@ -20,6 +20,12 @@
       "description": "The Context declarations the corpus shares across vectors. A Context is declared once so both languages give it the same type reference, which is what makes context_type_ref comparable across the two.",
       "items": { "$ref": "#/$defs/ContextDeclaration" }
     },
+    "event_ref_types": {
+      "type": "array", "items": {
+        "type": "object", "required": ["name", "field", "payload"], "additionalProperties": false,
+        "properties": { "name": { "type": "string" }, "field": { "type": "string" }, "payload": { "$ref": "#/$defs/ScalarKind" } }
+      }
+    },
     "vectors": {
       "type": "array",
       "minItems": 1,
@@ -129,6 +135,7 @@
           "description": "The binding name both languages declare this marker under. It is corpus-wide unique, because the Python projection authors every fixture in one module scope."
         },
         "marker": { "$ref": "#/$defs/MarkerKind" },
+        "payload": { "$ref": "#/$defs/ScalarKind" },
         "target_ref": {
           "type": "string",
           "description": "The exact typed reference the declaration binds. For a Skill it is the skill's own id, which is what that marker takes."

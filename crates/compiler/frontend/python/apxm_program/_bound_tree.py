@@ -46,6 +46,7 @@ class BoundDeclaration:
     output_type_ref: str
     target_ref: Optional[str] = None
     context_default_present: Optional[bool] = None
+    payload_schema: Optional[EntrypointInputSchema] = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,7 @@
       "type": "array",
       "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one. `Skill` declares instructions a program can load; it is not a second way to declare a persona, it is the one way, and like every other declaration it is stated at module scope and named by the body that loads it — no declaration is listed again on the Agent. `source` is the one name a TypeScript module states about itself, because JavaScript cannot read its own text back; Python infers the same fact.",
       "items": { "type": "string" },
-      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source", "Program"]
+      "const": ["Capability", "capability", "Event", "EventRef", "Hook", "TaskGroup", "Skill", "source", "Program"]
     },
     "non_public": {
       "type": "array",

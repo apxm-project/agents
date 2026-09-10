@@ -244,6 +244,8 @@ pub struct Declaration {
     pub target_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_default_present: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_schema: Option<crate::input_schema::EntrypointInputSchema>,
 }
 
 /// One typed function parameter.
@@ -817,6 +819,28 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
     }
 
     for declaration in &graph.declarations {
+        match (declaration.decl_kind, declaration.payload_schema.as_ref()) {
+            (DeclKind::EventType, Some(schema)) => {
+                if let Err(reason) = schema.validate() {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        declaration.decl_id.clone(),
+                        reason,
+                    ));
+                }
+            }
+            (DeclKind::EventType, None) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                declaration.decl_id.clone(),
+                "Event declaration requires a supported finite payload_schema",
+            )),
+            (_, Some(_)) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                declaration.decl_id.clone(),
+                "only Event declarations carry payload_schema",
+            )),
+            (_, None) => {}
+        }
         check_identifier(verdict, &declaration.decl_id, "declaration decl_id");
         check_identifier(
             verdict,
@@ -1743,15 +1767,34 @@ fn validate_call_intent(
             ));
         }
     } else if intent.intent_kind == IntentKind::EventWait {
-        if let Some(binding_ref) = intent.binding_ref.as_deref()
-            && !declarations
-                .get(binding_ref)
-                .is_some_and(|declaration| declaration_matches(declaration.decl_kind))
+        if !intent
+            .binding_ref
+            .as_deref()
+            .and_then(|binding_ref| declarations.get(binding_ref))
+            .is_some_and(|declaration| declaration_matches(declaration.decl_kind))
         {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 intent.node_id.clone(),
                 "event binding_ref does not resolve to a typed Event declaration",
+            ));
+        }
+        if intent.operand_values.len() != 1
+            || !intent.operand_values.first().is_some_and(|id| {
+                values
+                    .get(id.as_str())
+                    .is_some_and(|value| value.type_ref == "EventRef")
+                    && graph.data_edges.iter().any(|edge| {
+                        edge.to_consumer == intent.node_id
+                            && edge.from_value == *id
+                            && edge.consumer_slot == "event_ref"
+                    })
+            })
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "Event.wait requires one typed EventRef value operand",
             ));
         }
     } else if let Some(binding_ref) = intent.binding_ref.as_deref() {

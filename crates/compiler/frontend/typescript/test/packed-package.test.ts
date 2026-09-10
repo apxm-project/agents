@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { AUTHORING_TYPE_SOURCES } from "../src/generated/authoring-type-sources.js";
 
 const PACKAGE_DIR = new URL("..", import.meta.url).pathname;
 const PACKED_PACKAGE_INSTALL_TIMEOUT_MS = 30_000;
@@ -32,6 +33,15 @@ describe("packed @apxm/frontend", () => {
       expect(source, module).not.toContain('from "node:');
       expect(source, module).not.toContain("from 'node:");
     }
+  });
+
+  it("uses exact generated public declarations without filesystem reads in capture", () => {
+    for (const [path, source] of Object.entries(AUTHORING_TYPE_SOURCES)) {
+      expect(source).toBe(readFileSync(join(PACKAGE_DIR, "src", path.split("/").at(-1)!), "utf8"));
+    }
+    const capture = readFileSync(join(PACKAGE_DIR, "src/capture.ts"), "utf8");
+    expect(capture).not.toContain("ts.sys.readFile");
+    expect(capture).not.toContain("ts.sys.fileExists");
   });
 
   it("installs as a generic-only clean-consumer surface", () => {

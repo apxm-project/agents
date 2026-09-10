@@ -55,6 +55,13 @@ export type EntrypointInputSchema = {
   readonly required?: readonly string[];
 };
 
+export type EventRequirement = {
+  readonly node_id: string;
+  readonly type_id: string;
+  readonly payload_schema: EntrypointInputSchema;
+  readonly schema_digest: string;
+};
+
 export type ImportedProgramRef = {
   readonly program_ref: string;
   readonly artifact_digest: string;
@@ -68,6 +75,7 @@ export type Declaration = {
   readonly input_type_ref: string;
   readonly output_type_ref: string;
   readonly context_default_present?: boolean;
+  readonly payload_schema?: EntrypointInputSchema;
   readonly target_ref?: string;
 };
 

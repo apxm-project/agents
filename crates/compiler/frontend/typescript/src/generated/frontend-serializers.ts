@@ -52,6 +52,7 @@ import type {
   Declaration,
   EntrypointInputSchema,
   EqualsPredicate,
+  EventRequirement,
   FunctionDef,
   HookBinding,
   ImportedProgramRef,
@@ -159,6 +160,17 @@ export function serializeEntrypointInputSchema(record: EntrypointInputSchema): J
   return emitted;
 }
 
+/** One `EventRequirement` in contract key order: every required key, then each stated optional key. */
+export function serializeEventRequirement(record: EventRequirement): Json {
+  const emitted: Json = {
+    node_id: record.node_id,
+    type_id: record.type_id,
+    payload_schema: serializeEntrypointInputSchema(record.payload_schema),
+    schema_digest: record.schema_digest,
+  };
+  return emitted;
+}
+
 /** One `ImportedProgramRef` in contract key order: every required key, then each stated optional key. */
 export function serializeImportedProgramRef(record: ImportedProgramRef): Json {
   const emitted: Json = {
@@ -180,6 +192,9 @@ export function serializeDeclaration(record: Declaration): Json {
   };
   if (record.context_default_present !== undefined) {
     emitted.context_default_present = record.context_default_present;
+  }
+  if (record.payload_schema !== undefined) {
+    emitted.payload_schema = serializeEntrypointInputSchema(record.payload_schema);
   }
   if (record.target_ref !== undefined) {
     emitted.target_ref = record.target_ref;

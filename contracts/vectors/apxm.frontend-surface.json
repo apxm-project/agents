@@ -2,7 +2,7 @@
   "schema_version": "apxm.frontend-surface",
   "surface_version": "apxm.frontend-graph",
   "everyday": ["Agent", "Workflow", "agent", "Context", "Tool", "Model"],
-  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source", "Program"],
+  "advanced": ["Capability", "capability", "Event", "EventRef", "Hook", "TaskGroup", "Skill", "source", "Program"],
   "non_public": [
     "AgentProgram",
     "AgentFacade",
@@ -98,6 +98,13 @@
     "projections": {
       "python": {"module": "crates/compiler/frontend/python/apxm_program/_workflow.py", "symbol": "Program", "exported_from_root": true, "signature": "Program[Input, Output, Context] returned by @Agent and @Workflow; typed invoke(input) and new(context=...)"},
       "typescript": {"module": "crates/compiler/frontend/typescript/src/workflow.ts", "symbol": "Program", "exported_from_root": true, "signature": "Program<Input, Output, Context> returned by Agent and Workflow; typed invoke(input) and new({context})"}
+    }
+  }, {
+    "concept": "Admitted Event reservation",
+    "type_parameters": ["payload"],
+    "projections": {
+      "python": {"module": "crates/compiler/frontend/python/apxm_program/_markers.py", "symbol": "EventRef", "exported_from_root": true, "signature": "EventRef[Payload] supplied through admitted input or Capability output"},
+      "typescript": {"module": "crates/compiler/frontend/typescript/src/markers.ts", "symbol": "EventRef", "exported_from_root": true, "signature": "EventRef<Payload> supplied through admitted input or Capability output"}
     }
   }],
   "declarations": [
@@ -492,13 +499,13 @@
           "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
           "symbol": "Event",
           "exported_from_root": true,
-          "signature": "Event[Payload](ref), then await event.wait()"
+          "signature": "Event[Payload](ref), then await event.wait(reference: EventRef[Payload])"
         },
         "typescript": {
           "module": "crates/compiler/frontend/typescript/src/markers.ts",
           "symbol": "Event",
           "exported_from_root": true,
-          "signature": "Event<Payload>(ref), then await event.wait()"
+          "signature": "Event<Payload>(ref), then await event.wait(reference: EventRef<Payload>)"
         }
       },
       "arguments": [

@@ -6,7 +6,7 @@ constructs CFG/SSA and AIR, and produces the artifact admitted by the host.
 
 <!-- BEGIN AUTHORING VOCABULARY -->
 The everyday authoring vocabulary is `Agent`, `Workflow`, `agent`, `Context`, `Tool`, `Model`, plus ordinary language control flow.
-`Capability`, `capability`, `Event`, `Hook`, `TaskGroup`, `Skill`, `source`, `Program` are focused advanced declarations and executable types.
+`Capability`, `capability`, `Event`, `EventRef`, `Hook`, `TaskGroup`, `Skill`, `source`, `Program` are focused advanced declarations and executable types.
 <!-- END AUTHORING VOCABULARY -->
 
 Graph builders, AIR text, node ids, and `AgentFacade` are not author APIs. The

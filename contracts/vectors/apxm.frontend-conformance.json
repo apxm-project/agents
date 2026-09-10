@@ -5,6 +5,7 @@
     "Input",
     "Output"
   ],
+  "event_ref_types": [{ "name": "ReviewEventRef", "field": "reference", "payload": "string" }],
   "contexts": [
     {
       "name": "Conversation",
@@ -494,7 +495,8 @@
         {
           "name": "Approval",
           "marker": "Event",
-          "target_ref": "approval.event"
+          "target_ref": "approval.event",
+          "payload": "string"
         }
       ],
       "programs": [
@@ -521,7 +523,7 @@
         },
         {
           "program_id": "Coordinator",
-          "input": "Input",
+          "input": "ReviewEventRef",
           "output": "Output",
           "context": "ReviewContext",
           "hooks": [
@@ -562,7 +564,8 @@
                   "name": "approved",
                   "value": {
                     "expr": "await_event",
-                    "event": "Approval"
+                    "event": "Approval",
+                    "arguments": [{ "expr": "field", "name": "input", "field": "reference" }]
                   }
                 },
                 {

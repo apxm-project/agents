@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
-from .. import Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool
+from .. import Workflow, Capability, Context, Event, EventRef, Hook, Model, Skill, TaskGroup, Tool
 from ..permissions import Allow, Ask
 
 
@@ -332,6 +332,9 @@ class ReviewContext:
 class NestedContext:
     depth: int = 0
 
+class ReviewEventRef(TypedDict):
+    reference: EventRef[str]
+
 
 # vector: minimal_model_agent
 SummarizerModel = Model[object, object]("summarizer.model")
@@ -388,7 +391,7 @@ def _vector_capability_declared_twice() -> list[str]:
 # vector: composed_agent_event_and_task_group
 ReviewModel = Model[object, object]("review.model")
 SpecialistModel = Model[object, object]("specialist.model")
-Approval = Event[object]("approval.event")
+Approval = Event[str]("approval.event")
 
 @Workflow(input=Input, output=Output, context=ReviewContext)
 async def Specialist(agent, input):
@@ -398,12 +401,12 @@ async def Specialist(agent, input):
 async def RecordModelStart(agent) -> None:
     return None
 
-@Workflow(input=Input, output=Output, context=ReviewContext)
+@Workflow(input=ReviewEventRef, output=Output, context=ReviewContext)
 async def Coordinator(agent, input):
     while True:
         specialist = Specialist.new(context=ReviewContext())
         review = await specialist.invoke(input)
-        approved = await Approval.wait()
+        approved = await Approval.wait(input["reference"])
         async with TaskGroup():
             result = await ReviewModel(review)
         agent.context = ReviewContext(completed=True)

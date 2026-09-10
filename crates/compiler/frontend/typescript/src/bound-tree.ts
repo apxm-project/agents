@@ -31,6 +31,7 @@ import type {
   CallIntent,
   ControlIntent,
   ControlPredicate,
+  EntrypointInputSchema,
   SkillRequirement,
   ValueExpression,
 } from "./generated/frontend-records.js";
@@ -60,6 +61,7 @@ export type BoundDeclaration = {
   readonly output_type_ref: string;
   readonly target_ref?: string;
   readonly context_default_present?: boolean;
+  readonly payload_schema?: EntrypointInputSchema;
 };
 
 /** One typed value with exactly one origin. */

@@ -57,6 +57,7 @@ pub(crate) const RECORDS: &[&str] = &[
     "WorkflowAuthoring",
     "AgentAuthoring",
     "EntrypointInputSchema",
+    "EventRequirement",
     "ImportedProgramRef",
     "Declaration",
     "FunctionDef",

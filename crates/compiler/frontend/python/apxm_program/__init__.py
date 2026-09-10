@@ -14,13 +14,14 @@ from __future__ import annotations
 from ._advanced import Hook, TaskGroup
 from ._agent import Agent
 from ._workflow import Program, Workflow
-from ._markers import Capability, Context, Event, Model, Skill, Tool
+from ._markers import Capability, Context, Event, EventRef, Model, Skill, Tool
 
 __all__ = [
     "Agent",
     "Capability",
     "Context",
     "Event",
+    "EventRef",
     "Hook",
     "Model",
     "Program",

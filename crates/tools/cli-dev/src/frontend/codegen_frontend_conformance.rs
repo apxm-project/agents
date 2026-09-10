@@ -217,7 +217,7 @@ fn python_expression(node: &Value) -> String {
         "unawaited_effect" => format!("{}({})", string(node, "binding"), arguments()),
         "plain_call" => format!("{}({})", string(node, "callee"), arguments()),
         "invoke" => format!("await {}.invoke({})", string(node, "instance"), arguments()),
-        "await_event" => format!("await {}.wait()", string(node, "event")),
+        "await_event" => format!("await {}.wait({})", string(node, "event"), arguments()),
         "load" => format!("await {}.load()", string(node, "skill")),
         other => panic!("unhandled corpus expression {other}"),
     }
@@ -334,9 +334,9 @@ fn python_declaration(declaration: &Value) -> String {
         );
     }
     let typed = if marker == "Event" {
-        "[object]"
+        format!("[{}]", python_scalar_type(&string(declaration, "payload")))
     } else {
-        "[object, object]"
+        "[object, object]".to_string()
     };
     let permission = match declaration.get("permission") {
         None => String::new(),
@@ -419,9 +419,9 @@ pub fn render_conformance_python() -> String {
         String::new(),
         "import json".to_string(),
         "import re".to_string(),
-        "from typing import Any, Optional".to_string(),
+        "from typing import Any, Optional, TypedDict".to_string(),
         String::new(),
-        "from .. import Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool"
+        "from .. import Workflow, Capability, Context, Event, EventRef, Hook, Model, Skill, TaskGroup, Tool"
             .to_string(),
         "from ..permissions import Allow, Ask".to_string(),
         String::new(),
@@ -455,6 +455,14 @@ pub fn render_conformance_python() -> String {
         out.push(String::new());
         out.extend(python_context(context));
         out.push(String::new());
+    }
+    for reference in array(&corpus, "event_ref_types") {
+        out.push(format!(
+            "class {}(TypedDict):\n    {}: EventRef[{}]\n",
+            string(reference, "name"),
+            string(reference, "field"),
+            python_scalar_type(&string(reference, "payload"))
+        ));
     }
 
     let mut ids: Vec<String> = Vec::new();
@@ -633,7 +641,7 @@ fn typescript_expression(node: &Value) -> String {
         "unawaited_effect" => format!("{}({})", string(node, "binding"), arguments()),
         "plain_call" => format!("{}({})", string(node, "callee"), arguments()),
         "invoke" => format!("await {}.invoke({})", string(node, "instance"), arguments()),
-        "await_event" => format!("await {}.wait()", string(node, "event")),
+        "await_event" => format!("await {}.wait({})", string(node, "event"), arguments()),
         "load" => format!("await {}.load()", string(node, "skill")),
         other => panic!("unhandled corpus expression {other}"),
     }
@@ -784,9 +792,12 @@ fn typescript_declaration(declaration: &Value) -> String {
         );
     }
     let typed = if marker == "Event" {
-        "<Input>"
+        format!(
+            "<{}>",
+            typescript_scalar_type(&string(declaration, "payload"))
+        )
     } else {
-        "<Input, Output>"
+        "<Input, Output>".to_string()
     };
     let options = match declaration.get("permission") {
         None => String::new(),
@@ -808,7 +819,7 @@ fn typescript_declaration(declaration: &Value) -> String {
 /// The authored TypeScript module one vector's programs are captured from.
 fn typescript_source_text(corpus: &Value, vector: &Value) -> String {
     let mut lines = vec![
-        "import { Workflow, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";"
+        "import { Workflow, Capability, Context, Event, type EventRef, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";"
             .to_string(),
         String::new(),
     ];
@@ -819,6 +830,14 @@ fn typescript_source_text(corpus: &Value, vector: &Value) -> String {
         ));
     }
     let contexts = vector_contexts(corpus, vector);
+    for reference in array(corpus, "event_ref_types") {
+        lines.push(format!(
+            "type {} = {{ {}: EventRef<{}> }};",
+            string(reference, "name"),
+            string(reference, "field"),
+            typescript_scalar_type(&string(reference, "payload"))
+        ));
+    }
     for name in &contexts {
         let context = context_named(corpus, name);
         let fields: Vec<String> = array(context, "fields")
@@ -940,7 +959,7 @@ pub fn render_conformance_typescript() -> String {
         TYPESCRIPT_HEADER.to_string(),
         TYPESCRIPT_MODULE_DOC.to_string(),
         String::new(),
-        "import { Workflow, Capability, Context, Event, Model, Skill, Tool } from \"../index.js\";"
+        "import { Workflow, Capability, Context, Event, type EventRef, Model, Skill, Tool } from \"../index.js\";"
             .to_string(),
         "import { submitAuthoredSource } from \"../host.js\";".to_string(),
         "import { Allow, Ask } from \"../permissions.js\";".to_string(),
@@ -967,6 +986,14 @@ pub fn render_conformance_typescript() -> String {
             "type {} = {{ {} }};",
             string(context, "name"),
             fields.join(", ")
+        ));
+    }
+    for reference in array(&corpus, "event_ref_types") {
+        out.push(format!(
+            "type {} = {{ {}: EventRef<{}> }};",
+            string(reference, "name"),
+            string(reference, "field"),
+            typescript_scalar_type(&string(reference, "payload"))
         ));
     }
     out.push(String::new());

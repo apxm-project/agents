@@ -12,6 +12,7 @@
 // and `_emit.py` split in the Python frontend.
 
 import ts from "typescript";
+import { AUTHORING_TYPE_SOURCES } from "./generated/authoring-type-sources.js";
 
 import type {
   BoundCall,
@@ -52,19 +53,19 @@ import type {
   ValueExpression,
 } from "./generated/frontend-records.js";
 import {
-    AGENT_BODY_NOT_ASYNC,
-    AGENT_DYNAMIC_ARGUMENT,
-    AGENT_MISSING_INPUT_OUTPUT,
-    CAPABILITY_REF_NOT_EXACT,
-    CONTEXT_NOT_TYPED,
-    EVENT_NOT_TYPED,
-    HOOK_DYNAMIC_REGISTRATION,
+  AGENT_BODY_NOT_ASYNC,
+  AGENT_DYNAMIC_ARGUMENT,
+  AGENT_MISSING_INPUT_OUTPUT,
+  CAPABILITY_REF_NOT_EXACT,
+  CONTEXT_NOT_TYPED,
+  EVENT_NOT_TYPED,
+  HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,
   HOOK_SCOPE_UNRESOLVED,
-    HOOK_TARGET_UNRESOLVED,
-    SKILL_LOAD_OUTSIDE_BODY,
-    MODEL_UNTYPED_SCHEMA,
-    type DiagnosticCode,
+  HOOK_TARGET_UNRESOLVED,
+  SKILL_LOAD_OUTSIDE_BODY,
+  MODEL_UNTYPED_SCHEMA,
+  type DiagnosticCode,
 } from "./generated/diagnostics.js";
 import * as scopeVocabulary from "./generated/scopes.js";
 import { READ_SKILL } from "./generated/capabilities.js";
@@ -243,6 +244,7 @@ class Capture {
   private inputTypeRef = "Input";
   private inputContract: InputContract | undefined;
   private inputSchema: EntrypointInputSchema | undefined;
+  private eventSchemas = new Map<string, EntrypointInputSchema>();
   private readonly pureLocals = new Set<ts.Symbol>();
   private outputTypeRef = "Output";
   private contextTypeRef: string | undefined;
@@ -315,9 +317,10 @@ class Capture {
         this.declarations.push({
           decl_id: declId,
           decl_kind: "event_type",
-          input_type_ref: binding.typeRef,
-          output_type_ref: binding.typeRef,
+          input_type_ref: `${declId}.payload`,
+          output_type_ref: `${declId}.payload`,
           target_ref: binding.targetRef,
+          payload_schema: this.eventSchemas.get(name),
         });
       } else if (binding.kind === "context") {
         this.declarations.push({
@@ -598,6 +601,7 @@ class Capture {
       name: string;
       factory: string;
       typeArgument?: string;
+      typeNode?: ts.TypeNode;
       typeArgumentCount: number;
       initial?: ts.Expression;
     }> = [];
@@ -628,6 +632,7 @@ class Capture {
           name: declaration.name.text,
           factory,
           typeArgument: initializer.typeArguments?.[0]?.getText().trim(),
+          typeNode: initializer.typeArguments?.[0],
           typeArgumentCount: initializer.typeArguments?.length ?? 0,
           initial: initializer.arguments[0],
         });
@@ -662,6 +667,17 @@ class Capture {
           }
         }
         this.bindings.set(entry.name, bound);
+        continue;
+      }
+      if (value.kind === "event_type") {
+        const schema = entry.typeNode && checkedInputSchema(
+          this.checker, entry.typeNode, this.checker.getTypeFromTypeNode(entry.typeNode),
+        );
+        if (!schema) {
+          throw new CaptureError(EVENT_NOT_TYPED, "Event payload requires an explicit supported finite JSON type");
+        }
+        this.eventSchemas.set(entry.name, schema);
+        this.bindings.set(entry.name, value);
         continue;
       }
       this.bindings.set(entry.name, value);
@@ -1087,6 +1103,17 @@ class Capture {
             "wait receiver is a statically bound Event",
           );
         }
+        const signature = this.checker.getResolvedSignature(call);
+        const parameter = signature?.parameters[0];
+        const argument = call.arguments[0];
+        const argumentType = argument && this.checker.getTypeAtLocation(argument);
+        if (
+          call.arguments.length !== 1 || !parameter || !argumentType ||
+          (argumentType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          !this.checker.isTypeAssignableTo(argumentType, this.checker.getTypeOfSymbolAtLocation(parameter, call))
+        ) {
+          throw new CaptureError(EVENT_NOT_TYPED, "Event.wait requires one admitted EventRef with the same payload type");
+        }
         return {
           intent: "event_wait",
           bindingRef,
@@ -1434,7 +1461,18 @@ class Capture {
         operandExpression = contextProperty.initializer;
       }
     }
-    return [{ value_id: this.valueForExpression(operandExpression), slot }];
+    let valueId = this.valueForExpression(operandExpression);
+    if (slot === "event_ref") {
+      const reference = this.next("event_ref");
+      this.values.push({
+        value_id: reference,
+        type_ref: "EventRef",
+        origin: "literal",
+        expression: { kind: "ssa", value_id: valueId },
+      });
+      valueId = reference;
+    }
+    return [{ value_id: valueId, slot }];
   }
 
   private isYield(call: ts.CallExpression): boolean {
@@ -2339,23 +2377,37 @@ interface Promise<T> {
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     allowJs: true,
     noLib: true,
-    noResolve: true,
     strictNullChecks: true,
+    strictFunctionTypes: true,
     skipLibCheck: true,
   };
+  // Bind against the shipped public declarations, not a second handwritten
+  // approximation of Program callbacks or opaque EventRef types. Only this
+  // frontend's own modules are readable; authored imports cannot widen the
+  // static checker's filesystem access.
+  const frontendEntry = "/__apxm_frontend__/index.ts";
+  const isFrontendFile = (fileName: string): boolean => Object.prototype.hasOwnProperty.call(AUTHORING_TYPE_SOURCES, fileName);
+  const readSource = (fileName: string): string | undefined => fileName === input.fileName
+    ? sourceText
+    : fileName === libraryFileName
+      ? libraryText
+      : isFrontendFile(fileName) ? AUTHORING_TYPE_SOURCES[fileName] : undefined;
+  const resolutionHost: ts.ModuleResolutionHost = {
+    fileExists: isFrontendFile,
+    readFile: (fileName) => isFrontendFile(fileName) ? AUTHORING_TYPE_SOURCES[fileName] : undefined,
+  };
   const host: ts.CompilerHost = {
-    fileExists: (fileName) => fileName === input.fileName || fileName === libraryFileName,
-    readFile: (fileName) => fileName === input.fileName
-      ? sourceText
-      : fileName === libraryFileName
-        ? libraryText
-        : undefined,
-    getSourceFile: (fileName, languageVersion) =>
-      fileName === input.fileName
-        ? ts.createSourceFile(fileName, sourceText, languageVersion, true)
-        : fileName === libraryFileName
-          ? ts.createSourceFile(fileName, libraryText, languageVersion, true)
-        : undefined,
+    fileExists: (fileName) => readSource(fileName) !== undefined,
+    readFile: readSource,
+    getSourceFile: (fileName, languageVersion) => {
+      const text = readSource(fileName);
+      return text === undefined ? undefined : ts.createSourceFile(fileName, text, languageVersion, true);
+    },
+    resolveModuleNames: (moduleNames, containingFile) => moduleNames.map((name) => {
+      if (isFrontendModuleSpecifier(name)) return { resolvedFileName: frontendEntry, extension: ts.Extension.Ts };
+      if (!isFrontendFile(containingFile) || !name.startsWith(".")) return undefined;
+      return ts.resolveModuleName(name, containingFile, options, resolutionHost).resolvedModule;
+    }),
     getDefaultLibFileName: () => libraryFileName,
     writeFile: () => {},
     getCurrentDirectory: () => "",

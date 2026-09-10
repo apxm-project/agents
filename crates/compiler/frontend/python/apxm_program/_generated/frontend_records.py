@@ -71,6 +71,15 @@ class EntrypointInputSchema:
     required: Optional[tuple[str, ...]] = None
 
 @dataclass(frozen=True, slots=True)
+class EventRequirement:
+    """One `EventRequirement` record from the apxm.frontend-graph contract."""
+
+    node_id: str
+    type_id: str
+    payload_schema: EntrypointInputSchema
+    schema_digest: str
+
+@dataclass(frozen=True, slots=True)
 class ImportedProgramRef:
     """One `ImportedProgramRef` record from the apxm.frontend-graph contract."""
 
@@ -88,6 +97,7 @@ class Declaration:
     input_type_ref: str
     output_type_ref: str
     context_default_present: Optional[bool] = None
+    payload_schema: Optional[EntrypointInputSchema] = None
     target_ref: Optional[str] = None
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +379,7 @@ __all__ = [
     "WorkflowAuthoring",
     "AgentAuthoring",
     "EntrypointInputSchema",
+    "EventRequirement",
     "ImportedProgramRef",
     "Declaration",
     "FunctionDef",

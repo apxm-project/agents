@@ -61,6 +61,7 @@ from .frontend_records import (
     Declaration,
     EntrypointInputSchema,
     EqualsPredicate,
+    EventRequirement,
     FunctionDef,
     HookBinding,
     ImportedProgramRef,
@@ -172,6 +173,17 @@ def serialize_entrypoint_input_schema(record: EntrypointInputSchema) -> dict[str
     return emitted
 
 
+def serialize_event_requirement(record: EventRequirement) -> dict[str, Any]:
+    """One `EventRequirement` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "node_id": _field(record, "node_id"),
+        "type_id": _field(record, "type_id"),
+        "payload_schema": serialize_entrypoint_input_schema(_field(record, "payload_schema")),
+        "schema_digest": _field(record, "schema_digest"),
+    }
+    return emitted
+
+
 def serialize_imported_program_ref(record: ImportedProgramRef) -> dict[str, Any]:
     """One `ImportedProgramRef` in contract key order: every required key, then each stated optional key."""
     emitted: dict[str, Any] = {
@@ -194,6 +206,9 @@ def serialize_declaration(record: Declaration) -> dict[str, Any]:
     context_default_present = _field(record, "context_default_present")
     if context_default_present is not None:
         emitted["context_default_present"] = context_default_present
+    payload_schema = _field(record, "payload_schema")
+    if payload_schema is not None:
+        emitted["payload_schema"] = serialize_entrypoint_input_schema(payload_schema)
     target_ref = _field(record, "target_ref")
     if target_ref is not None:
         emitted["target_ref"] = target_ref
@@ -634,6 +649,7 @@ __all__ = [
     "serialize_workflow_authoring",
     "serialize_agent_authoring",
     "serialize_entrypoint_input_schema",
+    "serialize_event_requirement",
     "serialize_imported_program_ref",
     "serialize_declaration",
     "serialize_function_def",
