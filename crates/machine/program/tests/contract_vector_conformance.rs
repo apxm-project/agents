@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use common::{Vector, load_contract, load_vectors};
 use files::{contract_file_digest, contract_file_exists};
 use published::published_contract_files;
-use schema::compile_schema_with;
+use schema::{compile_pointer_schema_with, compile_schema_with};
 use serde_json::Value;
 use vectors::published_vector_files;
 
@@ -239,6 +239,30 @@ fn vector_file(id: &str) -> String {
     format!("{id}.json")
 }
 
+/// A vector's target: the root document by default, or the subschema a vector
+/// names with `schema_pointer`.
+///
+/// A schema publishes envelopes its root document never carries —
+/// `apxm.owner-request.v1`'s `$defs/OwnerAnswer` is the answer the runtime
+/// validates a resumed invocation against, and it is a different document from
+/// the request. Held only against the root, every such envelope is simply
+/// invalid, so a file of root vectors can say nothing about it. Naming the
+/// pointer lets the same file pin both sides of that boundary too.
+fn subschema_pointers(file: &str) -> BTreeMap<String, String> {
+    load_contract(&format!("vectors/{file}"))
+        .as_array()
+        .expect("vectors file is a JSON array")
+        .iter()
+        .filter_map(|entry| {
+            let pointer = entry["schema_pointer"].as_str()?;
+            Some((
+                entry["name"].as_str().expect("vector name").to_owned(),
+                pointer.to_owned(),
+            ))
+        })
+        .collect()
+}
+
 /// Rejections no JSON Schema can express: a digest that does not reproduce its
 /// own preimage, a field that must agree with another field, an encoding that
 /// must be canonical. The published schema accepts these documents because they
@@ -309,24 +333,55 @@ fn every_published_vector_matches_its_published_schema() {
         siblings,
     } in SCHEMAS_UNDER_TEST
     {
-        let schema = compile_schema_with(&schema_file(id), snapshots, siblings);
+        let root = compile_schema_with(&schema_file(id), snapshots, siblings);
         let vectors = load_vectors(&vector_file(id));
+        let pointers = subschema_pointers(&vector_file(id));
         assert!(
             !vectors.is_empty(),
             "{id}: a vector file that exercises nothing enforces nothing"
         );
-        assert!(
-            vectors.iter().any(|vector| vector.expected_valid)
-                && vectors.iter().any(|vector| !vector.expected_valid),
-            "{id}: vectors must pin both sides of the boundary — a file of only \
-             accepting or only rejecting cases cannot locate it"
-        );
+
+        // Every target a vector names — the root document and each subschema —
+        // pins both sides of its own boundary. Rolled up across targets, a
+        // rejecting subschema case could stand in for a missing root one.
+        let mut sides: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
+        for vector in &vectors {
+            let target = pointers.get(&vector.name).map_or("", String::as_str);
+            let seen = sides.entry(target).or_insert((false, false));
+            if vector.expected_valid {
+                seen.0 = true;
+            } else {
+                seen.1 = true;
+            }
+        }
+        for (target, (accepts, rejects)) in &sides {
+            assert!(
+                *accepts && *rejects,
+                "{id}{target}: vectors must pin both sides of the boundary — a set \
+                 of only accepting or only rejecting cases cannot locate it"
+            );
+        }
+
+        let subschemas: BTreeMap<&str, jsonschema::JSONSchema> = sides
+            .keys()
+            .filter(|target| !target.is_empty())
+            .map(|target| {
+                (
+                    *target,
+                    compile_pointer_schema_with(&schema_file(id), target, snapshots, siblings),
+                )
+            })
+            .collect();
+
         for Vector {
             name,
             input,
             expected_valid,
         } in vectors
         {
+            let schema = pointers
+                .get(&name)
+                .map_or(&root, |pointer| &subschemas[pointer.as_str()]);
             let admitted = schema.is_valid(&input);
             if admitted && !expected_valid {
                 let entry = ((*id).to_owned(), name.clone());

@@ -18,5 +18,133 @@
     "name": "reject-provider-selector",
     "expected_valid": false,
     "input": { "node_id": "node.await.1", "event_ref": "event.1", "provider": "first_available" }
+  },
+  {
+    "name": "reject-bare-event-id-as-event-reference",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": "event.1",
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-host-capability-request-id-that-is-not-a-digest",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": "capability-request.invalid",
+      "contract": { "kind": "host_capability" }
+    }
+  },
+  {
+    "name": "reject-reservation-without-a-generation",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1" },
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-zero-generation",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 0 },
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-generation-past-the-interoperable-integer-range",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 9007199254740992 },
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-field-inside-the-event-reference",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 1, "unexpected": true },
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-contract-kind",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 1 },
+      "contract": {
+        "kind": "declared_event",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      }
+    }
+  },
+  {
+    "name": "reject-declared-contract-without-a-schema-digest",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 1 },
+      "contract": { "kind": "declared", "type_id": "Example" }
+    }
+  },
+  {
+    "name": "reject-unknown-request-field",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.await.1",
+      "node_execution_id": "execution.1",
+      "program_invocation_id": "invocation.1",
+      "event_ref": { "event_id": "event.1", "generation": 1 },
+      "contract": {
+        "kind": "declared",
+        "type_id": "Example",
+        "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      },
+      "timeout_seconds": 30
+    }
   }
 ]
