@@ -61,7 +61,15 @@ ordinary Agent; do not make your program depend on an example name.
 3. Use normal `if`, `match`/`switch`, loops, `try`/`catch`, and `return` for
    behavior. Use `agent.yield_(output)` only when the Program Instance should
    commit its next Context and resume on its next input; use an `Event` wait to
-   park the same invocation instead.
+   park the same invocation instead. Use `agent.ask_owner(...)` when the
+   program needs its human owner to decide before it continues: it is a yield
+   whose committed output is a typed request (a prompt, literal `choices` or a
+   typed `answer`, and `expires_in_seconds`) and whose resume input is the
+   closed envelope `{outcome: "answered", answer} | {outcome: "declined"} |
+   {outcome: "expired"}`, validated against the request before the program
+   resumes. The host records who owns the Session and lets only that Person
+   answer; an answer never dispatches a Capability, so a Capability the program
+   calls afterwards is still governed by its own Policy.
 4. If a package supplies a local Tool implementation, keep it in a handler
    module — `Tool.define` from `@apxm/agent-packaging` in TypeScript,
    `capability(...)` from `apxm_program.handlers` in Python — never in the Agent

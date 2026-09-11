@@ -280,6 +280,13 @@ fn python_body(body: &[Value], indent: usize) -> Vec<String> {
                 string(statement, "name"),
                 python_expression(&statement["value"])
             )),
+            "ask_owner" => lines.push(format!(
+                "{pad}{} = await agent.ask_owner({{\"prompt\": {}, \"choices\": {}, \"expires_in_seconds\": {}}})",
+                string(statement, "name"),
+                python_expression(&statement["prompt"]),
+                python_literal(&statement["choices"]),
+                statement["expires_in_seconds"]
+            )),
             "new_program" => lines.push(format!(
                 "{pad}{} = {}.new(context={}())",
                 string(statement, "name"),
@@ -751,6 +758,21 @@ fn typescript_body(
                 string(statement, "name"),
                 typescript_expression(&statement["value"])
             )),
+            "ask_owner" => {
+                let name = string(statement, "name");
+                let keyword = if declared.contains(&name) {
+                    ""
+                } else {
+                    "const "
+                };
+                declared.insert(name.clone());
+                lines.push(format!(
+                    "{pad}{keyword}{name} = await agent.ask_owner({{ prompt: {}, choices: {}, expires_in_seconds: {} }});",
+                    typescript_expression(&statement["prompt"]),
+                    typescript_literal(&statement["choices"]),
+                    statement["expires_in_seconds"]
+                ));
+            }
             "new_program" => {
                 let name = string(statement, "name");
                 declared.insert(name.clone());

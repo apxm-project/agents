@@ -553,6 +553,9 @@ class _Capture:
         if intent == "yield":
             self._visit_yield(call, region_id, assign_to)
             return
+        if intent == "owner_request":
+            self._visit_ask_owner(call, region_id, assign_to)
+            return
         node_id = self._next(intent)
         result_value: Optional[str] = None
         if intent == "event_wait":
@@ -614,6 +617,12 @@ class _Capture:
                 and func.value.id == self._facade_name
             ):
                 return "yield", None, None, "output"
+            if (
+                func.attr == "ask_owner"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == self._facade_name
+            ):
+                return "owner_request", None, None, "output"
             if func.attr == "invoke":
                 receiver_kind = "program_instance_ref"
                 if isinstance(func.value, ast.Name) and func.value.id in self._declared:
@@ -986,6 +995,212 @@ class _Capture:
             return get_type_hints(annotation, globalns=self.bindings, localns=self.bindings, include_extras=True).get(field)
         except (TypeError, NameError, ValueError):
             return None
+
+    def _visit_ask_owner(
+        self, call: ast.Call, region_id: str, assign_to: Optional[str]
+    ) -> None:
+        """Capture ``agent.ask_owner(request, answer=Type)`` as a typed yield.
+
+        The output is the closed owner-request value and the resume value is the
+        owner's answer envelope. The prompt may read a prior value; the answer
+        shape and the expiry are literal so the compiler can address the answer
+        schema before anything runs. The compiler stamps the document's schema
+        version and the answer schema digest while lowering — source states
+        neither.
+        """
+        if region_id in self._hook_body_regions:
+            raise CaptureError(
+                HOOK_DYNAMIC_REGISTRATION,
+                "a Hook body does not park the Agent invocation",
+                call,
+            )
+        if assign_to is None:
+            raise CaptureError(
+                AGENT_MISSING_INPUT_OUTPUT,
+                "agent.ask_owner assigns its typed answer envelope",
+                call,
+            )
+        if len(call.args) != 1 or not isinstance(call.args[0], ast.Dict):
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT, "ask_owner takes one literal request dict", call
+            )
+        answer_type: Any = None
+        for keyword in call.keywords:
+            if keyword.arg != "answer" or not isinstance(keyword.value, ast.Name):
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "ask_owner admits one keyword, answer=<declared type>",
+                    call,
+                )
+            answer_type = self.bindings.get(keyword.value.id)
+            if answer_type is None:
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "an owner request Answer names a declared type",
+                    call,
+                )
+        request = call.args[0]
+        prompt: Optional[ValueExpression] = None
+        choices: Optional[ast.AST] = None
+        expires_in_seconds: Optional[int] = None
+        for key, value in zip(request.keys, request.values, strict=True):
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "an owner request states prompt, choices, and expires_in_seconds as literal fields",
+                    call,
+                )
+            if key.value == "prompt":
+                expression = self._expression_for_value(value)
+                if expression.kind not in ("string", "ssa", "projection", "context"):
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "an owner request prompt is a string or a prior value",
+                        call,
+                    )
+                prompt = expression
+            elif key.value == "choices":
+                choices = value
+            elif key.value == "expires_in_seconds":
+                if (
+                    not isinstance(value, ast.Constant)
+                    or isinstance(value.value, bool)
+                    or not isinstance(value.value, int)
+                    or value.value <= 0
+                    or value.value > 9_007_199_254_740_991
+                ):
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "an owner request expiry is a positive integer literal of seconds",
+                        call,
+                    )
+                expires_in_seconds = value.value
+            else:
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT, f"an owner request has no field {key.value}", call
+                )
+        if prompt is None or expires_in_seconds is None:
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "an owner request states a prompt and expires_in_seconds",
+                call,
+            )
+        if (choices is None) == (answer_type is None):
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "ask_owner declares either literal choices or one typed answer, not both",
+                call,
+            )
+        if choices is not None:
+            if not isinstance(choices, (ast.List, ast.Tuple)):
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "owner request choices are a list literal of {id, label}",
+                    call,
+                )
+            items: list[ValueExpression] = []
+            for element in choices.elts:
+                fields: dict[str, str] = {}
+                if isinstance(element, ast.Dict):
+                    for field_key, field_value in zip(element.keys, element.values, strict=True):
+                        if (
+                            not isinstance(field_key, ast.Constant)
+                            or not isinstance(field_key.value, str)
+                            or not isinstance(field_value, ast.Constant)
+                            or not isinstance(field_value.value, str)
+                        ):
+                            raise CaptureError(
+                                AGENT_DYNAMIC_ARGUMENT,
+                                "each owner choice is a literal {id, label}",
+                                call,
+                            )
+                        fields[field_key.value] = field_value.value
+                if set(fields) != {"id", "label"}:
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "each owner choice is a literal {id, label}",
+                        call,
+                    )
+                items.append(
+                    ObjectExpression(
+                        kind="object",
+                        fields=(
+                            ValueField(name="id", value=StringExpression(kind="string", value=fields["id"])),
+                            ValueField(name="label", value=StringExpression(kind="string", value=fields["label"])),
+                        ),
+                    )
+                )
+            answer: ValueExpression = ObjectExpression(
+                kind="object",
+                fields=(
+                    ValueField(name="mode", value=StringExpression(kind="string", value="choice")),
+                    ValueField(name="choices", value=ArrayExpression(kind="array", items=tuple(items))),
+                ),
+            )
+        else:
+            from ._generated.frontend_serializers import serialize_entrypoint_input_schema
+            from ._input_schema import checked_input_schema
+
+            schema = checked_input_schema(answer_type, self.bindings)
+            if schema is None:
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "an owner request Answer is a finite JSON type",
+                    call,
+                )
+            answer = ObjectExpression(
+                kind="object",
+                fields=(
+                    ValueField(name="mode", value=StringExpression(kind="string", value="typed")),
+                    ValueField(name="schema", value=_json_value_expression(serialize_entrypoint_input_schema(schema))),
+                ),
+            )
+        request_value = self._next("value")
+        self.values.append(
+            BoundValue(
+                value_id=request_value,
+                type_ref="OwnerRequest",
+                origin="literal",
+                expression=ObjectExpression(
+                    kind="object",
+                    fields=(
+                        ValueField(name="prompt", value=prompt),
+                        ValueField(name="answer", value=answer),
+                        ValueField(name="expires_in_seconds", value=IntegerExpression(kind="integer", value=expires_in_seconds)),
+                    ),
+                ),
+            )
+        )
+        node_id = self._next("yield")
+        resume_value = self._next("resume")
+        self.values.append(
+            BoundValue(
+                value_id=resume_value,
+                type_ref="OwnerAnswer",
+                origin="resume_input",
+                origin_id=node_id,
+            )
+        )
+        self.controls.append(
+            BoundControl(
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="yield",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    result_value=resume_value,
+                ),
+                span=self._span(call),
+                operands=(BoundOperand(value_id=request_value, slot="output"),),
+                predicate=None,
+            )
+        )
+        self._values_by_name[assign_to] = resume_value
+        self._types_by_name[assign_to] = None
+        self._record_node(region_id, node_id)
+        span = self._span(call)
+        if span is not None:
+            self.spans.append((node_id, span, "yield"))
 
     def _visit_yield(
         self, call: ast.Call, region_id: str, assign_to: Optional[str]
@@ -1871,3 +2086,29 @@ def _source_reference(func: Any) -> str:
         return source.relative_to(repository_root).as_posix()
     except ValueError:
         return "<agent>"
+
+
+def _json_value_expression(value: Any) -> ValueExpression:
+    """A finite JSON value as the closed pure expression grammar.
+
+    Object keys are sorted so both authoring languages assemble one identical
+    literal for the same schema.
+    """
+    if value is None:
+        return NullExpression(kind="null")
+    if isinstance(value, bool):
+        return BooleanExpression(kind="boolean", value=value)
+    if isinstance(value, int):
+        if abs(value) > 9_007_199_254_740_991:
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "integer exceeds the shared safe integer domain", None)
+        return IntegerExpression(kind="integer", value=value)
+    if isinstance(value, str):
+        return StringExpression(kind="string", value=value)
+    if isinstance(value, (list, tuple)):
+        return ArrayExpression(kind="array", items=tuple(_json_value_expression(item) for item in value))
+    if isinstance(value, dict):
+        return ObjectExpression(
+            kind="object",
+            fields=tuple(ValueField(name=name, value=_json_value_expression(value[name])) for name in sorted(value)),
+        )
+    raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request answer schema is finite JSON", None)

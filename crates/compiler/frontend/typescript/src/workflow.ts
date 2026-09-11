@@ -31,10 +31,51 @@ export interface Program<Input, Output, Context = undefined> extends ProgramBind
   readonly invoke: (input: Input) => Promise<Output>;
 }
 
+/** One answer the owner may pick. */
+export type OwnerChoice = { readonly id: string; readonly label: string };
+
+/** A request the owner answers by picking one declared choice. */
+export type OwnerChoiceRequest = {
+  readonly prompt: string;
+  readonly choices: readonly OwnerChoice[];
+  readonly expires_in_seconds: number;
+};
+
+/** A request the owner answers with a value of the declared Answer type. */
+export type OwnerTypedRequest = {
+  readonly prompt: string;
+  readonly expires_in_seconds: number;
+};
+
+/**
+ * The closed envelope an owner request resumes with. The host fixes the
+ * deadline; after it only `declined` or `expired` can reach the program, so a
+ * program never waits on an answer that can no longer arrive.
+ */
+export type OwnerAnswer<Answer> =
+  | { readonly outcome: "answered"; readonly answer: Answer }
+  | { readonly outcome: "declined" }
+  | { readonly outcome: "expired" };
+
 export type ProgramConfig<Input, Output, Context> = {
   readonly name?: string;
   readonly context?: ContextSchema;
-  run(agent: { context: Context; yield_(output: Output): Promise<Input> }, input: Input): Promise<Output> | Output;
+  run(
+    agent: {
+      context: Context;
+      yield_(output: Output): Promise<Input>;
+      /**
+       * Ask the Person who owns this Session and park until they answer. The
+       * request is a typed yield: the host reads it from the committed output,
+       * only the owner may answer, and the answer confers no Capability
+       * authority. A choice request resumes with the chosen id; a typed
+       * request resumes with a value of `Answer`, a finite JSON type.
+       */
+      ask_owner(request: OwnerChoiceRequest): Promise<OwnerAnswer<string>>;
+      ask_owner<Answer>(request: OwnerTypedRequest): Promise<OwnerAnswer<Answer>>;
+    },
+    input: Input,
+  ): Promise<Output> | Output;
 };
 
 /** General orchestration: Model calls are optional, never implicitly provided. */

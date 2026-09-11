@@ -257,6 +257,16 @@ _EXPECTATIONS: dict[str, list[dict[str, Any]]] = {
         {"equals": None, "query": "diagnostics"},
         {"includes_query": "graph:values[origin=resume_input].value_id", "query": "air:structural_ir[].block_arguments[].value_id"},
     ],
+    "owner_request_yield": [
+        {"equals": None, "query": "diagnostics"},
+        {"equals": ["OwnerAnswer"], "query": "graph:values[origin=resume_input].type_ref"},
+        {"equals": ["literal"], "query": "graph:values[type_ref=OwnerRequest].origin"},
+        {"equals": ["object"], "query": "graph:values[type_ref=OwnerRequest].expression.kind"},
+        {"query": "graph:control_intents[control_kind=yield].result_value", "same_as": "graph:values[origin=resume_input].value_id"},
+        {"query": "graph:control_intents[control_kind=yield].operand_values[]", "same_as": "graph:values[type_ref=OwnerRequest].value_id"},
+        {"equals": ["OwnerAnswer"], "query": "air:structural_ir[kind=yield].block_arguments[].type_ref"},
+        {"includes": ["prompt", "answer", "expires_in_seconds", "schema_version", "schema_digest"], "query": "air:value_assemblies[].expression.fields[].name"},
+    ],
     "nested_loop_hook_targets_inner_loop": [
         {"length": 2, "query": "graph:control_intents[control_kind=loop].node_id"},
         {"equals": ["observe"], "query": "graph:hook_bindings[].return_mode"},
@@ -428,6 +438,16 @@ async def Resumable(agent, input):
 
 def _vector_resumable_loop_block_arguments() -> list[str]:
     return _check("resumable_loop_block_arguments", Resumable, _EXPECTATIONS["resumable_loop_block_arguments"])
+
+# vector: owner_request_yield
+
+@Workflow(input=Input, output=Output)
+async def Consent(agent, input):
+    reply = await agent.ask_owner({"prompt": input["message"], "choices": [{"id": "send", "label": "Send it"}, {"id": "hold", "label": "Hold"}], "expires_in_seconds": 3600})
+    return reply
+
+def _vector_owner_request_yield() -> list[str]:
+    return _check("owner_request_yield", Consent, _EXPECTATIONS["owner_request_yield"])
 
 # vector: nested_loop_hook_targets_inner_loop
 NestedOuterModel = Model[object, object]("nested.outer.model")
@@ -652,6 +672,7 @@ VECTOR_IDS: tuple[str, ...] = (
     "capability_declared_twice",
     "composed_agent_event_and_task_group",
     "resumable_loop_block_arguments",
+    "owner_request_yield",
     "nested_loop_hook_targets_inner_loop",
     "agent_scope_hook_wraps_the_agent_body",
     "same_phase_hooks_run_in_declaration_order",
@@ -676,6 +697,7 @@ _VECTORS = {
     "capability_declared_twice": _vector_capability_declared_twice,
     "composed_agent_event_and_task_group": _vector_composed_agent_event_and_task_group,
     "resumable_loop_block_arguments": _vector_resumable_loop_block_arguments,
+    "owner_request_yield": _vector_owner_request_yield,
     "nested_loop_hook_targets_inner_loop": _vector_nested_loop_hook_targets_inner_loop,
     "agent_scope_hook_wraps_the_agent_body": _vector_agent_scope_hook_wraps_the_agent_body,
     "same_phase_hooks_run_in_declaration_order": _vector_same_phase_hooks_run_in_declaration_order,

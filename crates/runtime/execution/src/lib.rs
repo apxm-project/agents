@@ -32,10 +32,10 @@ pub use driver::{
     ExecutionPortsError, ExecutionRequest, MAX_EXPRESSION_DEPTH, MAX_HOOK_BINDINGS,
     MAX_INITIAL_VALUES, MAX_SCHEDULE_STEPS, MAX_SEMANTIC_OPERATIONS, MAX_STRUCTURAL_REGIONS,
     MAX_VALUE_ASSEMBLIES, NodeOutcome, RunReport, RunTerminalStatus, StaticHookExecutionError,
-    StaticHookHandlerPort, StaticHookInvocation, StaticHookResult, execute, execute_resumable,
-    execute_resumable_with_resource_ceilings, execute_with_resource_ceilings, resume,
-    resume_invocation, resume_invocation_with_resource_ceilings, resume_with_resource_ceilings,
-    wake_from_event_application,
+    StaticHookHandlerPort, StaticHookInvocation, StaticHookResult, admit_owner_answer, execute,
+    execute_resumable, execute_resumable_with_resource_ceilings, execute_with_resource_ceilings,
+    parked_owner_request, resume, resume_invocation, resume_invocation_with_resource_ceilings,
+    resume_with_resource_ceilings, wake_from_event_application,
 };
 pub use observe::{
     AllowBroker, ApprovalBroker, ApprovalDecision, DenyBroker, ObservationFailurePolicy,

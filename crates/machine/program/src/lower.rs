@@ -145,10 +145,7 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
             })
             .map(|value| ValueAssembly {
                 value_id: value.value_id.clone(),
-                expression: value
-                    .expression
-                    .clone()
-                    .expect("verified assembled values carry expressions"),
+                expression: lower_value_expression(value),
             })
             .collect(),
         semantic_operations,
@@ -499,6 +496,22 @@ fn resolve_operands(
         });
     }
     operands
+}
+
+/// The AIR assembly of one authored value. An owner request additionally
+/// carries the compiler-computed digest of its answer shape, so the committed
+/// yield output names exactly what the host asked the owner; every other value
+/// lowers verbatim.
+fn lower_value_expression(value: &Value) -> ValueExpression {
+    let expression = value
+        .expression
+        .clone()
+        .expect("verified assembled values carry expressions");
+    if value.type_ref == crate::owner_request::OWNER_REQUEST_TYPE_REF {
+        return crate::owner_request::owner_request_expression_with_digest(&expression)
+            .expect("verified owner requests lower with their answer schema digest");
+    }
+    expression
 }
 
 /// Map a control intent to its structural AIS operation kind.

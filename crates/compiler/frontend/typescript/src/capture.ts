@@ -990,6 +990,9 @@ class Capture {
     if (this.isYield(call)) {
       return this.recordYield(call, regionId, source);
     }
+    if (this.isAskOwner(call)) {
+      return this.recordOwnerRequest(call, regionId, source);
+    }
     if (this.isTaskGroup(call)) {
       this.recordTaskGroup(call, regionId, source);
       return undefined;
@@ -1484,6 +1487,15 @@ class Capture {
     );
   }
 
+  private isAskOwner(call: ts.CallExpression): boolean {
+    return (
+      ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        this.isFacadeIdentifier(call.expression.expression) &&
+        call.expression.name.text === "ask_owner"
+    );
+  }
+
   private isTaskGroup(call: ts.CallExpression): boolean {
     return (
       ts.isPropertyAccessExpression(call.expression) &&
@@ -1564,6 +1576,129 @@ class Capture {
       },
       span: this.spanOf(call, source),
       operands,
+    });
+    this.recordNode(regionId, nodeId);
+    this.recordSpan(nodeId, "yield", call, source);
+    return resultValue;
+  }
+
+  /**
+   * `agent.ask_owner(request)` is a structural yield whose output is the closed
+   * owner-request value and whose resume value is the owner's answer envelope.
+   * The prompt may read a prior value; the answer shape and the expiry are
+   * literal, so the compiler can address the answer schema before anything
+   * runs. The compiler stamps the document's schema version and the answer
+   * schema digest while lowering — source never states either.
+   */
+  private recordOwnerRequest(
+    call: ts.CallExpression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): string {
+    const request = call.arguments[0];
+    if (call.arguments.length !== 1 || request === undefined || !ts.isObjectLiteralExpression(request)) {
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "ask_owner takes one literal request object");
+    }
+    let prompt: ValueExpression | undefined;
+    let choices: ts.ArrayLiteralExpression | undefined;
+    let expiresInSeconds: number | undefined;
+    for (const property of request.properties) {
+      if (!ts.isPropertyAssignment(property)) {
+        throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request states prompt, choices, and expires_in_seconds as literal fields");
+      }
+      const name = this.staticPropertyName(property.name);
+      if (name === "prompt") {
+        const value = this.valueExpressionFor(property.initializer);
+        if (value.kind !== "string" && value.kind !== "ssa" && value.kind !== "projection" && value.kind !== "context") {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request prompt is a string or a prior value");
+        }
+        prompt = value;
+      } else if (name === "choices") {
+        if (!ts.isArrayLiteralExpression(property.initializer)) {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "owner request choices are an array literal of {id, label}");
+        }
+        choices = property.initializer;
+      } else if (name === "expires_in_seconds") {
+        if (!ts.isNumericLiteral(property.initializer)) {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request expiry is a positive integer literal of seconds");
+        }
+        const value = Number(property.initializer.text);
+        if (!Number.isSafeInteger(value) || value <= 0) {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request expiry is a positive integer literal of seconds");
+        }
+        expiresInSeconds = value;
+      } else {
+        throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, `an owner request has no field ${name}`);
+      }
+    }
+    if (prompt === undefined || expiresInSeconds === undefined) {
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request states a prompt and expires_in_seconds");
+    }
+    const typeArgument = call.typeArguments?.[0];
+    if ((choices === undefined) === (typeArgument === undefined)) {
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "ask_owner declares either literal choices or one typed Answer, not both");
+    }
+    let answer: ValueExpression;
+    if (choices !== undefined) {
+      const items: ValueExpression[] = [];
+      for (const element of choices.elements) {
+        if (!ts.isObjectLiteralExpression(element)) {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "each owner choice is a literal {id, label}");
+        }
+        const fields = new Map<string, string>();
+        for (const property of element.properties) {
+          if (!ts.isPropertyAssignment(property) || !ts.isStringLiteralLike(property.initializer)) {
+            throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "each owner choice is a literal {id, label}");
+          }
+          fields.set(this.staticPropertyName(property.name), property.initializer.text);
+        }
+        const id = fields.get("id");
+        const label = fields.get("label");
+        if (fields.size !== 2 || id === undefined || label === undefined) {
+          throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "each owner choice is a literal {id, label}");
+        }
+        items.push({ kind: "object", fields: [{ name: "id", value: { kind: "string", value: id } }, { name: "label", value: { kind: "string", value: label } }] });
+      }
+      answer = { kind: "object", fields: [{ name: "mode", value: { kind: "string", value: "choice" } }, { name: "choices", value: { kind: "array", items } }] };
+    } else {
+      const schema = checkedInputSchema(this.checker, typeArgument!, this.checker.getTypeFromTypeNode(typeArgument!));
+      if (schema === undefined) {
+        throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request Answer is a finite JSON type");
+      }
+      answer = { kind: "object", fields: [{ name: "mode", value: { kind: "string", value: "typed" } }, { name: "schema", value: jsonValueExpression(schema) }] };
+    }
+    const requestValue = this.next("value");
+    this.values.push({
+      value_id: requestValue,
+      type_ref: "OwnerRequest",
+      origin: "literal",
+      expression: {
+        kind: "object",
+        fields: [
+          { name: "prompt", value: prompt },
+          { name: "answer", value: answer },
+          { name: "expires_in_seconds", value: { kind: "integer", value: expiresInSeconds } },
+        ],
+      },
+    });
+    const nodeId = this.next("yield");
+    const resultValue = this.next("resume");
+    this.values.push({
+      value_id: resultValue,
+      type_ref: "OwnerAnswer",
+      origin: "resume_input",
+      origin_id: nodeId,
+    });
+    this.controls.push({
+      contract: {
+        node_id: nodeId,
+        control_kind: "yield",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        result_value: resultValue,
+      },
+      span: this.spanOf(call, source),
+      operands: [{ value_id: requestValue, slot: "output" }],
     });
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, "yield", call, source);
@@ -2617,4 +2752,31 @@ function stringProperty(
     return undefined;
   }
   return ts.isStringLiteral(property.initializer) ? property.initializer.text : undefined;
+}
+
+/**
+ * A finite JSON value as the closed pure expression grammar, with object keys
+ * sorted so both authoring languages assemble one identical literal.
+ */
+function jsonValueExpression(value: unknown): ValueExpression {
+  if (value === null) return { kind: "null" };
+  if (typeof value === "string") return { kind: "string", value };
+  if (typeof value === "boolean") return { kind: "boolean", value };
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "integer exceeds the shared safe integer domain");
+    }
+    return { kind: "integer", value };
+  }
+  if (Array.isArray(value)) return { kind: "array", items: value.map(jsonValueExpression) };
+  if (typeof value !== "object" || value === undefined) {
+    throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "an owner request answer schema is finite JSON");
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    kind: "object",
+    fields: Object.keys(record)
+      .sort()
+      .map((name) => ({ name, value: jsonValueExpression(record[name]) })),
+  };
 }
