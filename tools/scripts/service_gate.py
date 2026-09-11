@@ -4,9 +4,10 @@
 The compiler pipeline crate (`apxm-compiler`) is the only crate that links the
 native AIS dialect, and it links it only behind its `mlir` Cargo feature. No
 other crate in the workspace depends on it, so both services, both service
-protocols, the source port, both authoring frontends and the qualification
-tooling build and test on a toolchain that carries Rust, Python and Node and
-nothing else — no MLIR, no LLVM, no libclang, no CMake, no Ninja.
+protocols, the source port, the Agent Program, kernel, execution and Event
+projection suites, both authoring frontends and the qualification tooling build
+and test on a toolchain that carries Rust, Python and Node and nothing else —
+no MLIR, no LLVM, no libclang, no CMake, no Ninja.
 
 This runs exactly that set. It is the whole content of the service CI job, and
 it is what `install-service` provisions for. The MLIR job keeps `test-all`,
@@ -34,8 +35,23 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEKK_MANIFEST_PATH = REPOSITORY_ROOT / ".dekk.toml"
 
 #: `.dekk.toml` command names this gate runs, in order. Cheap and deterministic
-#: first (format, lint), then the protocol and service suites, then the two
-#: frontends, then the qualification tooling, and finally the commit lint.
+#: first (format, lint), then the protocol and service suites, then the four
+#: owner suites the services are built out of, then the two frontends, then the
+#: qualification tooling, and finally the commit lint.
+#:
+#: The four owner suites are here because until they were, the contracts they
+#: decide had no gate that a service-only runner could run: owner-consent
+#: admission and the `EventRef` negative decode live in `apxm-program` and
+#: `apxm-kernel`, `contract_vector_conformance` is the only reader of the
+#: published vector files, `contract_document_conformance` (in `apxm-execution`)
+#: is the only reader of the Rust carriers those vectors are also held against,
+#: and the Event HTTP projection crossed no gate at all. Every one of them
+#: builds without the dialect, so `test-all` — which needs MLIR — was the only
+#: thing standing between them and drift.
+#:
+#: `test-execution` runs after `test-compilation-service` rather than before it:
+#: it runs `npm run build` but no `npm ci`, so it consumes the locked frontend
+#: dependencies that step installs.
 SERVICE_GATE_COMMANDS: tuple[str, ...] = (
     "fmt-check",
     "clippy",
@@ -44,6 +60,10 @@ SERVICE_GATE_COMMANDS: tuple[str, ...] = (
     "test-compilation-service",
     "test-source-port",
     "test-runtime-service",
+    "test-program",
+    "test-kernel",
+    "test-event-http",
+    "test-execution",
     "test-python-frontend",
     "test-typescript-frontend",
     "test-release-qualification",

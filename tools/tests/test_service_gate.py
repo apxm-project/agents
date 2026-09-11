@@ -56,6 +56,10 @@ class ServiceGateTests(unittest.TestCase):
             "test-python-frontend",
             "test-typescript-frontend",
             "test-source-port",
+            "test-program",
+            "test-kernel",
+            "test-event-http",
+            "test-execution",
             "test-release-qualification",
             "test-owner-qualification",
             "commit-lint",
@@ -78,6 +82,39 @@ class ServiceGateTests(unittest.TestCase):
             steps.index("test-source-port"),
             "source-port conformance consumes the frontend build products",
         )
+
+    def test_execution_runs_after_the_step_that_installs_the_frontend_lockfile(self) -> None:
+        # `test-execution` runs `npm run build` but no `npm ci`, so it consumes
+        # the locked dependencies `test-compilation-service` installs. Ordered
+        # the other way it builds against whatever happens to be on disk.
+        steps = [name for name, _ in self.gate.resolve_steps(self.gate.load_commands())]
+        self.assertLess(
+            steps.index("test-compilation-service"),
+            steps.index("test-execution"),
+        )
+        self.assertNotIn(
+            "npm ci", self.gate.load_commands()["test-execution"],
+            "test-execution now installs its own dependencies; drop this ordering",
+        )
+
+    def test_the_only_readers_of_the_published_vectors_are_gate_steps(self) -> None:
+        # `contract_vector_conformance` (apxm-program) holds every published
+        # vector file against its published schema, and
+        # `contract_document_conformance` (apxm-execution) holds the same
+        # vectors against the Rust carriers. Neither ran under this gate until
+        # the suites that own them were added, which left `test-all` — an MLIR
+        # gate — as the only thing that read the contracts at all.
+        steps = set(self.gate.SERVICE_GATE_COMMANDS)
+        for suite in ("test-program", "test-execution"):
+            self.assertIn(suite, steps)
+        commands = self.gate.load_commands()
+        self.assertIn("-p apxm-program", commands["test-program"])
+        self.assertIn("-p apxm-execution", commands["test-execution"])
+        for suite in ("test-program", "test-kernel", "test-execution"):
+            self.assertNotIn(
+                "--test ", commands[suite],
+                f"{suite} names individual test targets, so a new one joins no gate",
+            )
 
     def test_steps_resolve_to_the_declared_run_strings(self) -> None:
         commands = self.gate.load_commands()

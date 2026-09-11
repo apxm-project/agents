@@ -107,5 +107,59 @@
     "name": "answer-envelope-is-not-a-request-document",
     "input": { "outcome": "answered", "answer": "send" },
     "expected_valid": false
+  },
+  {
+    "name": "answered-envelope-carries-the-value",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "answered", "answer": "send" },
+    "expected_valid": true
+  },
+  {
+    "name": "answered-envelope-carries-a-typed-value",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "answered", "answer": { "amount": 3 } },
+    "expected_valid": true
+  },
+  {
+    "name": "declined-envelope-accepted",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "declined" },
+    "expected_valid": true
+  },
+  {
+    "name": "expired-envelope-accepted",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "expired" },
+    "expected_valid": true
+  },
+  {
+    "name": "answered-envelope-without-an-answer-rejected",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "answered" },
+    "expected_valid": false
+  },
+  {
+    "name": "declined-envelope-carrying-an-answer-rejected",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "declined", "answer": "send" },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-outcome-rejected",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "later" },
+    "expected_valid": false
+  },
+  {
+    "name": "envelope-with-an-unknown-field-rejected",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": { "outcome": "answered", "answer": "send", "answered_at": "2026-01-01T00:00:00Z" },
+    "expected_valid": false
+  },
+  {
+    "name": "envelope-that-is-not-an-object-rejected",
+    "schema_pointer": "#/$defs/OwnerAnswer",
+    "input": "answered",
+    "expected_valid": false
   }
 ]
