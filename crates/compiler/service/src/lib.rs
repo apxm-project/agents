@@ -917,16 +917,20 @@ export const Reviewer = Agent<ReviewRequest, Review>({
         }
         let source = r#"
 from typing import TypedDict
-from apxm_program import Agent, Workflow, Event, Model
+from apxm_program import Agent, Workflow, Event, EventRef, Model
+
+class Approved(TypedDict):
+    approved: bool
 
 class In(TypedDict):
     message: str
+    approval: EventRef[Approved]
 
 class Out(TypedDict):
     message: str
 
 ChildModel = Model[In, Out]("model.child")
-Approval = Event[In]("event.harness.approval")
+Approval = Event[Approved]("event.harness.approval")
 
 @Agent(input=In, output=Out, model=ChildModel)
 async def Child(agent, request):
@@ -937,7 +941,7 @@ async def Harness(agent, request):
     while True:
         child = Child.new()
         review = await child.invoke(request)
-        approved = await Approval.wait()
+        approved = await Approval.wait(request["approval"])
         request = await agent.yield_(review)
 "#;
         let mut service = CompilationService::default();
