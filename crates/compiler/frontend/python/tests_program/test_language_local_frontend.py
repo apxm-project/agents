@@ -491,3 +491,117 @@ def test_generated_runtime_evidence_preserves_specialized_attempt_identity() -> 
                 "fact_kind": "attempt.recorded",
             }
         )
+
+
+class OwnerAmount(TypedDict):
+    amount: int
+    note: NotRequired[str]
+
+
+class OwnerInput(TypedDict):
+    message: str
+
+
+def test_ask_owner_captures_a_typed_yield_with_literal_choices() -> None:
+    """``agent.ask_owner`` is a yield whose output is the closed request value.
+
+    The prompt may read a prior value; the choices and the expiry are literal.
+    The resume value is the owner's answer envelope rather than the program
+    input, and the compiler stamps the document identity into AIR.
+    """
+
+    @Workflow(input=OwnerInput, output=object)
+    async def Consent(agent, input):
+        reply = await agent.ask_owner(
+            {
+                "prompt": input["message"],
+                "choices": [{"id": "send", "label": "Send it"}, {"id": "hold", "label": "Hold"}],
+                "expires_in_seconds": 3600,
+            }
+        )
+        return {"outcome": reply["outcome"]}
+
+    assert Consent.diagnostics() is None
+    graph = Consent.frontend_graph()
+    [request] = [value for value in graph["values"] if value["type_ref"] == "OwnerRequest"]
+    assert request["origin"] == "literal"
+    fields = {field["name"]: field["value"] for field in request["expression"]["fields"]}
+    assert set(fields) == {"prompt", "answer", "expires_in_seconds"}
+    assert fields["prompt"]["kind"] == "projection"
+    assert fields["expires_in_seconds"] == {"kind": "integer", "value": 3600}
+    assert fields["answer"] == {
+        "kind": "object",
+        "fields": [
+            {"name": "mode", "value": {"kind": "string", "value": "choice"}},
+            {"name": "choices", "value": {"kind": "array", "items": [
+                {"kind": "object", "fields": [
+                    {"name": "id", "value": {"kind": "string", "value": "send"}},
+                    {"name": "label", "value": {"kind": "string", "value": "Send it"}},
+                ]},
+                {"kind": "object", "fields": [
+                    {"name": "id", "value": {"kind": "string", "value": "hold"}},
+                    {"name": "label", "value": {"kind": "string", "value": "Hold"}},
+                ]},
+            ]}},
+        ],
+    }
+    [resume] = [value for value in graph["values"] if value["origin"] == "resume_input"]
+    assert resume["type_ref"] == "OwnerAnswer"
+    [yield_intent] = [intent for intent in graph["control_intents"] if intent["control_kind"] == "yield"]
+    assert yield_intent["result_value"] == resume["value_id"]
+    assert yield_intent["operand_values"] == [request["value_id"]]
+    # The compiler, not the author, stamps the document identity into AIR.
+    assert "schema_digest" in Consent.canonical_air()
+    assert "apxm.owner-request.v1" in Consent.canonical_air()
+
+
+def test_ask_owner_projects_a_typed_answer_into_the_closed_schema() -> None:
+    @Workflow(input=OwnerInput, output=object)
+    async def TypedConsent(agent, input):
+        reply = await agent.ask_owner({"prompt": "How much?", "expires_in_seconds": 60}, answer=OwnerAmount)
+        return reply
+
+    assert TypedConsent.diagnostics() is None
+    [request] = [value for value in TypedConsent.frontend_graph()["values"] if value["type_ref"] == "OwnerRequest"]
+    answer = next(field["value"] for field in request["expression"]["fields"] if field["name"] == "answer")
+    assert answer["fields"][0] == {"name": "mode", "value": {"kind": "string", "value": "typed"}}
+    schema = answer["fields"][1]["value"]
+    # Object keys are sorted so both languages assemble one identical literal.
+    assert [field["name"] for field in schema["fields"]] == ["additionalProperties", "properties", "required", "type"]
+
+
+@pytest.mark.parametrize(
+    ("authored", "keyword"),
+    [
+        ('{"prompt": "Send?", "expires_in_seconds": 60}', ""),
+        ('{"prompt": "Send?", "choices": [{"id": "a", "label": "A"}], "expires_in_seconds": 60}', ", answer=OwnerAmount"),
+        ('{"prompt": "Send?", "choices": [{"id": "a", "label": "A"}]}', ""),
+        ('{"prompt": "Send?", "choices": [{"id": "a", "label": "A"}], "expires_in_seconds": 0}', ""),
+        ('{"prompt": "Send?", "choices": [{"id": "a"}], "expires_in_seconds": 60}', ""),
+        ('{"prompt": "Send?", "choices": input["message"], "expires_in_seconds": 60}', ""),
+        ('{"prompt": 7, "choices": [{"id": "a", "label": "A"}], "expires_in_seconds": 60}', ""),
+        ('{"prompt": "Send?", "choices": [{"id": "a", "label": "A"}], "expires_in_seconds": 60, "schema_digest": "sha256:00"}', ""),
+    ],
+)
+def test_ask_owner_refuses_requests_outside_the_closed_shape(authored: str, keyword: str, tmp_path: Any) -> None:
+    """Every request outside the closed shape is refused at capture."""
+    import importlib.util
+
+    module_path = tmp_path / "refused_owner_request.py"
+    module_path.write_text(
+        "from typing import TypedDict\n"
+        "from apxm_program import Workflow\n"
+        "class OwnerInput(TypedDict):\n"
+        "    message: str\n"
+        "class OwnerAmount(TypedDict):\n"
+        "    amount: int\n"
+        "async def Refused(agent, input):\n"
+        f"    reply = await agent.ask_owner({authored}{keyword})\n"
+        "    return reply\n",
+        encoding="utf-8",
+    )
+    spec = importlib.util.spec_from_file_location("refused_owner_request", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(CaptureError):
+        Workflow(input=module.OwnerInput, output=object)(module.Refused)

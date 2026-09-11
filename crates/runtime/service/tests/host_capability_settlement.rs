@@ -2320,3 +2320,344 @@ fn settlement_replay_records_fail_closed_at_the_shared_application_bound() {
         "quota refusal must leave the next node parked"
     );
 }
+
+/// `ask_owner` rides the committed-yield path: the yield output is the typed
+/// request the host reads, the next `ProgramInvocationStart` on the same
+/// instance is the owner's answer envelope, and anything that is not a closed
+/// envelope the request admits is refused before an invocation is minted.
+#[test]
+fn compiled_owner_request_yields_a_typed_request_and_resumes_only_with_a_valid_answer() {
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for (frontend, typed) in [
+        (Frontend::Typescript, false),
+        (Frontend::Python, false),
+        (Frontend::Typescript, true),
+        (Frontend::Python, true),
+    ] {
+        let source = match (frontend, typed) {
+            (Frontend::Typescript, false) => r#"import { Workflow, Capability } from "@apxm/frontend";
+type Input = {message: string};
+const Notes = Capability<unknown, unknown>("host:notes.search");
+export const Consent = Workflow<Input, unknown>({name: "Consent", async run(agent, input) {
+  const reply = await agent.ask_owner({prompt: input.message, choices: [{id: "send", label: "Send it"}, {id: "hold", label: "Hold"}], expires_in_seconds: 3600});
+  const receipt = await Notes({outcome: reply.outcome, first: input.message});
+  return {outcome: reply.outcome, first: input.message};
+}});
+"#
+            .to_owned(),
+            (Frontend::Python, false) => r#"from typing import TypedDict
+from apxm_program import Workflow, Capability
+class Input(TypedDict):
+    message: str
+Notes = Capability[object, object]("host:notes.search")
+@Workflow(input=Input, output=object)
+async def Consent(agent, input):
+    reply = await agent.ask_owner({"prompt": input["message"], "choices": [{"id": "send", "label": "Send it"}, {"id": "hold", "label": "Hold"}], "expires_in_seconds": 3600})
+    receipt = await Notes({"outcome": reply["outcome"], "first": input["message"]})
+    return {"outcome": reply["outcome"], "first": input["message"]}
+"#
+            .to_owned(),
+            (Frontend::Typescript, true) => r#"import { Workflow, Capability } from "@apxm/frontend";
+type Input = {message: string};
+type Amount = {amount: number};
+const Notes = Capability<unknown, unknown>("host:notes.search");
+export const Consent = Workflow<Input, unknown>({name: "Consent", async run(agent, input) {
+  const reply = await agent.ask_owner<Amount>({prompt: "How much?", expires_in_seconds: 60});
+  const receipt = await Notes({outcome: reply.outcome, first: input.message});
+  return {outcome: reply.outcome, first: input.message};
+}});
+"#
+            .to_owned(),
+            (Frontend::Python, true) => r#"from typing import TypedDict
+from apxm_program import Workflow, Capability
+class Input(TypedDict):
+    message: str
+class Amount(TypedDict):
+    amount: float
+Notes = Capability[object, object]("host:notes.search")
+@Workflow(input=Input, output=object)
+async def Consent(agent, input):
+    reply = await agent.ask_owner({"prompt": "How much?", "expires_in_seconds": 60}, answer=Amount)
+    receipt = await Notes({"outcome": reply["outcome"], "first": input["message"]})
+    return {"outcome": reply["outcome"], "first": input["message"]}
+"#
+            .to_owned(),
+        };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "Consent", source)
+                .with_host_capabilities(["notes.search"]),
+            &roots,
+            &drivers,
+        )
+        .expect("owner request source compiles");
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned());
+        let mut parked = start_artifact_with_input(
+            "invocation.consent.first",
+            service,
+            artifact.clone(),
+            serde_json::json!({"message":"Send the quote?"}),
+        );
+        let first_invocation = parked.invocation.clone();
+        assert_eq!(
+            invocation_status(&mut parked.service, &first_invocation),
+            ProgramInvocationStatus::CommittedYield
+        );
+
+        // The committed yield output is the typed request, not opaque bytes:
+        // its kind, prompt, answer shape, expiry, and the compiler-stamped
+        // digest of that answer shape.
+        let request = committed_output(&mut parked.service, &first_invocation);
+        let decoded = apxm_program::owner_request::OwnerRequest::decode(&request)
+            .unwrap_or_else(|reason| panic!("{frontend:?}: {reason}: {request}"));
+        assert_eq!(decoded.schema_version, "apxm.owner-request.v1");
+        assert_eq!(decoded.expires_in_seconds, if typed { 60 } else { 3600 });
+        assert_eq!(
+            decoded.answer.canonical_digest().unwrap(),
+            decoded.schema_digest,
+            "lowering stamps the answer schema digest"
+        );
+        let valid_answer = match &decoded.answer {
+            apxm_program::owner_request::OwnerAnswerSchema::Choice { choices } => {
+                assert_eq!(decoded.prompt, "Send the quote?");
+                assert_eq!(
+                    choices
+                        .iter()
+                        .map(|choice| choice.id.as_str())
+                        .collect::<Vec<_>>(),
+                    ["send", "hold"]
+                );
+                serde_json::json!("send")
+            }
+            apxm_program::owner_request::OwnerAnswerSchema::Typed { schema } => {
+                assert_eq!(decoded.prompt, "How much?");
+                assert_eq!(schema.required.as_deref(), Some(&["amount".to_owned()][..]));
+                serde_json::json!({"amount": 12})
+            }
+        };
+        assert!(
+            of_kind(
+                &observations(&mut parked.service, &first_invocation),
+                ObservationKind::CapabilityRequested
+            )
+            .is_empty(),
+            "asking the owner dispatches nothing"
+        );
+
+        // Only a closed envelope the request admits is a next input. Each
+        // refusal is typed and mints no invocation, so the owner can still
+        // answer afterwards.
+        for (name, rejected) in [
+            ("free_text", serde_json::json!({"message": "yes"})),
+            (
+                "undeclared_choice",
+                serde_json::json!({"outcome": "answered", "answer": "burn"}),
+            ),
+            (
+                "wrong_typed_answer",
+                serde_json::json!({"outcome": "answered", "answer": {"amount": "twelve"}}),
+            ),
+            ("missing_answer", serde_json::json!({"outcome": "answered"})),
+            (
+                "declined_with_answer",
+                serde_json::json!({"outcome": "declined", "answer": valid_answer.clone()}),
+            ),
+            ("unknown_outcome", serde_json::json!({"outcome": "later"})),
+        ] {
+            let result = parked
+                .service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: format!("start.{name}"),
+                        program_instance_id: parked.instance.clone(),
+                        owner_claim: parked.owner_claim.clone(),
+                        input: rejected,
+                    },
+                )
+                .unwrap();
+            assert!(
+                matches!(&result, RuntimeResult::Failed { code, .. } if code == "owner_answer_rejected"),
+                "{frontend:?} {name}: {result:?}"
+            );
+        }
+        assert_eq!(
+            invocation_status(&mut parked.service, &first_invocation),
+            ProgramInvocationStatus::CommittedYield,
+            "a refused answer leaves the instance waiting"
+        );
+
+        // A restart preserves the pending request and the same rule.
+        drop(parked.service);
+        parked.service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned());
+        assert!(parked.service.startup_error().is_none());
+        assert_eq!(
+            committed_output(&mut parked.service, &first_invocation),
+            request
+        );
+        parked
+            .service
+            .bind_admission(
+                &parked.instance,
+                materials(&artifact, "invocation.consent.second"),
+            )
+            .unwrap();
+
+        // The owner's valid envelope resumes the same instance; the program
+        // reads the outcome and its own earlier input, and the Capability it
+        // then calls is an ordinary host request the host still decides.
+        let answered = RuntimeRequest::ProgramInvocationStart {
+            request_id: "start.answered".into(),
+            program_instance_id: parked.instance.clone(),
+            owner_claim: parked.owner_claim.clone(),
+            input: serde_json::json!({"outcome": "answered", "answer": valid_answer}),
+        };
+        let result = parked.service.handle(&handshake(), answered).unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = result
+        else {
+            panic!("{frontend:?}: the owner's answer did not resume: {result:?}");
+        };
+        assert_ne!(program_invocation_id, first_invocation);
+        parked.invocation = program_invocation_id.clone();
+        let stream = observations(&mut parked.service, &program_invocation_id);
+        let requests = of_kind(&stream, ObservationKind::CapabilityRequested);
+        assert_eq!(
+            requests.len(),
+            1,
+            "the post-answer Capability still asks the host"
+        );
+        let host = requests[0].host_capability.as_ref().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(host.input.as_ref().unwrap()).unwrap(),
+            serde_json::json!({"outcome": "answered", "first": "Send the quote?"})
+        );
+        let capability_request_id = host.capability_request_id.clone();
+        assert!(matches!(
+            fulfill(
+                &mut parked,
+                "settle.consent",
+                &capability_request_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{}")
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        assert_eq!(
+            invocation_status(&mut parked.service, &program_invocation_id),
+            ProgramInvocationStatus::CommittedReturn
+        );
+        assert_eq!(
+            committed_output(&mut parked.service, &program_invocation_id),
+            serde_json::json!({"outcome": "answered", "first": "Send the quote?"})
+        );
+    }
+}
+
+/// A declined or expired envelope resumes the program with that explicit
+/// outcome; the runtime never fabricates an answer and needs no clock.
+#[test]
+fn compiled_owner_request_resumes_with_declined_and_expired_outcomes() {
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    let source = r#"import { Workflow } from "@apxm/frontend";
+type Input = {message: string};
+export const Consent = Workflow<Input, unknown>({name: "Consent", async run(agent, input) {
+  const reply = await agent.ask_owner({prompt: "Proceed?", choices: [{id: "go", label: "Go"}], expires_in_seconds: 5});
+  return {outcome: reply.outcome};
+}});
+"#;
+    let compiled = compile_source_bundle(
+        &SourceBundleRequest::new(Frontend::Typescript, "Consent", source.to_owned()),
+        &roots,
+        &drivers,
+    )
+    .expect("owner request source compiles");
+    let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+        .unwrap()
+        .encode()
+        .unwrap();
+    for outcome in ["declined", "expired"] {
+        let directory = tempfile::tempdir().unwrap();
+        let service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".to_owned());
+        let mut parked = start_artifact_with_input(
+            &format!("invocation.consent.{outcome}.first"),
+            service,
+            artifact.clone(),
+            serde_json::json!({"message":"hello"}),
+        );
+        parked
+            .service
+            .bind_admission(
+                &parked.instance,
+                materials(&artifact, &format!("invocation.consent.{outcome}.second")),
+            )
+            .unwrap();
+        let result = parked
+            .service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: format!("start.{outcome}"),
+                    program_instance_id: parked.instance.clone(),
+                    owner_claim: parked.owner_claim.clone(),
+                    input: serde_json::json!({"outcome": outcome}),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = result
+        else {
+            panic!("{outcome}: did not resume: {result:?}");
+        };
+        assert_eq!(
+            invocation_status(&mut parked.service, &program_invocation_id),
+            ProgramInvocationStatus::CommittedReturn
+        );
+        assert_eq!(
+            committed_output(&mut parked.service, &program_invocation_id),
+            serde_json::json!({"outcome": outcome})
+        );
+    }
+}

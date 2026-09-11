@@ -2827,6 +2827,22 @@ impl RuntimeService {
         {
             return Err(RuntimeResult::Failed { request_id, code });
         }
+        // An instance parked at an owner request admits only a closed answer
+        // envelope its committed request accepts. Refusing here, before an
+        // invocation identity is minted, keeps a rejected answer from
+        // becoming a failed invocation on the instance's history.
+        if self.resumable_invocations
+            && let Some(continuation) = self
+                .execution_backend
+                .load_continuation(&ProgramInstanceRef::new(program_instance_id.clone()))
+                .and_then(|value| serde_json::from_value::<Continuation>(value.payload).ok())
+            && apxm_execution::admit_owner_answer(&continuation, &input).is_err()
+        {
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "owner_answer_rejected".to_owned(),
+            });
+        }
         let Some(bound_materials) = instance.materials.as_ref() else {
             return Err(RuntimeResult::Failed {
                 request_id,

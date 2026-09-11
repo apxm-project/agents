@@ -99,7 +99,8 @@ Under ADR-0015 the author-facing surface is source-first: a definition is
 declared with `Agent` or `Workflow`, its state schema with `Context`, exact model targets with
 `Model`, and model-callable actions with `Tool` (advanced programs add
 `Capability`, `Event`, `Hook`, `TaskGroup`). The callback parameter `agent` is
-inferred and exposes `.context` and `.yield_(...)`. No ordinary source imports
+inferred and exposes `.context`, `.yield_(...)` and `.ask_owner(...)`. No
+ordinary source imports
 `AgentProgram`, `AgentFacade`, node/region ids, or operation constants.
 
 `Agent` requires an explicit typed primary Model binding (`model`), and capture
@@ -345,9 +346,10 @@ agent.context
 
 Assigning `agent.context` is the only way Hook source changes context; there is
 no hidden callback dispatcher and no mutable runtime Hook registry. Both
-frontends recognize `agent.context` and, in an Agent body, `agent.yield_` —
-nothing else. No `agent.identity`, `agent.budget`, `agent.deadline`, or
-`agent.capabilities` member exists; do not author against one.
+frontends recognize `agent.context` and, in an Agent body, `agent.yield_` and
+`agent.ask_owner` — nothing else. No `agent.identity`, `agent.budget`,
+`agent.deadline`, or `agent.capabilities` member exists; do not author against
+one.
 
 The facade MUST NOT expose runtime object identity, Execution Context,
 credentials, bearer grants, scheduler, broker, database, storage backend,
@@ -685,6 +687,20 @@ sixth member.
 - Python and TypeScript expose the equivalent compiler-recognized structural
   primitive `incoming = await agent.yield_(output)`; it is not a public AIR
   operation and never embeds Program Context inside `output`.
+- `reply = await agent.ask_owner(request)` is the same structural yield with a
+  typed output and a typed resume value. The yielded `output` is the closed
+  `OwnerRequest` document (`contracts/schemas/apxm.owner-request.v1.json`): an
+  authored prompt, literal `choices` or a typed `answer` schema, and
+  `expires_in_seconds`, plus the `schema_version` and answer-schema
+  `schema_digest` the compiler stamps while lowering. The resume value is typed
+  `OwnerAnswer`, and the runtime admits the next invocation input only when it
+  is the closed envelope `{outcome: "answered", answer} | {outcome: "declined"}
+  | {outcome: "expired"}` the committed request accepts; any other input is
+  refused as `owner_answer_rejected` before an invocation is minted. The
+  runtime keeps no deadline of its own — the host that recorded the request
+  admits `declined` or `expired` after it. Answering confers no Capability
+  authority; a Capability the program calls afterwards is still an ordinary
+  `capability.invoke` under its own permission.
 - Program return returns `O` and completes the Program Instance.
 - Loop-carried values represent accumulated context/state.
 - Region/block arguments replace a generic `MERGE` operation.

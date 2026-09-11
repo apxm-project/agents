@@ -326,6 +326,16 @@ const EXPECTATIONS: Readonly<Record<string, Expectation[]>> = {
     {"equals":null,"query":"diagnostics"},
     {"includes_query":"graph:values[origin=resume_input].value_id","query":"air:structural_ir[].block_arguments[].value_id"},
   ],
+  "owner_request_yield": [
+    {"equals":null,"query":"diagnostics"},
+    {"equals":["OwnerAnswer"],"query":"graph:values[origin=resume_input].type_ref"},
+    {"equals":["literal"],"query":"graph:values[type_ref=OwnerRequest].origin"},
+    {"equals":["object"],"query":"graph:values[type_ref=OwnerRequest].expression.kind"},
+    {"query":"graph:control_intents[control_kind=yield].result_value","same_as":"graph:values[origin=resume_input].value_id"},
+    {"query":"graph:control_intents[control_kind=yield].operand_values[]","same_as":"graph:values[type_ref=OwnerRequest].value_id"},
+    {"equals":["OwnerAnswer"],"query":"air:structural_ir[kind=yield].block_arguments[].type_ref"},
+    {"includes":["prompt","answer","expires_in_seconds","schema_version","schema_digest"],"query":"air:value_assemblies[].expression.fields[].name"},
+  ],
   "nested_loop_hook_targets_inner_loop": [
     {"length":2,"query":"graph:control_intents[control_kind=loop].node_id"},
     {"equals":["observe"],"query":"graph:hook_bindings[].return_mode"},
@@ -451,6 +461,14 @@ function vector_resumable_loop_block_arguments(): string[] {
   submitAuthoredSource({ fileName: "resumable_loop_block_arguments.ts", text: source_resumable_loop_block_arguments });
   const Resumable = Workflow<Input, Output>({ name: "Resumable", async run() { return null; } });
   return check("resumable_loop_block_arguments", Resumable, EXPECTATIONS["resumable_loop_block_arguments"]);
+}
+
+const source_owner_request_yield = "import { Workflow, Capability, Context, Event, type EventRef, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype ReviewEventRef = { reference: EventRef<string> };\n\n\nconst Consent = Workflow<Input, Output>({\n  name: \"Consent\",\n  async run(agent, input) {\n    const reply = await agent.ask_owner({ prompt: input.message, choices: [{\"id\":\"send\",\"label\":\"Send it\"},{\"id\":\"hold\",\"label\":\"Hold\"}], expires_in_seconds: 3600 });\n    return reply;\n  },\n});\n";
+
+function vector_owner_request_yield(): string[] {
+  submitAuthoredSource({ fileName: "owner_request_yield.ts", text: source_owner_request_yield });
+  const Consent = Workflow<Input, Output>({ name: "Consent", async run() { return null; } });
+  return check("owner_request_yield", Consent, EXPECTATIONS["owner_request_yield"]);
 }
 
 const source_nested_loop_hook_targets_inner_loop = "import { Workflow, Capability, Context, Event, type EventRef, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype ReviewEventRef = { reference: EventRef<string> };\ntype NestedContext = { depth: number };\n\nconst NestedContext = Context<NestedContext>({ depth: 0 });\nconst NestedOuterModel = Model<Input, Output>(\"nested.outer.model\");\nconst NestedInnerTool = Tool<Input, Output>(\"search_web\");\nconst NestedAudit = Tool<Input, Output>(\"read\");\n\nconst NestedLoops = Workflow<Input, Output, NestedContext>({\n  name: \"NestedLoops\",\n  context: NestedContext,\n  async run(agent, input) {\n    while (true) {\n      const reply = await NestedOuterModel(input);\n      while (true) {\n        const found = await NestedInnerTool(reply);\n        input = await agent.yield_(found);\n      }\n    }\n  },\n});\n\nconst AuditInnerIteration = Hook.before<NestedContext>({\n  agent: NestedLoops,\n  target: NestedInnerTool,\n  scope: \"loop\",\n  async run(agent) {\n    await NestedAudit(agent.context);\n  },\n});\n";
@@ -691,6 +709,7 @@ export const VECTOR_IDS: readonly string[] = [
   "capability_declared_twice",
   "composed_agent_event_and_task_group",
   "resumable_loop_block_arguments",
+  "owner_request_yield",
   "nested_loop_hook_targets_inner_loop",
   "agent_scope_hook_wraps_the_agent_body",
   "same_phase_hooks_run_in_declaration_order",
@@ -715,6 +734,7 @@ const VECTORS: Readonly<Record<string, () => string[]>> = {
   "capability_declared_twice": vector_capability_declared_twice,
   "composed_agent_event_and_task_group": vector_composed_agent_event_and_task_group,
   "resumable_loop_block_arguments": vector_resumable_loop_block_arguments,
+  "owner_request_yield": vector_owner_request_yield,
   "nested_loop_hook_targets_inner_loop": vector_nested_loop_hook_targets_inner_loop,
   "agent_scope_hook_wraps_the_agent_body": vector_agent_scope_hook_wraps_the_agent_body,
   "same_phase_hooks_run_in_declaration_order": vector_same_phase_hooks_run_in_declaration_order,

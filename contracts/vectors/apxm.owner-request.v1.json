@@ -1,0 +1,111 @@
+[
+  {
+    "name": "choice-request-accepted",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "Send the quote?",
+      "answer": {
+        "mode": "choice",
+        "choices": [
+          { "id": "send", "label": "Send it" },
+          { "id": "hold", "label": "Hold" }
+        ]
+      },
+      "expires_in_seconds": 3600,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "typed-request-accepted",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "How much?",
+      "answer": {
+        "mode": "typed",
+        "schema": {
+          "type": "object",
+          "properties": { "amount": { "type": "integer" } },
+          "required": ["amount"],
+          "additionalProperties": false
+        }
+      },
+      "expires_in_seconds": 60,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "request-without-schema-version-rejected",
+    "input": {
+      "prompt": "Send the quote?",
+      "answer": { "mode": "choice", "choices": [{ "id": "send", "label": "Send it" }] },
+      "expires_in_seconds": 3600,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "request-without-digest-rejected",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "Send the quote?",
+      "answer": { "mode": "choice", "choices": [{ "id": "send", "label": "Send it" }] },
+      "expires_in_seconds": 3600
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "request-with-empty-choices-rejected",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "Send the quote?",
+      "answer": { "mode": "choice", "choices": [] },
+      "expires_in_seconds": 3600,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "request-with-zero-expiry-rejected",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "Send the quote?",
+      "answer": { "mode": "choice", "choices": [{ "id": "send", "label": "Send it" }] },
+      "expires_in_seconds": 0,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "request-with-open-typed-schema-rejected",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "prompt": "How much?",
+      "answer": {
+        "mode": "typed",
+        "schema": { "type": "object", "properties": {}, "required": [], "additionalProperties": true }
+      },
+      "expires_in_seconds": 60,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "request-with-authored-kind-rejected",
+    "input": {
+      "schema_version": "apxm.owner-request.v1",
+      "kind": "owner_request",
+      "prompt": "Send the quote?",
+      "answer": { "mode": "choice", "choices": [{ "id": "send", "label": "Send it" }] },
+      "expires_in_seconds": 3600,
+      "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "answer-envelope-is-not-a-request-document",
+    "input": { "outcome": "answered", "answer": "send" },
+    "expected_valid": false
+  }
+]

@@ -5,7 +5,13 @@
     "Input",
     "Output"
   ],
-  "event_ref_types": [{ "name": "ReviewEventRef", "field": "reference", "payload": "string" }],
+  "event_ref_types": [
+    {
+      "name": "ReviewEventRef",
+      "field": "reference",
+      "payload": "string"
+    }
+  ],
   "contexts": [
     {
       "name": "Conversation",
@@ -565,7 +571,13 @@
                   "value": {
                     "expr": "await_event",
                     "event": "Approval",
-                    "arguments": [{ "expr": "field", "name": "input", "field": "reference" }]
+                    "arguments": [
+                      {
+                        "expr": "field",
+                        "name": "input",
+                        "field": "reference"
+                      }
+                    ]
                   }
                 },
                 {
@@ -792,6 +804,95 @@
         {
           "query": "air:structural_ir[].block_arguments[].value_id",
           "includes_query": "graph:values[origin=resume_input].value_id"
+        }
+      ]
+    },
+    {
+      "id": "owner_request_yield",
+      "covers": "ask_owner is a structural yield whose output is the closed OwnerRequest value and whose resume value is the OwnerAnswer envelope; the compiler stamps the document identity and the answer schema digest into AIR.",
+      "declarations": [],
+      "programs": [
+        {
+          "program_id": "Consent",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "ask_owner",
+              "name": "reply",
+              "prompt": {
+                "expr": "field",
+                "name": "input",
+                "field": "message"
+              },
+              "choices": [
+                {
+                  "id": "send",
+                  "label": "Send it"
+                },
+                {
+                  "id": "hold",
+                  "label": "Hold"
+                }
+              ],
+              "expires_in_seconds": 3600
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "name",
+                "name": "reply"
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "graph:values[origin=resume_input].type_ref",
+          "equals": [
+            "OwnerAnswer"
+          ]
+        },
+        {
+          "query": "graph:values[type_ref=OwnerRequest].origin",
+          "equals": [
+            "literal"
+          ]
+        },
+        {
+          "query": "graph:values[type_ref=OwnerRequest].expression.kind",
+          "equals": [
+            "object"
+          ]
+        },
+        {
+          "query": "graph:control_intents[control_kind=yield].result_value",
+          "same_as": "graph:values[origin=resume_input].value_id"
+        },
+        {
+          "query": "graph:control_intents[control_kind=yield].operand_values[]",
+          "same_as": "graph:values[type_ref=OwnerRequest].value_id"
+        },
+        {
+          "query": "air:structural_ir[kind=yield].block_arguments[].type_ref",
+          "equals": [
+            "OwnerAnswer"
+          ]
+        },
+        {
+          "query": "air:value_assemblies[].expression.fields[].name",
+          "includes": [
+            "prompt",
+            "answer",
+            "expires_in_seconds",
+            "schema_version",
+            "schema_digest"
+          ]
         }
       ]
     },

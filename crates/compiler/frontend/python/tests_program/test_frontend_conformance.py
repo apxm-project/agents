@@ -22,6 +22,7 @@ def test_every_corpus_vector_is_projected() -> None:
         "capability_declared_twice",
         "composed_agent_event_and_task_group",
         "resumable_loop_block_arguments",
+        "owner_request_yield",
         "nested_loop_hook_targets_inner_loop",
         "agent_scope_hook_wraps_the_agent_body",
         "same_phase_hooks_run_in_declaration_order",

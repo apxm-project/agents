@@ -154,6 +154,11 @@ const SCHEMAS_UNDER_TEST: &[SchemaUnderTest] = &[
         snapshots: &[CONTRACT_COMMON],
         siblings: &[],
     },
+    SchemaUnderTest {
+        id: "apxm.owner-request.v1",
+        snapshots: &[CONTRACT_COMMON],
+        siblings: &["schemas/apxm.frontend-graph.json"],
+    },
 ];
 
 /// Vector files whose reader lives elsewhere, with where to find it. The census

@@ -623,9 +623,95 @@ impl FrontendGraph {
         }
 
         collect_hook_diagnostics(&mut verdict, self);
+        collect_owner_request_diagnostics(&mut verdict, self);
 
         self.source_map.collect(&mut verdict);
         verdict.finish()
+    }
+}
+
+/// An owner request is a structural yield whose `output` is the closed
+/// `OwnerRequest` value and whose resume value is the owner's `OwnerAnswer`
+/// envelope. The pairing is exact in both directions, the request's answer
+/// shape and expiry are literal, and neither type appears anywhere else, so a
+/// host reading a committed yield output typed `OwnerRequest` knows the next
+/// admitted input is an answer and nothing else can bind one.
+fn collect_owner_request_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
+    use crate::owner_request::{
+        OWNER_ANSWER_TYPE_REF, OWNER_REQUEST_TYPE_REF, verify_owner_request_expression,
+    };
+    let values: HashMap<&str, &Value> = graph
+        .values
+        .iter()
+        .map(|value| (value.value_id.as_str(), value))
+        .collect();
+    let mut request_values = HashSet::new();
+    for intent in &graph.control_intents {
+        if intent.control_kind != ControlKind::Yield {
+            continue;
+        }
+        let output = intent
+            .operand_values
+            .first()
+            .and_then(|value_id| values.get(value_id.as_str()).copied());
+        let resume = intent
+            .result_value
+            .as_deref()
+            .and_then(|value_id| values.get(value_id).copied());
+        let is_request = output.is_some_and(|value| value.type_ref == OWNER_REQUEST_TYPE_REF);
+        let is_answer = resume.is_some_and(|value| value.type_ref == OWNER_ANSWER_TYPE_REF);
+        if is_request != is_answer {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "an owner request yield pairs an OwnerRequest output with an OwnerAnswer resume value",
+            ));
+        }
+        let Some(output) = output.filter(|_| is_request) else {
+            continue;
+        };
+        request_values.insert(output.value_id.as_str());
+        if output.origin != ValueOrigin::Literal {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                output.value_id.clone(),
+                "an owner request is an authored literal value",
+            ));
+        }
+        match output.expression.as_ref() {
+            Some(expression) => {
+                if let Err(reason) = verify_owner_request_expression(expression) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        output.value_id.clone(),
+                        reason,
+                    ));
+                }
+            }
+            None => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                output.value_id.clone(),
+                "an owner request carries its request expression",
+            )),
+        }
+    }
+    for value in &graph.values {
+        if value.type_ref == OWNER_REQUEST_TYPE_REF
+            && !request_values.contains(value.value_id.as_str())
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value.value_id.clone(),
+                "an OwnerRequest value is only the output of an owner request yield",
+            ));
+        }
+        if value.type_ref == OWNER_ANSWER_TYPE_REF && value.origin != ValueOrigin::ResumeInput {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value.value_id.clone(),
+                "an OwnerAnswer value is only the resume value of an owner request yield",
+            ));
+        }
     }
 }
 

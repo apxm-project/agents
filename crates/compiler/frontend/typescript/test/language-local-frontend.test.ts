@@ -529,3 +529,79 @@ describe("host-fulfilled capability minting", () => {
     declareHostCapabilities([]);
   });
 });
+
+type CapturedOwnerGraph = {
+  values: Value[];
+  control_intents: Array<{ control_kind: string; result_value?: string; operand_values?: string[] }>;
+};
+
+function capturedOwnerRequest(call: string): CapturedOwnerGraph {
+  return captureProgram({
+    programId: "Consent", entrypoint: "Consent", declared: [],
+    source: { fileName: "owner-request.ts", text: `
+      import { Workflow } from "@apxm/frontend";
+      type Input = { message: string };
+      type Amount = { amount: number; note?: string };
+      const Consent = Workflow<Input, unknown>({ async run(agent, input) {
+        const reply = await ${call};
+        return { outcome: reply.outcome };
+      }});
+    ` },
+  }) as unknown as CapturedOwnerGraph;
+}
+
+describe("owner requests", () => {
+  it("captures ask_owner as a typed yield with literal choices", () => {
+    const graph = capturedOwnerRequest(
+      'agent.ask_owner({ prompt: input.message, choices: [{ id: "send", label: "Send it" }, { id: "hold", label: "Hold" }], expires_in_seconds: 3600 })',
+    );
+    const [request] = graph.values.filter((value) => value.type_ref === "OwnerRequest");
+    expect(request?.origin).toBe("literal");
+    const expression = request?.expression as unknown as { fields: Array<{ name: string; value: unknown }> };
+    const fields = Object.fromEntries(expression.fields.map((field) => [field.name, field.value]));
+    expect(Object.keys(fields)).toEqual(["prompt", "answer", "expires_in_seconds"]);
+    expect((fields.prompt as { kind: string }).kind).toBe("projection");
+    expect(fields.expires_in_seconds).toEqual({ kind: "integer", value: 3600 });
+    expect(fields.answer).toEqual({
+      kind: "object",
+      fields: [
+        { name: "mode", value: { kind: "string", value: "choice" } },
+        { name: "choices", value: { kind: "array", items: [
+          { kind: "object", fields: [{ name: "id", value: { kind: "string", value: "send" } }, { name: "label", value: { kind: "string", value: "Send it" } }] },
+          { kind: "object", fields: [{ name: "id", value: { kind: "string", value: "hold" } }, { name: "label", value: { kind: "string", value: "Hold" } }] },
+        ] } },
+      ],
+    });
+    const [resume] = graph.values.filter((value) => value.origin === "resume_input");
+    expect(resume?.type_ref).toBe("OwnerAnswer");
+    const [yielded] = graph.control_intents.filter((intent) => intent.control_kind === "yield");
+    expect(yielded?.result_value).toBe(resume?.value_id);
+    expect(yielded?.operand_values).toEqual([request?.value_id]);
+  });
+
+  it("projects a typed Answer into the closed schema with sorted keys", () => {
+    const graph = capturedOwnerRequest('agent.ask_owner<Amount>({ prompt: "How much?", expires_in_seconds: 60 })');
+    const [request] = graph.values.filter((value) => value.type_ref === "OwnerRequest");
+    const expression = request?.expression as unknown as { fields: Array<{ name: string; value: { fields: Array<{ name: string; value: unknown }> } }> };
+    const answer = expression.fields.find((field) => field.name === "answer")!.value;
+    expect(answer.fields[0]).toEqual({ name: "mode", value: { kind: "string", value: "typed" } });
+    const schema = answer.fields[1]!.value as { fields: Array<{ name: string }> };
+    expect(schema.fields.map((field) => field.name)).toEqual(["additionalProperties", "properties", "required", "type"]);
+  });
+
+  it("refuses requests outside the closed shape", () => {
+    for (const call of [
+      'agent.ask_owner({ prompt: "Send?", expires_in_seconds: 60 })',
+      'agent.ask_owner<Amount>({ prompt: "Send?", choices: [{ id: "a", label: "A" }], expires_in_seconds: 60 })',
+      'agent.ask_owner({ prompt: "Send?", choices: [{ id: "a", label: "A" }] })',
+      'agent.ask_owner({ prompt: "Send?", choices: [{ id: "a", label: "A" }], expires_in_seconds: 0 })',
+      'agent.ask_owner({ prompt: "Send?", choices: [{ id: "a" }], expires_in_seconds: 60 })',
+      'agent.ask_owner({ prompt: "Send?", choices: input.message, expires_in_seconds: 60 })',
+      'agent.ask_owner({ prompt: 7, choices: [{ id: "a", label: "A" }], expires_in_seconds: 60 })',
+      'agent.ask_owner({ prompt: "Send?", choices: [{ id: "a", label: "A" }], expires_in_seconds: 60, schema_digest: "sha256:00" })',
+      'agent.ask_owner<string[]>({ prompt: "Send?", expires_in_seconds: 60 }, {})',
+    ]) {
+      expect(() => capturedOwnerRequest(call), call).toThrow(CaptureError);
+    }
+  });
+});

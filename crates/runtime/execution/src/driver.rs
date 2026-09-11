@@ -706,6 +706,11 @@ pub enum ExecutionError {
     InvalidCommitRequest {
         message: String,
     },
+    /// The next input for an instance parked at an owner request was not a
+    /// closed answer envelope the request admits.
+    OwnerAnswerRejected {
+        message: String,
+    },
     Commit(ExecutionCommitResult),
     ResourceLimitExceeded {
         resource: &'static str,
@@ -813,6 +818,9 @@ impl std::fmt::Display for ExecutionError {
             }
             Self::InvalidCommitRequest { message } => {
                 write!(f, "invalid atomic commit request: {message}")
+            }
+            Self::OwnerAnswerRejected { message } => {
+                write!(f, "owner_answer_rejected: {message}")
             }
             Self::Commit(result) => write!(f, "atomic execution commit failed: {}", result.label()),
             Self::ResourceLimitExceeded {
@@ -5083,6 +5091,11 @@ async fn resume_from_continuation(
                 },
             ));
         }
+        // An instance parked at an owner request resumes only with the closed
+        // answer envelope its committed request admits; the same check runs
+        // before admission at the service boundary, and again here so no
+        // other path can bind a free-form input to that resume value.
+        admit_owner_answer(&parked, &delivered)?;
         parked.model_admission = request.model_admission;
         parked.capability_invocations = request.capability_invocations;
         parked.program_invocation_ref = request.program_invocation_ref;
@@ -5667,6 +5680,46 @@ fn host_capability_outcome(settlement: &HostCapabilitySettlement) -> CapabilityO
             CapabilityOutcome::OutcomeUnknown { message: message() }
         }
     }
+}
+
+/// The committed owner request a continuation is parked at, if it is one.
+///
+/// A structural yield whose resume value is typed `OwnerAnswer` parked at an
+/// `ask_owner`; the value it yielded is the continuation's last result, which
+/// is the same value the host read from the committed yield output.
+pub fn parked_owner_request(continuation: &Continuation) -> Option<&Value> {
+    if continuation.event_ref.is_some() {
+        return None;
+    }
+    let resume_value_id = continuation.resume_value_id.as_deref()?;
+    continuation
+        .air
+        .structural_ir
+        .iter()
+        .filter(|node| node.kind == apxm_ais::StructuralOpKind::Yield)
+        .flat_map(|node| node.block_arguments.iter())
+        .any(|argument| {
+            argument.value_id == resume_value_id
+                && argument.type_ref == apxm_program::owner_request::OWNER_ANSWER_TYPE_REF
+        })
+        .then_some(&continuation.last_result)
+}
+
+/// Admit the next input for a parked continuation. An instance parked at an
+/// owner request accepts only a closed answer envelope its request admits;
+/// every other continuation accepts its input as before.
+pub fn admit_owner_answer(
+    continuation: &Continuation,
+    delivered: &Value,
+) -> Result<(), ExecutionError> {
+    let Some(request) = parked_owner_request(continuation) else {
+        return Ok(());
+    };
+    apxm_program::owner_request::validate_owner_answer(request, delivered)
+        .map(|_| ())
+        .map_err(|message| ExecutionError::OwnerAnswerRejected {
+            message: message.to_owned(),
+        })
 }
 
 fn verify_continuation_integrity(committed: &CommittedContinuation) -> Result<(), ExecutionError> {

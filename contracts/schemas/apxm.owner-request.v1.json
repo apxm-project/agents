@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.owner-request.v1",
+  "title": "OwnerRequest",
+  "description": "Owner consent on the committed-yield path. A program that calls ask_owner yields this document as its committed output: the host reads it, records who owns the Session, and lets only that Person answer. The compiler stamps schema_version and schema_digest, the content address of `answer` with sorted keys, while lowering; source states neither. The next ProgramInvocationStart on the same instance carries the OwnerAnswer envelope described under $defs, which the runtime validates against `answer` before the program resumes. Neither document confers Capability authority.",
+  "type": "object",
+  "required": ["schema_version", "prompt", "answer", "expires_in_seconds", "schema_digest"],
+  "properties": {
+    "schema_version": { "const": "apxm.owner-request.v1" },
+    "prompt": { "$ref": "#/$defs/Text" },
+    "answer": { "$ref": "#/$defs/OwnerAnswerSchema" },
+    "expires_in_seconds": { "type": "integer", "minimum": 1, "maximum": 2592000 },
+    "schema_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "OwnerChoice": {
+      "type": "object",
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Text" },
+        "label": { "$ref": "#/$defs/Text" }
+      },
+      "additionalProperties": false
+    },
+    "OwnerAnswerSchema": {
+      "description": "What an answer looks like: one of the declared choices, or a value of a finite JSON type.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode", "choices"],
+          "properties": {
+            "mode": { "const": "choice" },
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/OwnerChoice" }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode", "schema"],
+          "properties": {
+            "mode": { "const": "typed" },
+            "schema": { "$ref": "apxm.frontend-graph#/$defs/EntrypointInputSchema" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "OwnerAnswer": {
+      "description": "The closed envelope an owner request resumes with, delivered as the next invocation input. An answered envelope carries the chosen choice id or a value the typed schema admits. After the deadline only declined or expired may be admitted; the runtime keeps no clock of its own.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["outcome", "answer"],
+          "properties": {
+            "outcome": { "const": "answered" },
+            "answer": {}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["outcome"],
+          "properties": { "outcome": { "enum": ["declined", "expired"] } },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
