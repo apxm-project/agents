@@ -246,6 +246,36 @@ class _NullableInput(TypedDict):
     reference: str | None
 
 
+def test_an_annotated_binding_captures_as_its_unannotated_form() -> None:
+    """`name: T = <value>` is Python's `const name: T = <value>`.
+
+    Naming a typed Agent yield is the case that matters: TypeScript writes
+    `const next: Input = await agent.yield_(...)`, and before this the Python
+    spelling of the same program was uncapturable. The annotation is prose about
+    a binding capture already types from its producer, so the two forms must
+    produce the same program, not merely both compile.
+    """
+
+    @Workflow(input=EventInput, output=EventPayload)
+    async def Resumed(agent, input):
+        resumed: EventInput = await agent.yield_({"reference": "ready", "approved": False})
+        return await SubmittedEvent.wait(resumed["event"])
+
+    annotated = Resumed.frontend_graph()
+
+    @Workflow(input=EventInput, output=EventPayload)
+    async def Resumed(agent, input):  # noqa: F811 — the same program, unannotated
+        resumed = await agent.yield_({"reference": "ready", "approved": False})
+        return await SubmittedEvent.wait(resumed["event"])
+
+    assert Resumed.diagnostics() is None
+    bare = Resumed.frontend_graph()
+    # The source map is the one part that must differ: the annotation occupies
+    # columns. Everything the program *is* — values, intents, schemas — matches.
+    assert annotated.pop("source_map") != bare.pop("source_map")
+    assert annotated == bare
+
+
 def test_typed_json_input_reaches_the_closed_frontend_schema() -> None:
     @Workflow(input=_JsonInput, output=_JsonInput)
     async def JsonInput(agent, input):

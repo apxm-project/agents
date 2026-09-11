@@ -4,10 +4,67 @@
   "title": "DurableEventRequest",
   "description": "One request to await exactly one authorized durable Event Reference.",
   "type": "object",
-  "required": ["node_id", "event_ref"],
+  "required": [
+    "node_id",
+    "node_execution_id",
+    "program_invocation_id",
+    "event_ref",
+    "contract"
+  ],
   "properties": {
     "node_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-    "event_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+    "node_execution_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+    "program_invocation_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+    "event_ref": { "$ref": "#/$defs/EventRef" },
+    "contract": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "host_capability" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "type_id", "schema_digest"],
+          "properties": {
+            "kind": { "const": "declared" },
+            "type_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+            "schema_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "CanonicalEventRef": {
+      "type": "object",
+      "required": ["event_id", "generation"],
+      "properties": {
+        "event_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "EventRef": {
+      "oneOf": [
+        { "$ref": "#/$defs/CanonicalEventRef" },
+        {
+          "type": "string",
+          "pattern": "^capability-request\\.[0-9a-f]{64}$"
+        }
+      ]
+    }
+  }
 }

@@ -342,6 +342,28 @@
     },
     "EventObservationRef": {
       "type": "object",
+      "if": {
+        "required": [
+          "event_ref"
+        ],
+        "properties": {
+          "event_ref": {
+            "pattern": "^capability-request\\.[0-9a-f]{64}$"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "generation"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "generation"
+        ]
+      },
       "required": [
         "event_ref"
       ],
@@ -351,7 +373,8 @@
         },
         "generation": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "occurrence_id": {
           "$ref": "#/$defs/OpaqueRef"

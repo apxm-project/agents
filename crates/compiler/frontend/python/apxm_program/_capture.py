@@ -452,8 +452,21 @@ class _Capture:
                     "a bare constant is not an Agent source statement", stmt
                 )
             return
-        elif isinstance(stmt, ast.AnnAssign) and stmt.value is None:
-            return
+        # `name: T = <value>` is the Python spelling of TypeScript's
+        # `const name: T = <value>`. The annotation is authoring prose about a
+        # binding this capture already types from its producer, so the statement
+        # carries exactly the intent of the unannotated assignment. Without this
+        # an annotated `await` — the natural way to name a typed Agent yield —
+        # is uncapturable in Python and fine in TypeScript.
+        elif isinstance(stmt, ast.AnnAssign):
+            if stmt.value is None:
+                return
+            self._visit_assign(
+                ast.copy_location(
+                    ast.Assign(targets=[stmt.target], value=stmt.value), stmt
+                ),
+                region_id,
+            )
         else:
             raise CaptureError(
                 AGENT_DYNAMIC_ARGUMENT,
@@ -1015,6 +1028,12 @@ class _Capture:
             )
         )
         self._values_by_name[assign_to] = resume_value
+        # The resume binding is the program's own input type — that is what the
+        # value above is bound to. Recording it lets a later effect read a field
+        # of the resumed input, which is how a yield-then-wait program reaches
+        # its EventRef. An annotation on the binding is prose about the same
+        # type, never the authority for it.
+        self._types_by_name[assign_to] = self._input_annotation
         self._record_node(region_id, node_id)
         span = self._span(call)
         if span is not None:

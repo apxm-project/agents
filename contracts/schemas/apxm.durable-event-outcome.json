@@ -12,7 +12,7 @@
           "type": "object",
           "required": ["event_ref", "payload"],
           "properties": {
-            "event_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+            "event_ref": { "$ref": "apxm.durable-event-request#/$defs/EventRef" },
             "payload": { "type": "string", "maxLength": 1048576 }
           },
           "additionalProperties": false
@@ -30,7 +30,32 @@
         "mismatched": {
           "type": "object",
           "required": ["delivered_event_ref"],
-          "properties": { "delivered_event_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" } },
+          "properties": {
+            "delivered_event_ref": { "$ref": "apxm.durable-event-request#/$defs/EventRef" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["rejected"],
+      "properties": {
+        "rejected": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": {
+            "reason": {
+              "enum": [
+                "unknown_reference",
+                "owner_mismatch",
+                "contract_mismatch",
+                "already_bound",
+                "invalid_payload"
+              ]
+            }
+          },
           "additionalProperties": false
         }
       },

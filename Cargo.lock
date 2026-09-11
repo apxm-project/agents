@@ -359,6 +359,7 @@ name = "apxm-event-http"
 version = "0.1.0"
 dependencies = [
  "apxm-kernel",
+ "apxm-program",
  "apxm-runtime-protocol",
  "apxm-runtime-service",
  "serde",
@@ -430,6 +431,7 @@ dependencies = [
 name = "apxm-kernel"
 version = "0.1.0"
 dependencies = [
+ "apxm-core",
  "apxm-inference",
  "apxm-program",
  "async-trait",

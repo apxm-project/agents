@@ -269,7 +269,12 @@ mod tests {
             PortSlot::ProgramComposition
         );
         assert_eq!(
-            EventRef::new("event.1").expect("event ref").as_str(),
+            EventRef::reserved(apxm_kernel::CanonicalEventRef {
+                event_id: "event.1".into(),
+                generation: 1,
+            })
+            .expect("event ref")
+            .as_str(),
             "event.1"
         );
     }

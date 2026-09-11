@@ -373,10 +373,21 @@ impl InteractionClient {
         Ok(())
     }
 
-    /// Reserve one EventRef through the Runtime Service.
-    pub fn reserve_event(&mut self, type_id: &str) -> Result<RuntimeResult, String> {
+    /// Reserve one typed EventRef for the exact admitted instance. The caller
+    /// retains its request identity to retry without minting another target.
+    pub fn reserve_event(
+        &mut self,
+        request_id: &str,
+        program_instance_id: &str,
+        type_id: &str,
+    ) -> Result<RuntimeResult, String> {
         let result = self.request(RuntimeRequest::EventReserve {
-            request_id: "event.reserve".to_owned(),
+            request_id: request_id.to_owned(),
+            program_instance_id: program_instance_id.to_owned(),
+            owner_claim: self
+                .owner_claim
+                .clone()
+                .ok_or("instance owner claim is unavailable")?,
             type_id: type_id.to_owned(),
         })?;
         if let RuntimeResult::EventReserved { owner_claim, .. } = &result {

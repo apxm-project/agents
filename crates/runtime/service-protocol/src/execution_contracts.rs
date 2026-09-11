@@ -349,8 +349,8 @@ impl HostCapabilityObservation {
 }
 
 /// The actual runtime Event identity associated with an event wait/resume
-/// observation. Generation and source occurrence are optional because the
-/// execution port may expose only the exact EventRef at this boundary.
+/// observation. Reserved Events always retain their generation; host
+/// Capability request identities are separately namespaced and unversioned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventObservationRef {
@@ -368,6 +368,18 @@ impl EventObservationRef {
         }
         if !is_identifier(&self.event_ref) {
             return Err(ContractValidationError::InvalidRef { kind: "event_ref" });
+        }
+        let host =
+            apxm_core::types::host_capability::is_host_capability_request_id(&self.event_ref);
+        if (host && self.generation.is_some())
+            || (!host
+                && !self
+                    .generation
+                    .is_some_and(|generation| (1..=9_007_199_254_740_991).contains(&generation)))
+        {
+            return Err(ContractValidationError::InvalidRef {
+                kind: "event_generation",
+            });
         }
         if let Some(occurrence_id) = &self.occurrence_id {
             OccurrenceId::new(occurrence_id.as_str().to_owned())?;
@@ -1280,7 +1292,7 @@ mod tests {
         let mut ordinary = observation(Commitment::Provisional, ObservationKind::NodeStarted, 2);
         ordinary.event_ref = Some(EventObservationRef {
             event_ref: "event.1".to_owned(),
-            generation: None,
+            generation: Some(1),
             occurrence_id: None,
         });
         assert_eq!(
@@ -1341,7 +1353,7 @@ mod tests {
     fn event_reference_enforces_opaque_ref_bound() {
         let boundary = EventObservationRef {
             event_ref: "e".repeat(MAX_REF_BYTES),
-            generation: None,
+            generation: Some(1),
             occurrence_id: None,
         };
         assert!(boundary.validate().is_ok());

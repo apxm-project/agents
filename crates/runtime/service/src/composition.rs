@@ -611,6 +611,7 @@ pub async fn execute_admitted_artifact_with_runtime_ports_and_cancellation(
         ProgramInstanceRef::new("canonical.instance"),
         false,
         Value::Null,
+        None,
     )
     .await
 }
@@ -644,6 +645,7 @@ pub(crate) async fn execute_admitted_artifact_with_runtime_ports_and_cancellatio
         ProgramInstanceRef::new("canonical.instance"),
         false,
         input,
+        None,
     )
     .await
 }
@@ -706,6 +708,7 @@ pub async fn execute_admitted_artifact_resumable_for_instance(
         program_instance_ref,
         true,
         Value::Null,
+        None,
     )
     .await
 }
@@ -724,6 +727,7 @@ pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
     cancellation: Option<CancellationToken>,
     program_instance_ref: ProgramInstanceRef,
     input: Value,
+    events: Arc<dyn EventPort>,
 ) -> Result<Value, String> {
     execute_admitted_artifact_with_runtime_ports_mode(
         air,
@@ -738,6 +742,7 @@ pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
         program_instance_ref,
         true,
         input,
+        Some(events),
     )
     .await
 }
@@ -760,6 +765,40 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
     program_instance_ref: ProgramInstanceRef,
     event_ref: apxm_kernel::EventRef,
     delivered: Value,
+) -> Result<Value, String> {
+    resume_admitted_artifact_with_events(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        program_instance_ref,
+        event_ref,
+        delivered,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resume_admitted_artifact_with_events(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+    event_ref: apxm_kernel::EventRef,
+    delivered: Value,
+    events: Option<Arc<dyn EventPort>>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
     let descriptor = canonical_runtime_descriptor();
@@ -801,6 +840,7 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
         verified,
         "runtime.service.resume",
         true,
+        events,
     )
     .await?;
     let profile = match cancellation {
@@ -828,6 +868,9 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
     }
 }
 
+/// Every public entry above delegates into one driver frame, so that frame's
+/// state would otherwise be carried by value through each wrapper's future.
+/// Boxing it once here keeps every caller pointer-sized.
 #[allow(clippy::too_many_arguments)]
 async fn execute_admitted_artifact_with_runtime_ports_mode(
     air: AirModule,
@@ -842,6 +885,41 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
     program_instance_ref: ProgramInstanceRef,
     resumable: bool,
     input: Value,
+    events: Option<Arc<dyn EventPort>>,
+) -> Result<Value, String> {
+    Box::pin(drive_admitted_artifact(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        program_instance_ref,
+        resumable,
+        input,
+        events,
+    ))
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drive_admitted_artifact(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+    resumable: bool,
+    input: Value,
+    events: Option<Arc<dyn EventPort>>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
     let artifact = ExecutableArtifact::decode(artifact_bytes).map_err(|error| error.to_string())?;
@@ -941,6 +1019,7 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         verified,
         "runtime.service.execution",
         resumable,
+        events,
     )
     .await?;
     let profile = match cancellation {
@@ -1044,6 +1123,7 @@ async fn runtime_profile_from_invocation(
     verified: VerifiedInvocationAdmission,
     execution_id: &str,
     resumable: bool,
+    events: Option<Arc<dyn EventPort>>,
 ) -> Result<RuntimeProfile, String> {
     let entries = verified
         .port_bindings
@@ -1059,7 +1139,9 @@ async fn runtime_profile_from_invocation(
                 }
                 PortSlot::DurableEvent => {
                     if resumable {
-                        PortImplementation::DurableEvent(Arc::new(ParkedEvents))
+                        PortImplementation::DurableEvent(
+                            events.clone().unwrap_or_else(|| Arc::new(ParkedEvents)),
+                        )
                     } else {
                         PortImplementation::DurableEvent(Arc::new(DevEvents))
                     }
@@ -1502,6 +1584,7 @@ fn event_outcome_json(outcome: &EventOutcome) -> Value {
         EventOutcome::Parked => json!({"status": "parked"}),
         EventOutcome::Expired => json!({"status": "expired"}),
         EventOutcome::Cancelled => json!({"status": "cancelled"}),
+        EventOutcome::Rejected { reason } => json!({"status": "rejected", "reason": reason}),
         EventOutcome::Mismatched {
             delivered_event_ref,
         } => json!({

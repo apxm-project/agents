@@ -101,7 +101,8 @@
       "observation_kind": "event_resumed",
       "commitment": "provisional",
       "event_ref": {
-        "event_ref": "event.1"
+        "event_ref": "event.1",
+        "generation": 1
       }
     },
     "expected_valid": true
@@ -123,7 +124,8 @@
       "observation_kind": "event_waiting",
       "commitment": "provisional",
       "event_ref": {
-        "event_ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        "event_ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "generation": 1
       }
     },
     "expected_valid": true
@@ -530,6 +532,96 @@
       },
       "observation_kind": "capability_requested",
       "commitment": "provisional"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-host-capability-wait-carries-no-generation",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.12",
+      "program_invocation_id": "invocation.1",
+      "sequence": 12,
+      "cursor": {
+        "position": 12,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 12
+      },
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "a-host-capability-wait-with-a-generation-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.host.13",
+      "program_invocation_id": "invocation.1",
+      "sequence": 13,
+      "cursor": {
+        "position": 13,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 13
+      },
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "capability-request.5f3c0a1b2d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+        "generation": 1
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-reserved-event-wait-without-a-generation-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.14",
+      "program_invocation_id": "invocation.1",
+      "sequence": 14,
+      "cursor": {
+        "position": 14,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 14
+      },
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "event.1"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "a-reserved-event-wait-at-generation-zero-is-rejected",
+    "input": {
+      "contract": "apxm.execution-observation.v1",
+      "observation_id": "observation.15",
+      "program_invocation_id": "invocation.1",
+      "sequence": 15,
+      "cursor": {
+        "position": 15,
+        "token": "scope.cursor"
+      },
+      "timing": {
+        "observed_at_unix_ms": 15
+      },
+      "observation_kind": "event_waiting",
+      "commitment": "provisional",
+      "event_ref": {
+        "event_ref": "event.1",
+        "generation": 0
+      }
     },
     "expected_valid": false
   }

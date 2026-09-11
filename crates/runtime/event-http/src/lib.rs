@@ -1,14 +1,14 @@
 //! Canonical Event HTTP projection. Loopback by default.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apxm_kernel::event_api::EventHttpMethod;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Semaphore;
 
 use apxm_runtime_protocol::{
     RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
@@ -70,15 +70,27 @@ pub fn dispatch(
         protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
     };
     if method == "POST" && path == EventHttpMethod::Reserve.path() {
-        let type_id = serde_json::from_str::<Value>(body)
-            .ok()
-            .and_then(|value| value.get("type_id")?.as_str().map(str::to_owned))
-            .unwrap_or_default();
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Reserve {
+            request_id: String,
+            program_instance_id: String,
+            owner_claim: apxm_runtime_protocol::RuntimeOwnerClaim,
+            type_id: String,
+        }
+        let Ok(reserve) = serde_json::from_str::<Reserve>(body) else {
+            return (
+                400,
+                json!({"error": "exact instance reservation request is required"}),
+            );
+        };
         return map_result(service.handle(
             &handshake,
             RuntimeRequest::EventReserve {
-                request_id: "http.reserve".to_owned(),
-                type_id,
+                request_id: reserve.request_id,
+                program_instance_id: reserve.program_instance_id,
+                owner_claim: reserve.owner_claim,
+                type_id: reserve.type_id,
             },
         ));
     }
@@ -351,13 +363,21 @@ fn map_result(result: Result<RuntimeResult, apxm_runtime_protocol::ProtocolError
     }
 }
 
-/// Bind the Event HTTP edge on loopback and serve one connection at a time.
+/// Bind the bounded Event HTTP edge on loopback.
 pub async fn serve_loopback(service: RuntimeService) -> Result<(), String> {
     let addr = BindPolicy::Loopback.bind_addr()?;
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|error| error.to_string())?;
     let state = Arc::new(Mutex::new(service));
+    serve_listener(listener, state).await
+}
+
+async fn serve_listener(
+    listener: TcpListener,
+    state: Arc<Mutex<RuntimeService>>,
+) -> Result<(), String> {
+    let _dispatcher = apxm_runtime_service::InvocationDispatcher::start(state.clone())?;
     let permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
     loop {
         let (stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
@@ -379,9 +399,18 @@ pub async fn serve_loopback(service: RuntimeService) -> Result<(), String> {
             let Ok(request) = parse_request(&bytes) else {
                 return;
             };
-            let response = {
-                let mut service = state.lock().await;
-                dispatch(&mut service, request.method, request.path, request.body)
+            let (method, path, body) = (
+                request.method.to_owned(),
+                request.path.to_owned(),
+                request.body.to_owned(),
+            );
+            let Ok(Some(response)) = tokio::task::spawn_blocking(move || {
+                let mut service = state.lock().ok()?;
+                Some(dispatch(&mut service, &method, &path, &body))
+            })
+            .await
+            else {
+                return;
             };
             let Ok(response) = encode_response(response.0, &response.1) else {
                 return;
@@ -398,6 +427,70 @@ pub async fn serve_loopback(service: RuntimeService) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn instance(
+        service: &mut RuntimeService,
+    ) -> (String, apxm_runtime_protocol::RuntimeOwnerClaim) {
+        let mut air: apxm_program::air::AirModule = serde_json::from_value(json!({
+            "schema_version":"apxm.air",
+            "semantic_operations":[{"node_id":"event.wait","op":"await.event","parent_region_id":"Event.body","execution_order":0,
+                "operands":[{"slot":"event_ref","value_id":"Event.param.input","type_ref":"EventRef"}],
+                "result":{"value_id":"event.payload","type_ref":"EventOutput"}}],
+            "structural_ir":[{"region_id":"Event.body","kind":"function","execution_order":0,
+                "block_arguments":[{"value_id":"Event.param.input","type_ref":"Input"}]},
+                {"region_id":"event.return","kind":"return","parent_region_id":"Event.body","execution_order":1,
+                "operands":[{"slot":"output","value_id":"event.payload","type_ref":"EventOutput"}]}],
+            "context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}
+        })).unwrap();
+        air.event_requirements = vec![
+            apxm_program::event::EventRequirement::new(
+                "event.wait".into(),
+                "UserInput".into(),
+                serde_json::from_value(json!({"type":"string"})).unwrap(),
+            )
+            .unwrap(),
+        ];
+        let artifact = apxm_program::artifact::ExecutableArtifact::from_air(&air)
+            .unwrap()
+            .encode()
+            .unwrap();
+        let digest = service.admit_artifact(artifact.clone());
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.into(),
+                },
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "create".into(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap()
+        else {
+            panic!("instance creation")
+        };
+        service
+            .bind_admission(
+                &program_instance_id,
+                apxm_runtime_service::materials_for_artifact(
+                    &artifact,
+                    "invocation.http",
+                    b"{}".to_vec(),
+                    b"{}".to_vec(),
+                ),
+            )
+            .unwrap();
+        (program_instance_id, owner_claim)
+    }
+
+    fn reserve_body(service: &mut RuntimeService) -> Value {
+        let (program_instance_id, owner_claim) = instance(service);
+        json!({"request_id":"reserve","program_instance_id":program_instance_id,"owner_claim":owner_claim,"type_id":"UserInput"})
+    }
 
     #[test]
     fn loopback_is_allowed_and_nonloopback_is_not_by_default() {
@@ -426,11 +519,12 @@ mod tests {
     #[test]
     fn reserve_dispatches_on_frozen_path() {
         let mut service = RuntimeService::default();
+        let request = reserve_body(&mut service);
         let (status, body) = dispatch(
             &mut service,
             "POST",
             EventHttpMethod::Reserve.path(),
-            r#"{"type_id":"UserInput"}"#,
+            &request.to_string(),
         );
         assert_eq!(status, 200);
         assert!(body.get("event_ref").is_some());
@@ -439,11 +533,12 @@ mod tests {
     #[test]
     fn event_http_dispatches_authorized_inspect_list_and_cancel() {
         let mut service = RuntimeService::default();
+        let request = reserve_body(&mut service);
         let (_, reserved) = dispatch(
             &mut service,
             "POST",
             EventHttpMethod::Reserve.path(),
-            r#"{"type_id":"UserInput"}"#,
+            &request.to_string(),
         );
         let event_ref = reserved.get("event_ref").cloned().expect("event ref");
         let owner_claim = reserved.get("owner_claim").cloned().expect("claim");
@@ -491,11 +586,14 @@ mod tests {
         let handshake = RuntimeHandshake {
             protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
         };
+        let (program_instance_id, instance_claim) = instance(&mut native);
         let reserved = native
             .handle(
                 &handshake,
                 RuntimeRequest::EventReserve {
                     request_id: "r".to_owned(),
+                    program_instance_id,
+                    owner_claim: instance_claim,
                     type_id: "UserInput".to_owned(),
                 },
             )
@@ -529,14 +627,17 @@ mod tests {
                 },
             )
             .unwrap();
+        let http_request = reserve_body(&mut http);
         let http_reserved = dispatch(
             &mut http,
             "POST",
             EventHttpMethod::Reserve.path(),
-            r#"{"type_id":"UserInput"}"#,
+            &http_request.to_string(),
         );
         let http_event: Value = http_reserved.1;
         let http_claim = http_event.get("owner_claim").cloned().unwrap();
+        let mut application = application;
+        application["event_ref"] = http_event["event_ref"].clone();
         let http_application = serde_json::json!({
             "owner_claim": http_claim,
             "application": application,
@@ -550,9 +651,92 @@ mod tests {
         assert_eq!(status, 200);
         assert!(matches!(
             native_result,
-            apxm_runtime_protocol::RuntimeResult::EventApplied { .. }
+            apxm_runtime_protocol::RuntimeResult::EventApplied {
+                result: apxm_kernel::EventApplicationResult::Fulfilled,
+                ..
+            }
         ));
-        assert!(http_body.get("result").is_some());
+        assert_eq!(http_body["result"], "fulfilled");
+    }
+
+    #[test]
+    fn loopback_acceptance_drains_through_the_shared_worker_and_shuts_down() {
+        use apxm_runtime_protocol::{
+            GrantRef, PrincipalRef, ProgramInvocationId, ProgramInvocationStatus, ReadContext,
+            ReadPurpose, RequestId, RuntimeHandshakeV2, RuntimeRequestV2, RuntimeResultV2,
+            ScopeRef,
+        };
+        let mut service = RuntimeService::in_memory()
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.http".into());
+        let request = reserve_body(&mut service);
+        let (status, reservation) = dispatch(
+            &mut service,
+            "POST",
+            EventHttpMethod::Reserve.path(),
+            &request.to_string(),
+        );
+        assert_eq!(status, 200);
+        let started = service
+            .handle(
+                &RuntimeHandshake {
+                    protocol_version: RUNTIME_PROTOCOL_VERSION.into(),
+                },
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "start.http".into(),
+                    program_instance_id: request["program_instance_id"].as_str().unwrap().into(),
+                    owner_claim: serde_json::from_value(request["owner_claim"].clone()).unwrap(),
+                    input: reservation["event_ref"].clone(),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = started
+        else {
+            panic!("{started:?}")
+        };
+        let shared = Arc::new(Mutex::new(service));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(serve_listener(listener, shared.clone()));
+            let body = json!({"owner_claim":reservation["owner_claim"],"application":{
+                "event_ref":reservation["event_ref"],"idempotency_key":"application.http",
+                "occurrence":{"occurrence_id":"occurrence.http","source_kind":"test.http","mapping_digest":"mapping.http","source_record":"record.http","payload":"delivered over HTTP"}
+            }}).to_string();
+            let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+            client.write_all(format!("POST /v1/events/fulfill HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            let mut reply = String::new();
+            tokio::time::timeout(Duration::from_secs(5), client.read_to_string(&mut reply)).await.unwrap().unwrap();
+            assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
+            assert_eq!(serde_json::from_str::<Value>(reply.split_once("\r\n\r\n").unwrap().1).unwrap(), json!({"result":"fulfilled"}));
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let state = shared.clone();
+                let invocation = program_invocation_id.clone();
+                let result = tokio::task::spawn_blocking(move || state.lock().unwrap().handle_v2(&RuntimeHandshakeV2::server(), RuntimeRequestV2::ProgramInvocationInspect {
+                    context:ReadContext {request_id:RequestId::new("inspect.http").unwrap(),scope_ref:ScopeRef::new("scope.http").unwrap(),principal_ref:PrincipalRef::new("principal.http").unwrap(),grant_ref:GrantRef::new("grant.http").unwrap(),correlation_id:None,purpose:ReadPurpose::Inspection},
+                    program_invocation_id:ProgramInvocationId::new(invocation).unwrap(),node_execution_id:None,
+                }).unwrap()).await.unwrap();
+                let RuntimeResultV2::ProgramInvocationInspection {inspection, ..} = result else {panic!("{result:?}")};
+                if inspection.status == ProgramInvocationStatus::CommittedReturn {break;}
+                assert!(std::time::Instant::now() < deadline, "accepted HTTP delivery did not complete: {:?}", inspection.status);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            server.abort();
+            assert!(server.await.unwrap_err().is_cancelled());
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while Arc::strong_count(&shared) > 1 {
+                assert!(std::time::Instant::now() < deadline, "HTTP continuation workers did not shut down");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
     }
 
     #[test]

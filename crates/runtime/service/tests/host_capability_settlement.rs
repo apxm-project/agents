@@ -310,6 +310,632 @@ async def Transform(agent, input):
     }
 }
 
+#[test]
+fn compiled_typed_events_recover_into_host_capability_with_exact_payload_and_generation() {
+    use apxm_kernel::event_api::{EventApplication, EventApplicationResult, EventOccurrence};
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for (frontend, yield_first) in [
+        (Frontend::Typescript, false),
+        (Frontend::Python, false),
+        (Frontend::Typescript, true),
+        (Frontend::Python, true),
+    ] {
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Event, type EventRef, Capability } from "@apxm/frontend";
+type Payload = { reference: string; approved: boolean };
+type Input = { event: EventRef<Payload> };
+const Submitted = Event<Payload>("event.submitted");
+const Read = Capability<Payload, Payload>("host:notes.search");
+export const EventReader = Workflow<Input, Payload>({name:"EventReader",async run(agent,input){
+    const payload = await Submitted.wait(input.event);
+    return await Read(payload);
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow, Event, EventRef, Capability
+class Payload(TypedDict):
+    reference: str
+    approved: bool
+class Input(TypedDict):
+    event: EventRef[Payload]
+Submitted = Event[Payload]("event.submitted")
+Read = Capability[Payload, Payload]("host:notes.search")
+@Workflow(input=Input,output=Payload)
+async def EventReader(agent,input):
+    payload = await Submitted.wait(input["event"])
+    return await Read(payload)
+"#
+            }
+        };
+        let source = if yield_first {
+            match frontend {
+                Frontend::Typescript => source.replace(
+                    "const payload = await Submitted.wait(input.event);",
+                    "const next: Input = await agent.yield_({reference: 'ready', approved: false}); const payload = await Submitted.wait(next.event);",
+                ),
+                Frontend::Python => source.replace(
+                    "payload = await Submitted.wait(input[\"event\"])",
+                    "next_input: Input = await agent.yield_({\"reference\": \"ready\", \"approved\": False})\n    payload = await Submitted.wait(next_input[\"event\"])",
+                ),
+            }
+        } else {
+            source.to_owned()
+        };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "EventReader", source)
+                .with_host_capabilities(["notes.search"]),
+            &roots,
+            &drivers,
+        )
+        .unwrap();
+        assert_eq!(compiled.air.event_requirements.len(), 1);
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        for early in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = RuntimeService::in_memory()
+                .with_runtime_state_dir(directory.path().to_path_buf())
+                .with_embedded_read_access()
+                .with_output_access_scope_ref("scope.host-capability".into());
+            let digest = service.admit_artifact(artifact.clone());
+            let created = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInstanceCreate {
+                        request_id: "event.create".into(),
+                        artifact_digest: digest,
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInstanceCreated {
+                program_instance_id: instance,
+                owner_claim: claim,
+                ..
+            } = created
+            else {
+                panic!("{created:?}")
+            };
+            service
+                .bind_admission(&instance, materials(&artifact, "event.admission"))
+                .unwrap();
+            let reserved = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventReserve {
+                        request_id: "event.reserve".into(),
+                        program_instance_id: instance.clone(),
+                        owner_claim: claim.clone(),
+                        type_id: "event.submitted".into(),
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::EventReserved {
+                mut event_ref,
+                owner_claim: mut event_claim,
+                ..
+            } = reserved
+            else {
+                panic!("{reserved:?}")
+            };
+            if yield_first {
+                let initial = service
+                    .handle(
+                        &handshake(),
+                        RuntimeRequest::ProgramInvocationStart {
+                            request_id: "event.initial".into(),
+                            program_instance_id: instance.clone(),
+                            owner_claim: claim.clone(),
+                            input: serde_json::json!({"event":event_ref}),
+                        },
+                    )
+                    .unwrap();
+                let RuntimeResult::ProgramInvocationStarted {
+                    program_invocation_id,
+                    ..
+                } = initial
+                else {
+                    panic!("{initial:?}")
+                };
+                assert_eq!(
+                    invocation_status(&mut service, &program_invocation_id),
+                    apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield
+                );
+                let next = service
+                    .handle(
+                        &handshake(),
+                        RuntimeRequest::EventReserve {
+                            request_id: "event.after-yield".into(),
+                            program_instance_id: instance.clone(),
+                            owner_claim: claim.clone(),
+                            type_id: "event.submitted".into(),
+                        },
+                    )
+                    .unwrap();
+                let RuntimeResult::EventReserved {
+                    event_ref: next_ref,
+                    owner_claim: next_claim,
+                    ..
+                } = next
+                else {
+                    panic!("{next:?}")
+                };
+                event_ref = next_ref;
+                event_claim = next_claim;
+            }
+            let payload = serde_json::json!({"reference":"exact-source-payload","approved":true});
+            let application = EventApplication {
+                event_ref: event_ref.clone(),
+                idempotency_key: "event.application".into(),
+                occurrence: EventOccurrence {
+                    occurrence_id: "event.occurrence".into(),
+                    source_kind: "test.signed-source".into(),
+                    mapping_digest: "source.mapping".into(),
+                    source_record: "source.record".into(),
+                    payload: payload.clone(),
+                },
+            };
+            let deliver =
+                |service: &mut RuntimeService, application: EventApplication<serde_json::Value>| {
+                    service
+                        .handle(
+                            &handshake(),
+                            RuntimeRequest::EventFulfill {
+                                request_id: "event.fulfill".into(),
+                                owner_claim: event_claim.clone(),
+                                application,
+                            },
+                        )
+                        .unwrap()
+                };
+            if early {
+                assert!(matches!(
+                    deliver(&mut service, application.clone()),
+                    RuntimeResult::EventApplied {
+                        result: EventApplicationResult::Fulfilled,
+                        ..
+                    }
+                ));
+            }
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "event.start".into(),
+                        program_instance_id: instance.clone(),
+                        owner_claim: claim.clone(),
+                        input: serde_json::json!({"event":event_ref}),
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInvocationStarted {
+                program_invocation_id: invocation,
+                ..
+            } = started
+            else {
+                panic!("{started:?}")
+            };
+            assert!(
+                of_kind(
+                    &observations(&mut service, &invocation),
+                    ObservationKind::CapabilityRequested
+                )
+                .is_empty()
+            );
+            if !early {
+                assert!(matches!(
+                    deliver(&mut service, application.clone()),
+                    RuntimeResult::EventApplied {
+                        result: EventApplicationResult::Fulfilled,
+                        ..
+                    }
+                ));
+            }
+            drop(service); // accepted delivery + parked invocation survive a process restart
+            let service = RuntimeService::in_memory()
+                .with_runtime_state_dir(directory.path().to_path_buf())
+                .with_embedded_read_access()
+                .with_output_access_scope_ref("scope.host-capability".into());
+            assert!(
+                service.startup_error().is_none(),
+                "{:?}",
+                service.startup_error()
+            );
+            let shared = Arc::new(Mutex::new(service));
+            let dispatcher =
+                apxm_runtime_service::InvocationDispatcher::start(shared.clone()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let request = loop {
+                let stream = observations(&mut shared.lock().unwrap(), &invocation);
+                let requests = of_kind(&stream, ObservationKind::CapabilityRequested);
+                if let Some(request) = requests.first() {
+                    break request.host_capability.clone().unwrap();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Event wake did not reach authored Capability: {stream:?}"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(request.input.as_ref().unwrap()).unwrap(),
+                payload
+            );
+            let mut service = shared.lock().unwrap();
+            let stream = observations(&mut service, &invocation);
+            for kind in [ObservationKind::EventWaiting, ObservationKind::EventResumed] {
+                let events = of_kind(&stream, kind);
+                assert_eq!(events.len(), 1);
+                let target = events[0].event_ref.as_ref().unwrap();
+                assert_eq!(target.event_ref, event_ref.event_id);
+                assert_eq!(target.generation, Some(event_ref.generation));
+            }
+            let settled = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::CapabilityFulfill {
+                        request_id: "host.settle".into(),
+                        owner_claim: claim.clone(),
+                        capability_request_id: request.capability_request_id,
+                        outcome: HostCapabilityOutcomeKind::Ok,
+                        output: Some(payload.to_string()),
+                        receipt_ref: Some("receipt.event.host".into()),
+                        message: None,
+                    },
+                )
+                .unwrap();
+            assert!(
+                matches!(settled, RuntimeResult::CapabilitySettled { .. }),
+                "{settled:?}"
+            );
+            drop(service);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let stream = observations(&mut shared.lock().unwrap(), &invocation);
+                if !of_kind(&stream, ObservationKind::TerminalCommitted).is_empty() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "accepted host settlement did not finish: {stream:?}"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let mut service = shared.lock().unwrap();
+            assert_eq!(
+                committed_output(&mut service, &invocation),
+                serde_json::Value::String(payload.to_string())
+            );
+            assert!(
+                matches!(service.handle(&handshake(), RuntimeRequest::EventReserve {
+                request_id:"event.after-return".into(), program_instance_id:instance.clone(),
+                owner_claim:claim.clone(), type_id:"event.submitted".into(),
+            }).unwrap(), RuntimeResult::Failed {code, ..} if code == "instance_unavailable")
+            );
+            assert!(matches!(
+                deliver(&mut service, application.clone()),
+                RuntimeResult::EventApplied {
+                    result: EventApplicationResult::Fulfilled,
+                    ..
+                }
+            ));
+            let mut conflict = application;
+            conflict.idempotency_key = "changed.key".into();
+            conflict.occurrence.payload =
+                serde_json::json!({"reference":"changed","approved":false});
+            assert!(matches!(
+                deliver(&mut service, conflict),
+                RuntimeResult::EventApplied {
+                    result: EventApplicationResult::Conflict,
+                    ..
+                }
+            ));
+            assert_eq!(
+                of_kind(
+                    &observations(&mut service, &invocation),
+                    ObservationKind::CapabilityRequested
+                )
+                .len(),
+                1,
+                "replay cannot dispatch another effect"
+            );
+            drop(service);
+            drop(dispatcher);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Arc::strong_count(&shared) > 1 {
+                assert!(
+                    Instant::now() < deadline,
+                    "dispatcher workers did not shut down"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+}
+
+/// The PLAN qualification item: one instance holding two live reservations, each
+/// consumed by its own exact wait.
+///
+/// Two reservations exist from the start, so neither wait can be identified by
+/// "the instance's Event" — only by its own destination. The delivery order is
+/// inverted on purpose: the second reservation is fulfilled while execution is
+/// still parked on the first, which must neither wake the first wait nor be lost
+/// before the second wait commits its binding.
+#[test]
+fn two_live_reservations_bind_to_their_own_exact_waits_in_one_instance() {
+    use apxm_kernel::event_api::{EventApplication, EventApplicationResult, EventOccurrence};
+    use apxm_source_port::{
+        Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest, compile_source_bundle,
+    };
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    let root = fixture_dir().ancestors().nth(3).unwrap().to_path_buf();
+    let roots = FrontendRoots::new(
+        root.join("crates/compiler/frontend/python"),
+        root.join("crates/compiler/frontend/typescript"),
+    );
+    let drivers = FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    );
+    for frontend in [Frontend::Typescript, Frontend::Python] {
+        let source = match frontend {
+            Frontend::Typescript => {
+                r#"import { Workflow, Event, type EventRef } from "@apxm/frontend";
+type Payload = { reference: string; approved: boolean };
+type Input = { first: EventRef<Payload>; second: EventRef<Payload> };
+const First = Event<Payload>("event.first");
+const Second = Event<Payload>("event.second");
+export const TwoWaits = Workflow<Input, Payload>({name:"TwoWaits",async run(agent,input){
+    const one = await First.wait(input.first);
+    const two = await Second.wait(input.second);
+    return two;
+}});
+"#
+            }
+            Frontend::Python => {
+                r#"from typing import TypedDict
+from apxm_program import Workflow, Event, EventRef
+class Payload(TypedDict):
+    reference: str
+    approved: bool
+class Input(TypedDict):
+    first: EventRef[Payload]
+    second: EventRef[Payload]
+First = Event[Payload]("event.first")
+Second = Event[Payload]("event.second")
+@Workflow(input=Input,output=Payload)
+async def TwoWaits(agent,input):
+    one = await First.wait(input["first"])
+    two = await Second.wait(input["second"])
+    return two
+"#
+            }
+        };
+        let compiled = compile_source_bundle(
+            &SourceBundleRequest::new(frontend, "TwoWaits", source.to_owned()),
+            &roots,
+            &drivers,
+        )
+        .unwrap();
+        assert_eq!(compiled.air.event_requirements.len(), 2);
+        let artifact =
+            ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+                .unwrap()
+                .encode()
+                .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = RuntimeService::in_memory()
+            .with_runtime_state_dir(directory.path().to_path_buf())
+            .with_embedded_read_access()
+            .with_output_access_scope_ref("scope.host-capability".into());
+        let digest = service.admit_artifact(artifact.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "two.create".into(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id: instance,
+            owner_claim: claim,
+            ..
+        } = created
+        else {
+            panic!("{created:?}")
+        };
+        service
+            .bind_admission(&instance, materials(&artifact, "two.admission"))
+            .unwrap();
+        let reserve = |service: &mut RuntimeService, request: &str, type_id: &str| {
+            let reserved = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventReserve {
+                        request_id: request.into(),
+                        program_instance_id: instance.clone(),
+                        owner_claim: claim.clone(),
+                        type_id: type_id.into(),
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::EventReserved {
+                event_ref,
+                owner_claim,
+                ..
+            } = reserved
+            else {
+                panic!("{reserved:?}")
+            };
+            (event_ref, owner_claim)
+        };
+        let (first_ref, first_claim) = reserve(&mut service, "two.reserve.first", "event.first");
+        let (second_ref, second_claim) =
+            reserve(&mut service, "two.reserve.second", "event.second");
+        assert_ne!(first_ref, second_ref, "two waits need two destinations");
+
+        let payload = |reference: &str| serde_json::json!({"reference":reference,"approved":true});
+        let application = |target: &apxm_kernel::event_api::CanonicalEventRef, reference: &str| {
+            EventApplication {
+                event_ref: target.clone(),
+                idempotency_key: format!("two.application.{reference}"),
+                occurrence: EventOccurrence {
+                    occurrence_id: format!("two.occurrence.{reference}"),
+                    source_kind: "test.signed-source".into(),
+                    mapping_digest: "source.mapping".into(),
+                    source_record: "source.record".into(),
+                    payload: payload(reference),
+                },
+            }
+        };
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "two.start".into(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: claim.clone(),
+                    input: serde_json::json!({"first":first_ref,"second":second_ref}),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id: invocation,
+            ..
+        } = started
+        else {
+            panic!("{started:?}")
+        };
+        let stream = observations(&mut service, &invocation);
+        let waiting = of_kind(&stream, ObservationKind::EventWaiting);
+        assert_eq!(waiting.len(), 1, "the second wait is not reached yet");
+        assert_eq!(
+            waiting[0].event_ref.as_ref().unwrap().event_ref,
+            first_ref.event_id
+        );
+
+        let deliver = |service: &mut RuntimeService,
+                       owner_claim: &RuntimeOwnerClaim,
+                       application: EventApplication<serde_json::Value>| {
+            service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventFulfill {
+                        request_id: "two.fulfill".into(),
+                        owner_claim: owner_claim.clone(),
+                        application,
+                    },
+                )
+                .unwrap()
+        };
+        // Out of order: the destination the program has not reached yet settles
+        // first and must simply wait for its own wait to commit.
+        for (owner_claim, target, reference) in [
+            (&second_claim, &second_ref, "second"),
+            (&first_claim, &first_ref, "first"),
+        ] {
+            assert!(matches!(
+                deliver(&mut service, owner_claim, application(target, reference)),
+                RuntimeResult::EventApplied {
+                    result: EventApplicationResult::Fulfilled,
+                    ..
+                }
+            ));
+        }
+        // Each reservation carries its own claim: the second wait's owner cannot
+        // speak for the first destination even with the first's exact payload.
+        assert!(
+            service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::EventFulfill {
+                        request_id: "two.crossed".into(),
+                        owner_claim: second_claim.clone(),
+                        application: application(&first_ref, "first"),
+                    },
+                )
+                .is_err()
+        );
+
+        let shared = Arc::new(Mutex::new(service));
+        let dispatcher = apxm_runtime_service::InvocationDispatcher::start(shared.clone()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let stream = observations(&mut shared.lock().unwrap(), &invocation);
+            if !of_kind(&stream, ObservationKind::TerminalCommitted).is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "two bound waits did not both complete: {stream:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut service = shared.lock().unwrap();
+        let stream = observations(&mut service, &invocation);
+        for kind in [ObservationKind::EventWaiting, ObservationKind::EventResumed] {
+            let events = of_kind(&stream, kind);
+            assert_eq!(events.len(), 2, "{kind:?}");
+            let targets: Vec<_> = events
+                .iter()
+                .map(|event| {
+                    let target = event.event_ref.as_ref().unwrap();
+                    (target.event_ref.clone(), target.generation)
+                })
+                .collect();
+            assert_eq!(
+                targets,
+                vec![
+                    (first_ref.event_id.clone(), Some(first_ref.generation)),
+                    (second_ref.event_id.clone(), Some(second_ref.generation)),
+                ],
+                "{kind:?} must name each wait's own destination in visit order"
+            );
+            let visits: Vec<_> = events
+                .iter()
+                .map(|event| event.node_execution_id.clone())
+                .collect();
+            assert_ne!(visits[0], visits[1], "{kind:?} binds two distinct visits");
+        }
+        assert_eq!(
+            committed_output(&mut service, &invocation),
+            payload("second"),
+            "each wait consumed its own payload"
+        );
+        drop(service);
+        drop(dispatcher);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&shared) > 1 {
+            assert!(
+                Instant::now() < deadline,
+                "dispatcher workers did not shut down"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
 fn observations(service: &mut RuntimeService, invocation: &str) -> Vec<ExecutionObservation> {
     let peer = RuntimeHandshakeV2::server();
     let result = service

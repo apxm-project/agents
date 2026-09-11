@@ -978,7 +978,7 @@ struct DriveState {
     /// succeeds; the live sink remains a bounded, non-authoritative view.
     durable_observations: Vec<apxm_runtime_protocol::ExecutionObservation>,
     /// Exact event identity for the next wait/resume observation.
-    pending_event_ref: Option<String>,
+    pending_event_ref: Option<EventRef>,
     /// The host-fulfilled Capability request or settlement the next
     /// `capability_requested`/`capability_settled` observation carries. Staged
     /// the way `pending_event_ref` is, so no observation call site that has
@@ -1204,7 +1204,7 @@ impl DriveState {
             content_ref,
             output_ref,
             evidence_ref,
-            event_ref.as_deref(),
+            event_ref.as_ref(),
             host_capability,
         );
         let observation = match observation {
@@ -2809,7 +2809,10 @@ async fn drive_from(
                                 let event_outcome = tokio::select! {
                                     outcome = ports.events.await_event(EventAwait {
                                         node_id: op.node_id.clone(),
+                                        node_execution_id: node_execution_id.clone(),
+                                        program_invocation_id: state.program_invocation_id.clone(),
                                         event_ref: event_ref.clone(),
+                                        contract: apxm_kernel::EventWaitContract::HostCapability,
                                     }) => outcome,
                                     () = ports.cancellation.cancelled() => EventOutcome::Cancelled,
                                 };
@@ -3124,20 +3127,39 @@ async fn drive_from(
                         });
                     }
                     SemanticOpKind::AwaitEvent => {
-                        let event_ref = operand_str(op, "event_ref")
-                            .ok_or_else(|| ExecutionError::MissingOperand {
+                        let event_value_id = operand_str(op, "event_ref").ok_or_else(|| {
+                            ExecutionError::MissingOperand {
                                 node_id: op.node_id.clone(),
                                 operand: "event_ref",
-                            })
-                            .and_then(|value| {
-                                EventRef::new(value).map_err(|source| {
-                                    ExecutionError::InvalidEventRef {
-                                        node_id: op.node_id.clone(),
-                                        source,
-                                    }
-                                })
+                            }
+                        })?;
+                        let value = materialize_ssa_value(
+                            air,
+                            &state,
+                            &op.node_id,
+                            &event_value_id,
+                            &mut BTreeSet::new(),
+                        )?;
+                        let reference =
+                            serde_json::from_value::<apxm_kernel::CanonicalEventRef>(value)
+                                .map_err(|_| ExecutionError::InvalidEventRef {
+                                    node_id: op.node_id.clone(),
+                                    source: crate::ports::EventRefError::InvalidReservation,
+                                })?;
+                        let event_ref = EventRef::reserved(reference).map_err(|source| {
+                            ExecutionError::InvalidEventRef {
+                                node_id: op.node_id.clone(),
+                                source,
+                            }
+                        })?;
+                        let requirement = air
+                            .event_requirements
+                            .iter()
+                            .find(|requirement| requirement.node_id == op.node_id)
+                            .ok_or_else(|| ExecutionError::InvalidAir {
+                                message: "Event wait has no compiled payload contract".into(),
                             })?;
-                        state.pending_event_ref = Some(event_ref.as_str().to_owned());
+                        state.pending_event_ref = Some(event_ref.clone());
                         state.observe(
                             ports,
                             apxm_runtime_protocol::ObservationKind::EventWaiting,
@@ -3154,7 +3176,12 @@ async fn drive_from(
                         let outcome = tokio::select! {
                             outcome = ports.events.await_event(EventAwait {
                                 node_id: op.node_id.clone(),
+                                node_execution_id: node_execution_id.clone(),
+                                program_invocation_id: state.program_invocation_id.clone(),
                                 event_ref: event_ref.clone(),
+                                contract: apxm_kernel::EventWaitContract::Declared {
+                                    type_id: requirement.type_id.clone(), schema_digest: requirement.schema_digest.clone(),
+                                },
                             }) => outcome,
                                     () = ports.cancellation.cancelled() => EventOutcome::Cancelled,
                         };
@@ -3183,10 +3210,22 @@ async fn drive_from(
                         match &outcome {
                             EventOutcome::Fulfilled {
                                 event_ref: fulfilled_event_ref,
-                                ..
+                                payload,
                             } => {
-                                state.pending_event_ref =
-                                    Some(fulfilled_event_ref.as_str().to_owned());
+                                let value: Value = serde_json::from_str(payload).map_err(|_| {
+                                    ExecutionError::InvalidAir {
+                                        message: "Event payload is not canonical JSON".into(),
+                                    }
+                                })?;
+                                requirement.payload_schema.validate_value(&value).map_err(
+                                    |reason| ExecutionError::InvalidAir {
+                                        message: format!(
+                                            "Event payload violates its compiled contract: {reason}"
+                                        ),
+                                    },
+                                )?;
+                                state.last_result = value;
+                                state.pending_event_ref = Some(fulfilled_event_ref.clone());
                                 state.observe(
                                     ports,
                                     apxm_runtime_protocol::ObservationKind::EventResumed,
@@ -3217,9 +3256,27 @@ async fn drive_from(
                                 )?;
                                 state.append_invocation_cancelled(Some(&node_execution_id));
                             }
-                            EventOutcome::Parked
-                            | EventOutcome::Expired
-                            | EventOutcome::Mismatched { .. } => {}
+                            EventOutcome::Expired => {
+                                state.append_invocation_failure(
+                                    &node_execution_id,
+                                    unavailable_failure_envelope(
+                                        "event",
+                                        &node_execution_id,
+                                        "event_expired",
+                                    ),
+                                );
+                            }
+                            EventOutcome::Rejected { reason } => {
+                                state.append_invocation_failure(
+                                    &node_execution_id,
+                                    unavailable_failure_envelope(
+                                        "event",
+                                        &node_execution_id,
+                                        &format!("event_wait_rejected:{reason:?}"),
+                                    ),
+                                );
+                            }
+                            EventOutcome::Parked | EventOutcome::Mismatched { .. } => {}
                         }
                         if options.suspend_on_park && matches!(&outcome, EventOutcome::Parked) {
                             state.park_active_loops();
@@ -4611,7 +4668,11 @@ async fn commit_suspension(
     let event_wait = continuation.event_ref.as_ref().map(|event_ref| {
         serde_json::json!({
             "continuation_id": continuation.continuation_id,
-            "event_ref": event_ref,
+            "event_ref": apxm_runtime_protocol::EventObservationRef {
+                event_ref: event_ref.as_str().to_owned(),
+                generation: event_ref.reservation().map(|reference| reference.generation),
+                occurrence_id: None,
+            },
         })
     });
     let attempts = state.committed_model_attempts.clone();
@@ -4928,6 +4989,12 @@ pub async fn wake_from_event_application(
             program_instance_ref: program_instance_ref.clone(),
         });
     }
+    let delivered = if event_ref.reservation().is_some() {
+        serde_json::to_value(crate::ports::EventDelivery::Fulfilled { payload: delivered })
+            .expect("Event delivery contains only JSON data")
+    } else {
+        delivered
+    };
     resume_event(ports, program_instance_ref, event_ref, delivered).await
 }
 
@@ -5098,12 +5165,12 @@ async fn resume_from_continuation(
                 program_instance_ref: program_instance_ref.clone(),
             });
         }
-        (None, Some(delivered_event_ref)) => {
-            return Err(ExecutionError::EventRefMismatch {
-                expected: EventRef::new("structural.continuation")
-                    .expect("fixed non-empty structural continuation identity"),
-                delivered: delivered_event_ref.clone(),
-            });
+        (None, Some(_)) => {
+            return Err(ExecutionError::Continuation(
+                ContinuationError::InvalidCommittedState {
+                    message: "structural continuation does not accept an Event delivery".into(),
+                },
+            ));
         }
         (None, None) => {}
     }
@@ -5367,9 +5434,7 @@ async fn resume_from_continuation(
         // example a loop-yield), not an event delivery. Do not mislabel its
         // resume as EventResumed; that observation requires a real event
         // identity.
-        state.pending_event_ref = event_ref
-            .as_ref()
-            .map(|reference| reference.as_str().to_owned());
+        state.pending_event_ref.clone_from(&event_ref);
         state.observe(
             ports,
             apxm_runtime_protocol::ObservationKind::EventResumed,
@@ -5389,13 +5454,55 @@ async fn resume_from_continuation(
                 .ok_or_else(|| ExecutionError::EventDeliveryRequiresRef {
                     program_instance_ref: program_instance_ref.clone(),
                 })?;
-        let payload = match &delivered {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
+        let delivery: crate::ports::EventDelivery = serde_json::from_value(delivered.clone())
+            .map_err(|error| ExecutionError::InvalidAir {
+                message: format!("invalid Event delivery: {error}"),
+            })?;
+        let requirement = air
+            .event_requirements
+            .iter()
+            .find(|requirement| requirement.node_id == continuation_id)
+            .ok_or_else(|| ExecutionError::InvalidAir {
+                message: "resumed Event has no payload requirement".into(),
+            })?;
+        if event_ref.reservation().is_none() {
+            return Err(ExecutionError::InvalidAir {
+                message: "declared Event has no reserved target".into(),
+            });
+        }
+        let outcome = match delivery {
+            crate::ports::EventDelivery::Fulfilled { payload } => {
+                requirement
+                    .payload_schema
+                    .validate_value(&payload)
+                    .map_err(|reason| ExecutionError::InvalidAir {
+                        message: format!("invalid Event payload: {reason}"),
+                    })?;
+                bound_value = payload.clone();
+                EventOutcome::Fulfilled {
+                    event_ref,
+                    payload: payload.to_string(),
+                }
+            }
+            crate::ports::EventDelivery::Expired => {
+                state.append_invocation_failure(
+                    parked_node_execution_id
+                        .as_deref()
+                        .unwrap_or(&continuation_id),
+                    unavailable_failure_envelope("event", &continuation_id, "event_expired"),
+                );
+                bound_value = Value::Null;
+                EventOutcome::Expired
+            }
+            crate::ports::EventDelivery::Cancelled => {
+                state.append_invocation_cancelled(parked_node_execution_id.as_deref());
+                bound_value = Value::Null;
+                EventOutcome::Cancelled
+            }
         };
         state.node_outcomes.push(NodeOutcome::AwaitEvent {
             node_id: continuation_id,
-            outcome: EventOutcome::Fulfilled { event_ref, payload },
+            outcome,
         });
         let parked_node_execution_id = parked_node_execution_id.ok_or_else(|| {
             ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
@@ -5418,11 +5525,10 @@ async fn resume_from_continuation(
                 .push(parked_node_execution_id.clone());
         }
     }
-    if host_capability_ref.is_none() && !new_invocation {
-        // A delivered event payload is external data the program never asked
-        // for, so it may not become a Capability argument. A host capability
-        // settlement is not that: it is the authored result of the node the
-        // program itself invoked, and flows onward like any other result.
+    if host_capability_ref.is_none() && !new_invocation && event_ref.is_none() {
+        // Raw structural resume input still has no fresh invocation admission.
+        // A declared Event result above is different: its exact reservation
+        // and compiled payload schema were checked before binding this SSA value.
         validate_resume_capability_arguments(&air, &resume_value_id)?;
     }
     state.values.insert(resume_value_id, bound_value);
@@ -5521,16 +5627,18 @@ fn host_settlement_from_event(
                 "the request for '{capability_ref}' expired before the host settled it"
             )),
         ),
-        EventOutcome::Parked | EventOutcome::Mismatched { .. } => HostCapabilitySettlement::new(
-            capability_request_id,
-            HostCapabilityOutcomeKind::Unknown,
-            None,
-            None,
-            Some(format!(
-                "'{capability_ref}' parked in an execution that cannot suspend, so no \
+        EventOutcome::Parked | EventOutcome::Mismatched { .. } | EventOutcome::Rejected { .. } => {
+            HostCapabilitySettlement::new(
+                capability_request_id,
+                HostCapabilityOutcomeKind::Unknown,
+                None,
+                None,
+                Some(format!(
+                    "'{capability_ref}' parked in an execution that cannot suspend, so no \
                  host answer can reach it"
-            )),
-        ),
+                )),
+            )
+        }
     }
 }
 
@@ -5687,6 +5795,7 @@ mod loop_evidence_tests {
             structural_ir: Vec::new(),
             context_flow: Vec::new(),
             capability_permission_requests: Default::default(),
+            event_requirements: Vec::new(),
             source_map: apxm_program::source_map::SourceMap {
                 schema_version: apxm_program::source_map::SourceMapVersion::V1,
                 source_language: apxm_program::source_map::SourceLanguage::Python,

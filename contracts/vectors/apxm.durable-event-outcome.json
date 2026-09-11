@@ -10,8 +10,18 @@
     "input": "cancelled"
   },
   {
+    "name": "valid-rejected-event-wait",
+    "expected_valid": true,
+    "input": { "rejected": { "reason": "already_bound" } }
+  },
+  {
     "name": "reject-untyped-delivery",
     "expected_valid": false,
     "input": { "delivered": { "payload": "missing event identity" } }
+  },
+  {
+    "name": "reject-open-refusal-reason",
+    "expected_valid": false,
+    "input": { "rejected": { "reason": "the host said no" } }
   }
 ]

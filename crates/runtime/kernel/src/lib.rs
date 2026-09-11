@@ -75,5 +75,6 @@ pub use instance::{
 pub use reconcile::{LifecycleView, reconstruct};
 pub use runtime_ports::{
     CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
-    EventOutcome, EventPort, EventRef, EventRefError,
+    EventDelivery, EventOutcome, EventPort, EventRef, EventRefError, EventWaitContract,
+    EventWaitRejection,
 };

@@ -114,6 +114,14 @@ fn air() -> AirModule {
         "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("valid AIR");
+    air.event_requirements = vec![
+        apxm_program::event::EventRequirement::new(
+            "n.await".into(),
+            "TestEvent".into(),
+            serde_json::from_value(json!({"type":"string"})).unwrap(),
+        )
+        .unwrap(),
+    ];
     let binding = HookBinding {
         hook_id: "hook.after.model".into(),
         scope: HookScope::Model,
@@ -469,7 +477,7 @@ impl EventPort for FakeEvents {
     async fn await_event(&self, request: EventAwait) -> EventOutcome {
         EventOutcome::Fulfilled {
             event_ref: request.event_ref,
-            payload: "done".into(),
+            payload: serde_json::to_string("done").unwrap(),
         }
     }
 }
@@ -1518,7 +1526,10 @@ fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
         entrypoint_input: None,
-        initial_values: BTreeMap::from([]),
+        initial_values: BTreeMap::from([(
+            "evt.done".into(),
+            json!({"event_id":"evt.done","generation":1}),
+        )]),
         hook_bindings: vec![HookBinding {
             hook_id: "hook.after.model".into(),
             scope: HookScope::Model,

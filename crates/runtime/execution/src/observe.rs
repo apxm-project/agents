@@ -200,7 +200,7 @@ pub(crate) fn make_observation(
     content_ref: Option<&str>,
     output_ref: Option<&str>,
     evidence_ref: Option<&str>,
-    event_ref: Option<&str>,
+    event_ref: Option<&apxm_kernel::EventRef>,
     host_capability: Option<HostCapabilityObservation>,
 ) -> Result<ExecutionObservation, ObservationSinkError> {
     let invocation_id = ProgramInvocationId::new(invocation_id).map_err(|error| {
@@ -242,8 +242,8 @@ pub(crate) fn make_observation(
             })?,
         occurrence_id: typed_occurrence,
         event_ref: event_ref.map(|reference| EventObservationRef {
-            event_ref: reference.to_owned(),
-            generation: None,
+            event_ref: reference.as_str().to_owned(),
+            generation: reference.reservation().map(|target| target.generation),
             occurrence_id: None,
         }),
         attempt_id: attempt_id

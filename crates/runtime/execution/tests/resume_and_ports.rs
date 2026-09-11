@@ -39,7 +39,7 @@ fn digest(c: char) -> String {
 }
 
 fn request(scope: &str) -> ExecutionRequest {
-    let air = serde_json::from_value::<AirModule>(json!({
+    let mut air = serde_json::from_value::<AirModule>(json!({
         "schema_version": "apxm.air",
         "semantic_operations": [
             {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
@@ -55,6 +55,7 @@ fn request(scope: &str) -> ExecutionRequest {
         "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
     }))
     .expect("canonical AIR");
+    air.event_requirements = vec![event_contract("node.await")];
     assert!(air.verify().is_accepted());
     let capability_invocations = BTreeMap::from([(
         "node.capability".to_string(),
@@ -85,6 +86,10 @@ fn request(scope: &str) -> ExecutionRequest {
                     .filter_map(|operand| match operand.slot.as_str() {
                         "request" => Some((operand.value_id.clone(), json!({"prompt": "test"}))),
                         "arguments" => None,
+                        "event_ref" => Some((
+                            operand.value_id.clone(),
+                            json!({"event_id":"evt-atomic","generation":1}),
+                        )),
                         _ => None,
                     })
             })
@@ -116,6 +121,21 @@ fn request(scope: &str) -> ExecutionRequest {
             session_output_refs_digest: digest('6'),
         },
     }
+}
+
+fn event_contract(node_id: &str) -> apxm_program::event::EventRequirement {
+    apxm_program::event::EventRequirement::new(node_id.into(), "TestEvent".into(), serde_json::from_value(json!({
+        "type":"object","properties":{"iteration":{"type":"integer"},"approved":{"type":"boolean"},"phase":{"type":"string"}},
+        "required":[],"additionalProperties":false
+    })).unwrap()).unwrap()
+}
+
+fn event_reference() -> EventRef {
+    EventRef::reserved(apxm_kernel::event_api::CanonicalEventRef {
+        event_id: "evt-atomic".into(),
+        generation: 1,
+    })
+    .unwrap()
 }
 
 struct TestModelRequestMetadata;
@@ -191,6 +211,15 @@ struct Events;
 impl EventPort for Events {
     async fn await_event(&self, _request: EventAwait) -> EventOutcome {
         EventOutcome::Parked
+    }
+}
+
+/// A durable port that refuses the wait instead of parking it.
+struct SettledEvents(EventOutcome);
+#[async_trait]
+impl EventPort for SettledEvents {
+    async fn await_event(&self, _request: EventAwait) -> EventOutcome {
+        self.0.clone()
     }
 }
 
@@ -299,6 +328,18 @@ fn ports_with_model(
     commit: Arc<Commit>,
     model: Arc<dyn ModelInferencePort + Send + Sync>,
 ) -> ExecutionPorts {
+    ports_with_model_and_events(commit, model, Arc::new(Events))
+}
+
+fn ports_with_events(commit: Arc<Commit>, events: Arc<dyn EventPort>) -> ExecutionPorts {
+    ports_with_model_and_events(commit, Arc::new(Model), events)
+}
+
+fn ports_with_model_and_events(
+    commit: Arc<Commit>,
+    model: Arc<dyn ModelInferencePort + Send + Sync>,
+    events: Arc<dyn EventPort>,
+) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
         digest: digest('e'),
@@ -344,7 +385,7 @@ fn ports_with_model(
         Arc::new(kernel_bundle),
         contract("apxm.durable-event"),
         binding(PortSlot::DurableEvent, "apxm.durable-event"),
-        Arc::new(Events),
+        events,
         contract("apxm.program-composition"),
         binding(PortSlot::ProgramComposition, "apxm.program-composition"),
         Arc::new(Composition),
@@ -411,7 +452,7 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
         tuple.event_wait,
         Some(json!({
             "continuation_id": "node.await",
-            "event_ref": "evt-atomic",
+            "event_ref": {"event_ref":"evt-atomic","generation":1},
         }))
     );
     assert_eq!(tuple.usage, json!({"input_tokens": 3, "output_tokens": 5}));
@@ -475,6 +516,59 @@ async fn terminal_model_failure_stops_before_a_later_structural_park() {
     );
 }
 
+/// Expiry and refusal are terminal answers to a wait, not park-shaped ones. The
+/// driver must turn each into typed failure evidence the program can observe —
+/// never a silent restart, and never a continuation something could later wake.
+#[tokio::test]
+async fn a_refused_or_expired_wait_commits_typed_failure_instead_of_parking() {
+    for (outcome, code) in [
+        (EventOutcome::Expired, "event_expired".to_owned()),
+        (
+            EventOutcome::Rejected {
+                reason: apxm_kernel::EventWaitRejection::AlreadyBound,
+            },
+            "event_wait_rejected:AlreadyBound".to_owned(),
+        ),
+    ] {
+        let commit = Arc::new(Commit::default());
+        let run = execute_resumable(
+            &ports_with_events(commit.clone(), Arc::new(SettledEvents(outcome.clone()))),
+            request("instance.event-settled"),
+            json!({"iteration": 1}),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{outcome:?} commits evidence: {error:?}"));
+        let RunOutcome::Completed(report) = run else {
+            panic!("{outcome:?} must not park a continuation");
+        };
+        assert_eq!(
+            report.terminal_status,
+            apxm_execution::RunTerminalStatus::Failed,
+            "{outcome:?}"
+        );
+        assert!(
+            commit.continuation.lock().unwrap().is_none(),
+            "{outcome:?} leaves nothing to wake"
+        );
+        let tuples = commit.tuples.lock().unwrap();
+        let failures: Vec<Value> = tuples
+            .iter()
+            .flat_map(|tuple| tuple.evidence.iter())
+            .filter(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::InvocationFailed))
+            .map(|fact| serde_json::to_value(fact).expect("evidence is JSON"))
+            .collect();
+        assert_eq!(failures.len(), 1, "{outcome:?}: {tuples:?}");
+        let typed_error = &failures[0]["typed_error"];
+        assert_eq!(typed_error["category"], json!("unavailable"), "{outcome:?}");
+        assert_eq!(
+            typed_error["code_ref"],
+            json!("event.failed"),
+            "{outcome:?}"
+        );
+        assert_eq!(typed_error["message"], json!(code), "{outcome:?}");
+    }
+}
+
 #[tokio::test]
 async fn restart_rejects_a_continuation_that_already_contains_terminal_evidence() {
     let commit = Arc::new(Commit::default());
@@ -508,7 +602,7 @@ async fn restart_rejects_a_continuation_that_already_contains_terminal_evidence(
     let error = wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.terminal-continuation"),
-        EventRef::new("evt-atomic").expect("event ref"),
+        event_reference(),
         EventApplicationResult::Fulfilled,
         json!({"iteration": 2}),
     )
@@ -539,7 +633,7 @@ async fn resume_reads_the_committed_structural_continuation() {
     let resumed = wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.replay"),
-        EventRef::new("evt-atomic").expect("non-empty event ref"),
+        event_reference(),
         EventApplicationResult::Fulfilled,
         json!({"iteration": 2}),
     )
@@ -814,7 +908,14 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
         "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("branch-await AIR");
-    branched.initial_values = BTreeMap::from([("value.condition".into(), json!(true))]);
+    branched.air.event_requirements = vec![event_contract("node.branch.await")];
+    branched.initial_values = BTreeMap::from([
+        ("value.condition".into(), json!(true)),
+        (
+            "evt-atomic".into(),
+            json!({"event_id":"evt-atomic","generation":1}),
+        ),
+    ]);
     assert!(branched.air.verify().is_accepted());
 
     execute_resumable(&ports(commit.clone()), branched, json!({"context": 1}))
@@ -834,7 +935,7 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
     let resumed = wake_from_event_application(
         &ports(commit),
         &ProgramInstanceRef::new("instance.branch-await"),
-        EventRef::new("evt-atomic").unwrap(),
+        event_reference(),
         EventApplicationResult::Fulfilled,
         json!({"approved": true}),
     )
@@ -924,7 +1025,7 @@ async fn final_await_resumes_directly_to_one_committed_back_edge() {
     wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.final-await"),
-        EventRef::new("evt-atomic").unwrap(),
+        event_reference(),
         EventApplicationResult::Fulfilled,
         json!({"phase": "after"}),
     )
@@ -970,9 +1071,15 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         }
     }))
     .expect("nested AIR");
+    nested.air.event_requirements = vec![event_contract("node.inner.await")];
     assert!(nested.air.verify().is_accepted());
-    nested.initial_values =
-        BTreeMap::from([("value.outer.request".into(), json!({"prompt": "nested"}))]);
+    nested.initial_values = BTreeMap::from([
+        ("value.outer.request".into(), json!({"prompt": "nested"})),
+        (
+            "evt-atomic".into(),
+            json!({"event_id":"evt-atomic","generation":1}),
+        ),
+    ]);
     nested.capability_invocations = BTreeMap::from([(
         "node.outer.after".to_string(),
         CapabilityInvocationAdmission {
@@ -1009,9 +1116,9 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.nested"),
-        EventRef::new("evt-atomic").unwrap(),
+        event_reference(),
         EventApplicationResult::Fulfilled,
-        Value::Null,
+        json!({}),
     )
     .await
     .expect("nested resume");
@@ -1101,7 +1208,7 @@ async fn unproven_event_application_cannot_wake() {
     let error = wake_from_event_application(
         &ports(commit),
         &ProgramInstanceRef::new("instance.unproven"),
-        EventRef::new("evt-atomic").unwrap(),
+        event_reference(),
         EventApplicationResult::Rejected,
         json!({}),
     )

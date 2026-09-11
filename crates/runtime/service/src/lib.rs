@@ -4,6 +4,7 @@
 //! import source-port, frontends, or the compiler.
 
 mod composition;
+mod events;
 mod ports;
 mod stdio;
 
@@ -21,8 +22,8 @@ pub use composition::{
     verify_invocation_materials,
 };
 pub use stdio::{
-    MAX_ACTIVE_UNIX_CONNECTIONS, MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION, RUNTIME_CHANNEL,
-    StdioFrame, UNIX_IO_TIMEOUT_MS, UnixEndpoint, decode_jsonl, encode_jsonl,
+    InvocationDispatcher, MAX_ACTIVE_UNIX_CONNECTIONS, MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION,
+    RUNTIME_CHANNEL, StdioFrame, UNIX_IO_TIMEOUT_MS, UnixEndpoint, decode_jsonl, encode_jsonl,
     handshake_cross_wired, serve_stdio, serve_unix,
 };
 
@@ -151,6 +152,7 @@ pub struct RuntimeService {
     host_capability_settlements: BTreeMap<String, HostCapabilitySettlementState>,
     host_capability_settlement_bytes: u64,
     reservations: BTreeMap<(String, u64), ReservationState>,
+    event_index: events::EventIndex,
     reservation_bytes: u64,
     next_generation: u64,
     handlers: Option<AdmittedPackageHandlers>,
@@ -365,6 +367,7 @@ impl RuntimeService {
             applications: BTreeMap::new(),
             application_bytes: 0,
             host_capability_settlements: BTreeMap::new(),
+            event_index: Default::default(),
             host_capability_settlement_bytes: 0,
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
@@ -827,6 +830,7 @@ pub(crate) struct PreparedInvocation {
     approval_policy: ApprovalPolicy,
     cancellation: CancellationToken,
     resumable: bool,
+    events: Arc<dyn apxm_kernel::EventPort>,
 }
 
 impl PreparedInvocation {
@@ -875,6 +879,7 @@ impl PreparedInvocation {
                     Some(self.cancellation.clone()),
                     ProgramInstanceRef::new(self.program_instance_id.clone()),
                     self.input.clone(),
+                    self.events.clone(),
                 )
                 .await
             } else {
@@ -896,11 +901,12 @@ impl PreparedInvocation {
     }
 }
 
-/// Immutable lease for resuming one durably settled host capability outside
-/// the service mutex. The settlement and the resume-start marker are persisted
-/// separately so restart can distinguish safe pending work from uncertainty.
+/// Immutable lease for resuming one durably settled host Capability or reserved
+/// Event outside the service mutex. Both use the same persisted start fence,
+/// cancellation, bounded dispatcher and execution commit/recovery discipline.
 pub(crate) struct PreparedResume {
-    capability_request_id: String,
+    event_ref: apxm_kernel::EventRef,
+    events: Arc<dyn apxm_kernel::EventPort>,
     invocation_request_id: String,
     program_instance_id: String,
     invocation_id: String,
@@ -928,7 +934,7 @@ impl PreparedResume {
                 released = signal.wait(released).expect("resume test gate lock");
             }
         }
-        block_on(resume_admitted_artifact_with_runtime_ports(
+        block_on(composition::resume_admitted_artifact_with_events(
             self.continuation.air.clone(),
             &self.artifact_bytes,
             &self.materials,
@@ -939,16 +945,22 @@ impl PreparedResume {
             Some(self.observation_sink.clone()),
             Some(self.cancellation.clone()),
             ProgramInstanceRef::new(self.program_instance_id.clone()),
-            apxm_kernel::EventRef::new(self.capability_request_id.clone())
-                .map_err(|error| error.to_string())?,
+            self.event_ref.clone(),
             self.delivered.clone(),
+            Some(self.events.clone()),
         ))
     }
 }
 
 struct ReservationState {
+    request_id: String,
+    program_instance_id: String,
     owner_claim: RuntimeOwnerClaim,
     type_id: String,
+    payload_schema: apxm_program::input_schema::EntrypointInputSchema,
+    schema_digest: String,
+    binding: Option<apxm_kernel::event_api::EventWaitBinding>,
+    resume_started: bool,
     status: EventStatus,
     occurrence_id: Option<String>,
     state_entry: StateEntry,
@@ -957,6 +969,9 @@ struct ReservationState {
 struct ApplicationState {
     event_ref: CanonicalEventRef,
     occurrence_id: String,
+    source_kind: String,
+    mapping_digest: String,
+    source_record: String,
     payload: Value,
     state_entry: StateEntry,
 }
@@ -1040,8 +1055,14 @@ fn durable_invocation(invocation: &InvocationState) -> DurableInvocationState {
 struct DurableReservationState {
     event_id: String,
     generation: u64,
+    request_id: String,
+    program_instance_id: String,
     owner_claim: RuntimeOwnerClaim,
     type_id: String,
+    payload_schema: apxm_program::input_schema::EntrypointInputSchema,
+    schema_digest: String,
+    binding: Option<apxm_kernel::event_api::EventWaitBinding>,
+    resume_started: bool,
     status: EventStatus,
     occurrence_id: Option<String>,
     state_entry: DurableStateEntry,
@@ -1052,6 +1073,9 @@ struct DurableReservationState {
 struct DurableApplicationState {
     event_ref: CanonicalEventRef,
     occurrence_id: String,
+    source_kind: String,
+    mapping_digest: String,
+    source_record: String,
     payload: Value,
     state_entry: DurableStateEntry,
 }
@@ -1214,8 +1238,14 @@ impl RuntimeService {
                     |((event_id, generation), reservation)| DurableReservationState {
                         event_id: event_id.clone(),
                         generation: *generation,
+                        request_id: reservation.request_id.clone(),
+                        program_instance_id: reservation.program_instance_id.clone(),
                         owner_claim: reservation.owner_claim.clone(),
                         type_id: reservation.type_id.clone(),
+                        payload_schema: reservation.payload_schema.clone(),
+                        schema_digest: reservation.schema_digest.clone(),
+                        binding: reservation.binding.clone(),
+                        resume_started: reservation.resume_started,
                         status: reservation.status,
                         occurrence_id: reservation.occurrence_id.clone(),
                         state_entry: Self::durable_entry(reservation.state_entry),
@@ -1231,6 +1261,9 @@ impl RuntimeService {
                         DurableApplicationState {
                             event_ref: application.event_ref.clone(),
                             occurrence_id: application.occurrence_id.clone(),
+                            source_kind: application.source_kind.clone(),
+                            mapping_digest: application.mapping_digest.clone(),
+                            source_record: application.source_record.clone(),
                             payload: application.payload.clone(),
                             state_entry: Self::durable_entry(application.state_entry),
                         },
@@ -1261,7 +1294,9 @@ impl RuntimeService {
     fn persist_runtime_state(&self) -> Result<(), String> {
         let metadata = serde_json::to_value(self.runtime_metadata())
             .map_err(|error| format!("runtime metadata encode failed: {error}"))?;
-        self.execution_backend.set_runtime_metadata(Some(metadata))
+        self.execution_backend
+            .set_runtime_metadata(Some(metadata))?;
+        self.refresh_event_index()
     }
 
     fn rehydrate_runtime_state(&mut self) -> Result<(), String> {
@@ -1453,13 +1488,55 @@ impl RuntimeService {
                 .owner_claim
                 .validate()
                 .map_err(|_| "runtime metadata contains an invalid event claim")?;
+            if durable.request_id.trim().is_empty()
+                || durable.program_instance_id.trim().is_empty()
+                || durable.payload_schema.canonical_digest().ok().as_deref()
+                    != Some(durable.schema_digest.as_str())
+                || (durable.resume_started
+                    && (durable.binding.is_none() || durable.status == EventStatus::Pending))
+            {
+                return Err("runtime metadata contains an invalid Event contract or wake".into());
+            }
+            if let Some(instance) = instances.get(&durable.program_instance_id) {
+                let artifact = artifacts
+                    .get(&instance.artifact_digest)
+                    .and_then(|bytes| ExecutableArtifact::decode(bytes).ok())
+                    .ok_or("Event instance artifact is unavailable")?;
+                if !artifact.air.event_requirements.iter().any(|requirement| {
+                    requirement.type_id == durable.type_id
+                        && requirement.payload_schema == durable.payload_schema
+                        && requirement.schema_digest == durable.schema_digest
+                }) {
+                    return Err("Event reservation differs from admitted artifact".into());
+                }
+                if let Some(binding) = &durable.binding
+                    && (binding.event_ref != event_ref
+                        || binding.program_instance_id != durable.program_instance_id
+                        || binding.node_execution_id.trim().is_empty()
+                        || !instance.invocation_history.values().any(|invocation| {
+                            invocation.program_invocation_id == binding.program_invocation_id
+                        })
+                        || !artifact.air.event_requirements.iter().any(|requirement| {
+                            requirement.node_id == binding.node_id
+                                && requirement.type_id == durable.type_id
+                        }))
+                {
+                    return Err("Event reservation has an invalid exact wait binding".into());
+                }
+            }
             if durable.type_id.trim().is_empty()
                 || reservations
                     .insert(
                         (durable.event_id.clone(), durable.generation),
                         ReservationState {
+                            request_id: durable.request_id,
+                            program_instance_id: durable.program_instance_id,
                             owner_claim: durable.owner_claim,
                             type_id: durable.type_id,
+                            payload_schema: durable.payload_schema,
+                            schema_digest: durable.schema_digest,
+                            binding: durable.binding,
+                            resume_started: durable.resume_started,
                             status: durable.status,
                             occurrence_id: durable.occurrence_id,
                             state_entry: Self::restore_entry(
@@ -1498,6 +1575,16 @@ impl RuntimeService {
             }
             if durable.occurrence_id.trim().is_empty()
                 || reservation.occurrence_id.as_deref() != Some(durable.occurrence_id.as_str())
+                || durable.source_kind.trim().is_empty()
+                || durable.mapping_digest.trim().is_empty()
+                || durable.source_record.trim().is_empty()
+                || reservation
+                    .payload_schema
+                    .validate_value(&durable.payload)
+                    .is_err()
+                || applications
+                    .values()
+                    .any(|prior: &ApplicationState| prior.event_ref == durable.event_ref)
             {
                 return Err(
                     "runtime metadata contains an invalid event application join".to_owned(),
@@ -1513,6 +1600,9 @@ impl RuntimeService {
                         ApplicationState {
                             event_ref: durable.event_ref,
                             occurrence_id: durable.occurrence_id,
+                            source_kind: durable.source_kind,
+                            mapping_digest: durable.mapping_digest,
+                            source_record: durable.source_record,
                             payload: durable.payload,
                             state_entry: application_entry,
                         },
@@ -1630,7 +1720,7 @@ impl RuntimeService {
             .collect();
         self.cancellation_bytes = cancellation_bytes;
         self.next_generation = metadata.next_generation;
-        Ok(())
+        self.refresh_event_index()
     }
 
     fn entry(bytes: u64, ttl: Duration) -> StateEntry {
@@ -1673,7 +1763,8 @@ impl RuntimeService {
     /// Remove only entries whose typed TTL has elapsed. No live owner claim,
     /// invocation idempotency record, event application, or settlement is
     /// evicted.
-    pub fn cleanup_expired(&mut self) {
+    pub fn cleanup_expired(&mut self) -> Result<(), String> {
+        self.expire_pending_events()?;
         let now = Self::now();
 
         let expired_instances = self
@@ -1753,7 +1844,16 @@ impl RuntimeService {
             self.artifacts = live;
         }
 
+        let live_instances = self.instances.keys().cloned().collect::<BTreeSet<_>>();
         self.reservations.retain(|_, reservation| {
+            if reservation.state_entry.expired(now)
+                && live_instances.contains(&reservation.program_instance_id)
+            {
+                if reservation.status == EventStatus::Pending {
+                    reservation.status = EventStatus::Expired;
+                }
+                return true;
+            }
             if reservation.state_entry.expired(now) {
                 self.reservation_bytes = self
                     .reservation_bytes
@@ -1766,7 +1866,12 @@ impl RuntimeService {
 
         let mut expired_application_bytes = 0_u64;
         self.applications.retain(|_, application| {
-            if application.state_entry.expired(now) {
+            if application.state_entry.expired(now)
+                && !self.reservations.contains_key(&(
+                    application.event_ref.event_id.clone(),
+                    application.event_ref.generation,
+                ))
+            {
                 expired_application_bytes =
                     expired_application_bytes.saturating_add(application.state_entry.bytes);
                 false
@@ -1805,7 +1910,7 @@ impl RuntimeService {
         });
         // Expiry is a durable lifecycle transition too. Persist the cleaned
         // projection before another operation can observe it.
-        let _ = self.persist_runtime_state();
+        self.persist_runtime_state()
     }
 
     /// Bind package-local Capability handlers for subsequent invocations.
@@ -1843,7 +1948,7 @@ impl RuntimeService {
     /// empty digest so callers cannot accidentally execute an uncommitted
     /// artifact.
     pub fn try_admit_artifact(&mut self, bytes: Vec<u8>) -> Result<String, String> {
-        self.cleanup_expired();
+        self.cleanup_expired()?;
         let digest =
             canonical_artifact_digest(&bytes).map_err(|_| "invalid_artifact".to_owned())?;
         self.try_admit_named_artifact(digest.clone(), bytes)?;
@@ -1886,7 +1991,7 @@ impl RuntimeService {
         program_instance_id: &str,
         materials: InvocationMaterials,
     ) -> Result<(), String> {
-        self.cleanup_expired();
+        self.cleanup_expired()?;
         let size =
             Self::materials_size(&materials).ok_or_else(|| "admission_too_large".to_owned())?;
         if size > self.state_policy.admissions.max_bytes {
@@ -1944,7 +2049,7 @@ impl RuntimeService {
         artifact_digest: &str,
         materials: InvocationMaterials,
     ) -> Result<(), String> {
-        self.cleanup_expired();
+        self.cleanup_expired()?;
         if self.artifacts.get(artifact_digest).is_none() {
             return Err("unknown_artifact".to_owned());
         }
@@ -2214,7 +2319,6 @@ impl RuntimeService {
         handshake: &RuntimeHandshake,
         request: RuntimeRequest,
     ) -> Result<RuntimeResult, ProtocolError> {
-        self.cleanup_expired();
         handshake.admit()?;
         let request_id = match &request {
             RuntimeRequest::ProgramInstanceCreate { request_id, .. }
@@ -2229,6 +2333,12 @@ impl RuntimeService {
             | RuntimeRequest::CapabilityCancel { request_id, .. }
             | RuntimeRequest::ProgramInvocationCancel { request_id, .. } => request_id,
         };
+        if self.cleanup_expired().is_err() {
+            return Ok(RuntimeResult::Failed {
+                request_id: request_id.to_owned(),
+                code: "runtime_state_unavailable".into(),
+            });
+        }
         if request_id.trim().is_empty() {
             return Err(ProtocolError::InvalidRequest);
         }
@@ -2246,7 +2356,9 @@ impl RuntimeService {
             RuntimeRequest::EventReserve {
                 request_id,
                 type_id,
-            } => self.reserve_event(request_id, type_id),
+                program_instance_id,
+                owner_claim,
+            } => self.reserve_event(request_id, program_instance_id, owner_claim, type_id),
             RuntimeRequest::EventFulfill {
                 request_id,
                 owner_claim,
@@ -2342,7 +2454,12 @@ impl RuntimeService {
         handshake: &RuntimeExecutionAdmissionHandshake,
         request: RuntimeExecutionAdmissionRequest,
     ) -> RuntimeResult {
-        self.cleanup_expired();
+        if self.cleanup_expired().is_err() {
+            return RuntimeResult::Failed {
+                request_id: execution_admission_request_id(&request),
+                code: "runtime_state_unavailable".into(),
+            };
+        }
         if let Err(error) = handshake.admit() {
             return RuntimeResult::Failed {
                 request_id: execution_admission_request_id(&request),
@@ -2745,6 +2862,7 @@ impl RuntimeService {
             approval_policy: self.approval_policy,
             cancellation,
             resumable: self.resumable_invocations,
+            events: self.event_port(program_instance_id.clone()),
         };
         // Publish the invocation index and provisional state before releasing
         // the mutex. Cancellation therefore sees the exact owner claim.
@@ -2845,7 +2963,11 @@ impl RuntimeService {
         {
             invocation.result = Some(result.clone());
         }
-        if self.persist_runtime_state().is_err() {
+        if self
+            .persist_runtime_state()
+            .and_then(|()| self.reconcile_event_waits())
+            .is_err()
+        {
             return RuntimeResult::Failed {
                 request_id: prepared.request_id.clone(),
                 code: "runtime_state_unavailable".to_owned(),
@@ -2932,7 +3054,7 @@ impl RuntimeService {
             .insert(invocation_id.to_owned(), cancellation.clone());
         Ok(Some(PreparedInvocation {
             request_id,
-            program_instance_id: instance_id,
+            program_instance_id: instance_id.clone(),
             invocation_id: invocation_id.to_owned(),
             input,
             air: artifact.air,
@@ -2947,6 +3069,7 @@ impl RuntimeService {
             approval_policy: self.approval_policy,
             cancellation,
             resumable: self.resumable_invocations,
+            events: self.event_port(instance_id),
         }))
     }
 
@@ -3011,102 +3134,37 @@ impl RuntimeService {
         }
         let instance_id = settlement_state.program_instance_id.clone();
         let settlement = settlement_state.settlement.clone();
-        let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
-        let Some(committed) = self
-            .execution_backend
-            .load_continuation(&program_instance_ref)
-        else {
-            return Ok(None);
-        };
-        let continuation: Continuation = serde_json::from_value(committed.payload)
-            .map_err(|error| format!("invalid committed continuation: {error}"))?;
-        if continuation.event_ref.as_ref().map(|value| value.as_str())
-            != Some(capability_request_id)
-        {
-            return Ok(None);
-        }
-        let instance = self
-            .instances
-            .get(&instance_id)
-            .ok_or_else(|| "unknown_instance".to_owned())?;
-        let invocation = instance
-            .invocation
-            .as_ref()
-            .ok_or_else(|| "parked continuation has no invocation state".to_owned())?;
-        let invocation_id = continuation.program_invocation_ref.as_str().to_owned();
-        if invocation.program_invocation_id != invocation_id {
-            return Err("parked continuation invocation mismatch".to_owned());
-        }
-        if invocation.result.is_some() || self.active_cancellations.contains_key(&invocation_id) {
-            return Ok(None);
-        }
-        if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
-            return Err("invocation_capacity_exhausted".to_owned());
-        }
-        let artifact_bytes = self
-            .artifacts
-            .get(&instance.artifact_digest)
-            .ok_or_else(|| "parked invocation artifact is unavailable".to_owned())?
-            .to_vec();
-        let mut materials = instance
-            .materials
-            .clone()
-            .ok_or_else(|| "parked invocation admission is unavailable".to_owned())?;
-        materials.admission.invocation_id.clone_from(&invocation_id);
-        let cancellation = CancellationToken::new();
-        self.active_cancellations
-            .insert(invocation_id.clone(), cancellation.clone());
         let delivered = Value::String(
             serde_json::to_string(&settlement)
                 .map_err(|error| format!("host capability settlement encode failed: {error}"))?,
         );
-        Ok(Some(PreparedResume {
-            capability_request_id: capability_request_id.to_owned(),
-            invocation_request_id: invocation.request_id.clone(),
-            program_instance_id: instance_id,
-            invocation_id,
-            delivered,
-            continuation,
-            artifact_bytes,
-            materials,
-            handlers: self.handlers.clone(),
-            package_root: self.package_root.clone(),
-            sandbox_registry: self.sandbox_registry.clone(),
-            execution_backend: self.execution_backend.commit_port(),
-            observation_sink: self.observation_sink.clone(),
-            cancellation,
-            #[cfg(test)]
-            test_gate: self.resume_test_gate.clone(),
-        }))
+        let event_ref =
+            apxm_kernel::EventRef::new(capability_request_id).map_err(|error| error.to_string())?;
+        self.claim_continuation_resume(instance_id, event_ref, delivered)
     }
 
     /// Persist the resume-start marker immediately before a worker may call a
     /// provider or capability. Restart treats this marker as a possible send.
-    pub(crate) fn begin_host_capability_resume(
+    pub(crate) fn begin_continuation_resume(
         &mut self,
         prepared: &PreparedResume,
     ) -> Result<bool, String> {
-        let Some(state) = self
-            .host_capability_settlements
-            .get_mut(&prepared.capability_request_id)
-        else {
-            return Ok(false);
-        };
-        if state.resume_started
-            || state.program_instance_id != prepared.program_instance_id
-            || !self
-                .active_cancellations
-                .contains_key(&prepared.invocation_id)
+        if !self
+            .active_cancellations
+            .contains_key(&prepared.invocation_id)
         {
             return Ok(false);
         }
-        state.resume_started = true;
+        let Some(started) = self.resume_marker(prepared) else {
+            return Ok(false);
+        };
+        if *started {
+            return Ok(false);
+        }
+        *started = true;
         if let Err(error) = self.persist_runtime_state() {
-            if let Some(state) = self
-                .host_capability_settlements
-                .get_mut(&prepared.capability_request_id)
-            {
-                state.resume_started = false;
+            if let Some(started) = self.resume_marker(prepared) {
+                *started = false;
             }
             self.active_cancellations.remove(&prepared.invocation_id);
             return Err(error);
@@ -3114,7 +3172,7 @@ impl RuntimeService {
         Ok(true)
     }
 
-    pub(crate) fn finish_host_capability_resume(
+    pub(crate) fn finish_continuation_resume(
         &mut self,
         prepared: &PreparedResume,
         output: Result<Value, String>,
@@ -3135,7 +3193,7 @@ impl RuntimeService {
                     &prepared.invocation_id,
                 ) && self
                     .host_capability_settlements
-                    .get(&prepared.capability_request_id)
+                    .get(prepared.event_ref.as_str())
                     .is_some_and(|state| {
                         state.settlement.outcome == HostCapabilityOutcomeKind::Cancelled
                             && !state.resume_started
@@ -3169,7 +3227,11 @@ impl RuntimeService {
             }
         }
         self.observation_signal.notify();
-        if self.persist_runtime_state().is_err() {
+        if self
+            .persist_runtime_state()
+            .and_then(|()| self.reconcile_event_waits())
+            .is_err()
+        {
             return RuntimeResult::Failed {
                 request_id: prepared.invocation_request_id.clone(),
                 code: "runtime_state_unavailable".to_owned(),
@@ -3183,12 +3245,10 @@ impl RuntimeService {
     /// may have reached an external effect and is made uncertain instead of
     /// being sent again.
     #[cfg(test)]
-    pub(crate) fn recover_host_capability_resumes(
-        &mut self,
-    ) -> Result<Vec<PreparedResume>, String> {
-        self.reconcile_started_host_capability_resumes()?;
+    pub(crate) fn recover_continuation_resumes(&mut self) -> Result<Vec<PreparedResume>, String> {
+        self.reconcile_started_continuation_resumes()?;
         let mut pending = Vec::new();
-        while let Some(prepared) = self.claim_next_host_capability_resume()? {
+        while let Some(prepared) = self.claim_next_continuation_resume()? {
             pending.push(prepared);
         }
         Ok(pending)
@@ -3197,31 +3257,67 @@ impl RuntimeService {
     /// Reconcile a resume whose durable start marker was crossed before the
     /// previous process stopped. Such work may already have reached an
     /// external effect, so it becomes uncertain and is never redispatched.
-    fn reconcile_started_host_capability_resumes(&mut self) -> Result<(), String> {
-        let capability_request_ids = self
+    fn reconcile_started_continuation_resumes(&mut self) -> Result<(), String> {
+        let targets = self
             .host_capability_settlements
-            .keys()
-            .cloned()
+            .iter()
+            .filter(|(_, state)| state.resume_started)
+            .map(|(request_id, state)| {
+                (
+                    state.program_instance_id.clone(),
+                    apxm_kernel::EventRef::HostCapability {
+                        request_id: request_id.clone(),
+                    },
+                )
+            })
+            .chain(
+                self.reservations
+                    .iter()
+                    .filter(|(_, state)| state.resume_started)
+                    .map(|((event_id, generation), state)| {
+                        (
+                            state.program_instance_id.clone(),
+                            apxm_kernel::EventRef::Reserved {
+                                reference: CanonicalEventRef {
+                                    event_id: event_id.clone(),
+                                    generation: *generation,
+                                },
+                            },
+                        )
+                    }),
+            )
             .collect::<Vec<_>>();
         let mut uncertain = Vec::new();
-        for capability_request_id in capability_request_ids {
-            let Some(state) = self.host_capability_settlements.get(&capability_request_id) else {
+        for (instance_id, target) in targets {
+            let Some(invocation) = self
+                .instances
+                .get(&instance_id)
+                .and_then(|instance| instance.invocation.as_ref())
+            else {
                 continue;
             };
+            if self
+                .active_cancellations
+                .contains_key(&invocation.program_invocation_id)
+            {
+                continue;
+            }
             let same_continuation = self
                 .execution_backend
-                .load_continuation(&ProgramInstanceRef::new(state.program_instance_id.clone()))
+                .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
                 .and_then(|committed| {
                     serde_json::from_value::<Continuation>(committed.payload).ok()
                 })
-                .and_then(|continuation| continuation.event_ref)
-                .is_some_and(|event_ref| event_ref.as_str() == capability_request_id);
+                .is_some_and(|continuation| {
+                    continuation.event_ref.as_ref() == Some(&target)
+                        && continuation.program_invocation_ref.as_str()
+                            == invocation.program_invocation_id
+                        && continuation.program_instance_ref.as_str() == instance_id
+                });
             if !same_continuation {
                 continue;
             }
-            if state.resume_started {
-                uncertain.push(state.program_instance_id.clone());
-            }
+            uncertain.push(instance_id);
         }
         let mut changed = false;
         for instance_id in uncertain {
@@ -3253,9 +3349,10 @@ impl RuntimeService {
     /// Claim one durable host settlement for bounded recovery. Reaching the
     /// process-local execution limit is ordinary backpressure: the settlement
     /// remains pending and a later dispatcher drain retries it.
-    pub(crate) fn claim_next_host_capability_resume(
+    pub(crate) fn claim_next_continuation_resume(
         &mut self,
     ) -> Result<Option<PreparedResume>, String> {
+        self.reconcile_reserved_event_resumes()?;
         if self.active_cancellations.len() >= MAX_ACTIVE_INVOCATIONS {
             return Ok(None);
         }
@@ -3269,6 +3366,24 @@ impl RuntimeService {
             .collect::<Vec<_>>();
         for capability_request_id in capability_request_ids {
             if let Some(prepared) = self.claim_host_capability_resume(&capability_request_id)? {
+                return Ok(Some(prepared));
+            }
+        }
+        let pending_events = self
+            .reservations
+            .iter()
+            .filter(|(_, state)| {
+                !state.resume_started
+                    && state.binding.is_some()
+                    && state.status != EventStatus::Pending
+            })
+            .map(|((event_id, generation), _)| CanonicalEventRef {
+                event_id: event_id.clone(),
+                generation: *generation,
+            })
+            .collect::<Vec<_>>();
+        for reference in pending_events {
+            if let Some(prepared) = self.claim_reserved_event_resume(&reference)? {
                 return Ok(Some(prepared));
             }
         }
@@ -3445,7 +3560,8 @@ impl RuntimeService {
     pub(crate) fn reconcile_recovery_state(&mut self) -> Result<(), String> {
         self.reconcile_started_invocations()?;
         self.reconcile_cancelled_parked_invocations()?;
-        self.reconcile_started_host_capability_resumes()
+        self.reconcile_started_continuation_resumes()?;
+        self.reconcile_reserved_event_resumes()
     }
 
     /// Complete the cancellation transition for a parked invocation after a
@@ -3636,56 +3752,150 @@ impl RuntimeService {
     fn reserve_event(
         &mut self,
         request_id: String,
+        program_instance_id: String,
+        instance_owner_claim: RuntimeOwnerClaim,
         type_id: String,
     ) -> Result<RuntimeResult, ProtocolError> {
-        if type_id.trim().is_empty() {
+        instance_owner_claim.validate()?;
+        let instance = self
+            .instances
+            .get(&program_instance_id)
+            .ok_or(ProtocolError::OwnerMismatch)?;
+        if instance.owner_claim != instance_owner_claim {
+            return Err(ProtocolError::OwnerMismatch);
+        }
+        if request_id.trim().is_empty() || type_id.trim().is_empty() {
+            return Err(ProtocolError::ForbiddenEventMethod);
+        }
+        for ((event_id, generation), prior) in &self.reservations {
+            if prior.program_instance_id == program_instance_id && prior.request_id == request_id {
+                if prior.type_id != type_id {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_request".into(),
+                    });
+                }
+                return Ok(RuntimeResult::EventReserved {
+                    request_id,
+                    owner_claim: prior.owner_claim.clone(),
+                    event_ref: CanonicalEventRef {
+                        event_id: event_id.clone(),
+                        generation: *generation,
+                    },
+                });
+            }
+        }
+        if instance.materials.is_none()
+            || instance.invocation.as_ref().is_some_and(|invocation| {
+                let status = self
+                    .execution_backend
+                    .invocation_status(&invocation.program_invocation_id);
+                self.cancelled
+                    .contains_key(&invocation.program_invocation_id)
+                    || matches!(
+                        status,
+                        Some(
+                            ProgramInvocationStatus::CommittedReturn
+                                | ProgramInvocationStatus::Cancelled
+                                | ProgramInvocationStatus::CancellationUnconfirmed
+                                | ProgramInvocationStatus::Failed
+                                | ProgramInvocationStatus::OutcomeUnknown
+                        )
+                    )
+                    || (invocation.result.is_some()
+                        && status != Some(ProgramInvocationStatus::CommittedYield))
+            })
+        {
             return Ok(RuntimeResult::Failed {
                 request_id,
-                code: "empty_type".to_owned(),
+                code: "instance_unavailable".into(),
             });
         }
-        let type_bytes = u64::try_from(type_id.len()).unwrap_or(u64::MAX);
+        let artifact = self
+            .artifacts
+            .get(&instance.artifact_digest)
+            .and_then(|bytes| {
+                ExecutableArtifact::decode_for_execution(bytes, &instance.artifact_digest).ok()
+            })
+            .ok_or(ProtocolError::ForbiddenEventMethod)?;
+        let Some(requirement) = artifact
+            .air
+            .event_requirements
+            .iter()
+            .find(|requirement| requirement.type_id == type_id)
+        else {
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "undeclared_event_type".into(),
+            });
+        };
+        let payload_schema = requirement.payload_schema.clone();
+        let schema_digest = payload_schema
+            .canonical_digest()
+            .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
+        if schema_digest != requirement.schema_digest {
+            return Err(ProtocolError::ForbiddenEventMethod);
+        }
+        let reservation_size = serde_json::to_vec(&payload_schema)
+            .map_err(|_| ProtocolError::ForbiddenEventMethod)?
+            .len()
+            .saturating_add(request_id.len())
+            .saturating_add(program_instance_id.len())
+            .saturating_add(type_id.len())
+            .saturating_add(schema_digest.len())
+            .saturating_add(1024);
+        let reservation_bytes = u64::try_from(reservation_size).unwrap_or(u64::MAX);
         if !Self::quota_available(
             self.state_policy.reservations,
             self.reservations.len(),
             self.reservation_bytes,
-            type_bytes,
+            reservation_bytes,
         ) {
             return Ok(RuntimeResult::Failed {
                 request_id,
                 code: Self::quota_code("reservation"),
             });
         }
-        let Some(generation) = self.next_generation.checked_add(1) else {
+        let Some(generation) = self
+            .next_generation
+            .checked_add(1)
+            .filter(|generation| *generation <= 9_007_199_254_740_991)
+        else {
             return Ok(RuntimeResult::Failed {
                 request_id,
-                code: "generation_exhausted".to_owned(),
+                code: "generation_exhausted".into(),
             });
         };
-        self.next_generation = generation;
         let owner_claim = RuntimeOwnerClaim::mint();
         let event_ref = CanonicalEventRef {
             event_id: format!("evt-{}", Uuid::new_v4()),
             generation,
         };
+        self.next_generation = generation;
         self.reservations.insert(
-            (event_ref.event_id.clone(), event_ref.generation),
+            (event_ref.event_id.clone(), generation),
             ReservationState {
+                request_id: request_id.clone(),
+                program_instance_id,
                 owner_claim: owner_claim.clone(),
                 type_id,
+                payload_schema,
+                schema_digest,
+                binding: None,
+                resume_started: false,
                 status: EventStatus::Pending,
                 occurrence_id: None,
-                state_entry: Self::entry(type_bytes, self.state_policy.reservations.ttl),
+                state_entry: Self::entry(reservation_bytes, self.state_policy.reservations.ttl),
             },
         );
-        self.reservation_bytes = self.reservation_bytes.saturating_add(type_bytes);
+        self.reservation_bytes = self.reservation_bytes.saturating_add(reservation_bytes);
         if self.persist_runtime_state().is_err() {
             self.reservations
-                .remove(&(event_ref.event_id.clone(), event_ref.generation));
-            self.reservation_bytes = self.reservation_bytes.saturating_sub(type_bytes);
+                .remove(&(event_ref.event_id.clone(), generation));
+            self.reservation_bytes = self.reservation_bytes.saturating_sub(reservation_bytes);
             return Ok(RuntimeResult::Failed {
                 request_id,
-                code: "runtime_state_unavailable".to_owned(),
+                code: "runtime_state_unavailable".into(),
             });
         }
         Ok(RuntimeResult::EventReserved {
@@ -3718,10 +3928,17 @@ impl RuntimeService {
             return Err(ProtocolError::OwnerMismatch);
         }
         let key = application.idempotency_key.clone();
-        if let Some(prior) = self.applications.get(&key) {
+        if let Some(prior) = self.applications.get(&key).or_else(|| {
+            self.applications
+                .values()
+                .find(|prior| prior.event_ref == application.event_ref)
+        }) {
             if prior.payload != application.occurrence.payload
                 || prior.occurrence_id != application.occurrence.occurrence_id
                 || prior.event_ref != application.event_ref
+                || prior.source_kind != application.occurrence.source_kind
+                || prior.mapping_digest != application.occurrence.mapping_digest
+                || prior.source_record != application.occurrence.source_record
             {
                 return Ok(RuntimeResult::EventApplied {
                     request_id,
@@ -3735,15 +3952,25 @@ impl RuntimeService {
         }
         if reservation.status != EventStatus::Pending {
             let result = match reservation.status {
-                EventStatus::Fulfilled => EventApplicationResult::Fulfilled,
+                EventStatus::Fulfilled => EventApplicationResult::Rejected,
                 EventStatus::Expired => EventApplicationResult::Expired,
                 EventStatus::Cancelled => EventApplicationResult::Cancelled,
                 EventStatus::Pending => unreachable!(),
             };
             return Ok(RuntimeResult::EventApplied { request_id, result });
         }
+        if reservation
+            .payload_schema
+            .validate_value(&application.occurrence.payload)
+            .is_err()
+        {
+            return Ok(RuntimeResult::EventApplied {
+                request_id,
+                result: EventApplicationResult::Rejected,
+            });
+        }
         let payload_bytes = u64::try_from(
-            serde_json::to_vec(&application.occurrence.payload)
+            serde_json::to_vec(&application.occurrence)
                 .map_err(|_| ProtocolError::ForbiddenEventMethod)?
                 .len(),
         )
@@ -3772,6 +3999,9 @@ impl RuntimeService {
             ApplicationState {
                 event_ref: application.event_ref.clone(),
                 occurrence_id: application.occurrence.occurrence_id.clone(),
+                source_kind: application.occurrence.source_kind.clone(),
+                mapping_digest: application.occurrence.mapping_digest.clone(),
+                source_record: application.occurrence.source_record.clone(),
                 payload: application.occurrence.payload.clone(),
                 state_entry: Self::entry(application_bytes, self.state_policy.applications.ttl),
             },
@@ -3784,10 +4014,6 @@ impl RuntimeService {
             reservation.status = EventStatus::Fulfilled;
             reservation.occurrence_id = Some(application.occurrence.occurrence_id.clone());
         }
-        // Event application is the only wake authority. A fulfill with no
-        // parked continuation still records the application; it does not
-        // invent a successful invocation finish.
-        let _ = wake_authority(&application);
         if self.persist_runtime_state().is_err() {
             self.applications.remove(&key);
             self.application_bytes = self.application_bytes.saturating_sub(application_bytes);
@@ -3803,15 +4029,9 @@ impl RuntimeService {
                 result: EventApplicationResult::Rejected,
             });
         }
-        // The fulfilled application is the sole wake authority. Once its
-        // durable record is visible, synchronously hand the exact event and
-        // occurrence payload to the canonical resumable driver. The driver
-        // owns continuation removal, the resume observation, and the next
-        // atomic commit; this path never reconstructs execution from output.
-        let _ = self.resume_fulfilled_event(
-            &application.event_ref.event_id,
-            application.occurrence.payload.clone(),
-        );
+        // Acceptance is durable before acknowledgment. The existing bounded
+        // dispatcher claims the same resume lease as host settlements; no
+        // driver runs under the service mutex or inside this HTTP call.
         Ok(RuntimeResult::EventApplied {
             request_id,
             result: EventApplicationResult::Fulfilled,
@@ -4057,7 +4277,7 @@ impl RuntimeService {
             // settlement document that was already durable.
             prepared.cancellation.cancel();
             let output = prepared.execute();
-            self.finish_host_capability_resume(&prepared, output);
+            self.finish_continuation_resume(&prepared, output);
             return Ok(());
         }
         let Some(prepared) =
@@ -4065,12 +4285,12 @@ impl RuntimeService {
         else {
             return Ok(());
         };
-        if !self.begin_host_capability_resume(&prepared)? {
+        if !self.begin_continuation_resume(&prepared)? {
             self.release_invocation_claim(&prepared.invocation_id);
             return Ok(());
         }
         let output = prepared.execute();
-        self.finish_host_capability_resume(&prepared, output);
+        self.finish_continuation_resume(&prepared, output);
         Ok(())
     }
 
@@ -4126,92 +4346,6 @@ impl RuntimeService {
                 true,
             );
         }
-    }
-
-    fn resume_fulfilled_event(&mut self, event_id: &str, delivered: Value) -> Result<(), String> {
-        let mut candidate = None;
-        for (instance_id, instance) in &self.instances {
-            let program_instance_ref = ProgramInstanceRef::new(instance_id.clone());
-            let Some(committed) = self
-                .execution_backend
-                .load_continuation(&program_instance_ref)
-            else {
-                continue;
-            };
-            let continuation: Continuation = serde_json::from_value(committed.payload)
-                .map_err(|error| format!("invalid committed continuation: {error}"))?;
-            if continuation
-                .event_ref
-                .as_ref()
-                .is_some_and(|reference| reference.as_str() == event_id)
-            {
-                if candidate.is_some() {
-                    return Err("event maps to multiple parked invocations".to_owned());
-                }
-                let Some(invocation) = instance.invocation.as_ref() else {
-                    return Err("parked continuation has no invocation state".to_owned());
-                };
-                if invocation.program_invocation_id != continuation.program_invocation_ref.as_str()
-                {
-                    return Err("parked continuation invocation mismatch".to_owned());
-                }
-                candidate = Some((
-                    instance_id.clone(),
-                    continuation,
-                    instance.artifact_digest.clone(),
-                    instance.materials.clone(),
-                ));
-            }
-        }
-        let Some((instance_id, continuation, artifact_digest, materials)) = candidate else {
-            return Err("no parked continuation matches fulfilled event".to_owned());
-        };
-        let Some(mut materials) = materials else {
-            return Err("parked invocation admission is unavailable".to_owned());
-        };
-        let Some(artifact_bytes) = self.artifacts.get(&artifact_digest) else {
-            return Err("parked invocation artifact is unavailable".to_owned());
-        };
-        materials
-            .admission
-            .invocation_id
-            .clone_from(&continuation.program_invocation_ref.as_str().to_owned());
-        let output = block_on(resume_admitted_artifact_with_runtime_ports(
-            continuation.air.clone(),
-            artifact_bytes,
-            &materials,
-            self.handlers.as_ref(),
-            self.package_root.as_deref(),
-            self.sandbox_registry.clone(),
-            self.execution_backend.commit_port(),
-            Some(self.observation_sink.clone()),
-            None,
-            ProgramInstanceRef::new(instance_id.clone()),
-            apxm_kernel::EventRef::new(event_id.to_owned()).map_err(|error| error.to_string())?,
-            delivered,
-        ))?;
-        if !self.execution_is_waiting(continuation.program_invocation_ref.as_str(), &output) {
-            let result = invocation_result_from_execution_output(
-                self.instances
-                    .get(&instance_id)
-                    .and_then(|instance| instance.invocation.as_ref())
-                    .map(|invocation| invocation.request_id.clone())
-                    .ok_or_else(|| "resumed invocation disappeared".to_owned())?,
-                continuation.program_invocation_ref.as_str().to_owned(),
-                &output,
-            );
-            if let Some(instance) = self.instances.get_mut(&instance_id)
-                && let Some(invocation) = instance.invocation.as_mut()
-            {
-                invocation.result = Some(result.clone());
-                if let Some(history) = instance.invocation_history.get_mut(&invocation.request_id) {
-                    history.result = Some(result);
-                }
-            }
-            self.persist_runtime_state()?;
-        }
-        self.observation_signal.notify();
-        Ok(())
     }
 
     fn load_persisted_artifact(&self, digest: &str) -> Option<Vec<u8>> {
@@ -4338,9 +4472,13 @@ impl RuntimeService {
                 if reservation.owner_claim != owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
-                if reservation.status == EventStatus::Pending {
-                    reservation.status = status;
+                if reservation.status != EventStatus::Pending {
+                    return Ok(RuntimeResult::EventLifecycleChanged {
+                        request_id,
+                        inspection: Self::event_inspection(&event_ref, reservation),
+                    });
                 }
+                reservation.status = status;
             }
         }
         if self.persist_runtime_state().is_err() {
@@ -4369,23 +4507,37 @@ pub fn accepts_source_packages() -> bool {
     false
 }
 
-fn wake_authority(application: &EventApplication<Value>) -> EventApplicationResult {
-    // The public protocol never calls resume_event. Wake authority is the
-    // fulfilled application record itself; callers that later bind a parked
-    // continuation must pass this same result into wake_from_event_application.
-    let _ = application;
-    EventApplicationResult::Fulfilled
-}
-
-fn block_on<T>(future: impl Future<Output = T>) -> T {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
-        Err(_) => tokio::runtime::Builder::new_current_thread()
+/// Drive one async port call to completion from a synchronous service call.
+///
+/// Callers arrive on three kinds of thread: a dispatcher worker that owns no
+/// runtime, a `spawn_blocking` task of an embedding transport, and a test's own
+/// runtime thread. Only the first may drive a future in place. The two obvious
+/// bridges are wrong for the others by construction: `Runtime::block_on` panics
+/// inside any runtime context, and `block_in_place` panics on the
+/// current-thread flavor — which is exactly what `#[tokio::test]` and an
+/// embedder of [`InvocationDispatcher`] build, so the requirement was a
+/// multi-thread runtime nobody declared.
+///
+/// So when a runtime is already in scope the future moves to a thread that
+/// runtime does not own and the caller waits on the join. The future borrows
+/// the caller's frame, so the thread is scoped rather than detached.
+fn block_on<T: Send>(future: impl Future<Output = T> + Send) -> T {
+    fn drive<T>(future: impl Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime service tokio runtime")
-            .block_on(future),
+            .block_on(future)
     }
+    if tokio::runtime::Handle::try_current().is_err() {
+        return drive(future);
+    }
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| drive(future))
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
 }
 
 #[cfg(test)]
@@ -4449,6 +4601,27 @@ mod tests {
             .expect("canonical skill fixture artifact")
             .encode()
             .expect("canonical skill fixture artifact JSON")
+    }
+
+    pub(super) fn event_air_bytes() -> Vec<u8> {
+        let mut air: AirModule = serde_json::from_value(serde_json::json!({
+            "schema_version":"apxm.air",
+            "semantic_operations":[{"node_id":"event.wait","op":"await.event","parent_region_id":"Event.body","execution_order":0,
+                "operands":[{"slot":"event_ref","value_id":"Event.param.input","type_ref":"EventRef"}],
+                "result":{"value_id":"event.payload","type_ref":"EventOutput"}}],
+            "structural_ir":[{"region_id":"Event.body","kind":"function","execution_order":0,
+                "block_arguments":[{"value_id":"Event.param.input","type_ref":"Input"}]},
+                {"region_id":"event.return","kind":"return","parent_region_id":"Event.body","execution_order":1,
+                "operands":[{"slot":"output","value_id":"event.payload","type_ref":"EventOutput"}]}],
+            "context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}
+        })).unwrap();
+        air.event_requirements = vec![apxm_program::event::EventRequirement::new("event.wait".into(),"UserInput".into(),serde_json::from_value(serde_json::json!({
+            "type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false
+        })).unwrap()).unwrap()];
+        ExecutableArtifact::from_air(&air)
+            .unwrap()
+            .encode()
+            .unwrap()
     }
 
     fn host_capability_air_bytes() -> Vec<u8> {
@@ -4813,8 +4986,16 @@ mod tests {
                 .execution_backend
                 .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
                 .expect("host continuation is durable");
+            let old_wire = continuation.payload.clone();
+            assert!(
+                old_wire["event_ref"]
+                    .as_str()
+                    .is_some_and(is_host_capability_request_id),
+                "host continuations retain their pre-Event object codec string representation"
+            );
             let continuation: Continuation =
                 serde_json::from_value(continuation.payload).expect("host continuation");
+            assert_eq!(serde_json::to_value(&continuation).unwrap(), old_wire);
             let capability_request_id = continuation
                 .event_ref
                 .expect("host request")
@@ -4879,10 +5060,10 @@ mod tests {
         );
         assert!(reopened.recover_invocations().unwrap().is_empty());
         let recovered = reopened
-            .recover_host_capability_resumes()
+            .recover_continuation_resumes()
             .expect("recover pending host resume");
         assert_eq!(recovered.len(), 1);
-        assert_eq!(recovered[0].capability_request_id, capability_request_id);
+        assert_eq!(recovered[0].event_ref.as_str(), capability_request_id);
         assert_eq!(recovered[0].invocation_id, invocation_id);
         assert!(
             reopened
@@ -5125,7 +5306,7 @@ mod tests {
                 .expect("pending host resume");
             assert!(
                 service
-                    .begin_host_capability_resume(&prepared)
+                    .begin_continuation_resume(&prepared)
                     .expect("durable resume marker")
             );
             let replay = service.settle_host_capability(
@@ -5165,7 +5346,7 @@ mod tests {
         assert!(reopened.recover_invocations().unwrap().is_empty());
         assert!(
             reopened
-                .recover_host_capability_resumes()
+                .recover_continuation_resumes()
                 .expect("reconcile started host resume")
                 .is_empty()
         );
@@ -5232,7 +5413,7 @@ mod tests {
             .expect("pending host resume");
         assert!(
             service
-                .begin_host_capability_resume(&prepared)
+                .begin_continuation_resume(&prepared)
                 .expect("resume marker")
         );
         prepared
@@ -5242,8 +5423,7 @@ mod tests {
     fn unmarked_host_resume_error_remains_unknown() {
         let mut service = RuntimeService::default();
         let prepared = claimed_host_resume_for_finish_test(&mut service);
-        let result =
-            service.finish_host_capability_resume(&prepared, Err("resume failed".to_owned()));
+        let result = service.finish_continuation_resume(&prepared, Err("resume failed".to_owned()));
         assert!(matches!(
             result,
             RuntimeResult::Failed { ref code, .. } if code == "outcome_unknown"
@@ -5278,11 +5458,14 @@ mod tests {
                 } => program_invocation_id,
                 other => panic!("expected committed invocation, got {other:?}"),
             };
+            let event_instance = create_started(&mut service, event_air_bytes());
             let reserved = service
                 .handle(
                     &handshake(),
                     RuntimeRequest::EventReserve {
                         request_id: "restart.reserve".to_owned(),
+                        program_instance_id: event_instance.clone(),
+                        owner_claim: owner_claim(&service, &event_instance),
                         type_id: "UserInput".to_owned(),
                     },
                 )
@@ -5673,106 +5856,52 @@ mod tests {
     #[test]
     fn event_fulfill_resumes_the_committed_continuation() {
         let mut service = RuntimeService::default().with_embedded_read_access();
+        let instance = create_started(&mut service, event_air_bytes());
+        let claim = owner_claim(&service, &instance);
         let reserved = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::EventReserve {
-                    request_id: "resume.reserve".to_owned(),
-                    type_id: "UserInput".to_owned(),
-                },
+            .reserve_event(
+                "resume.reserve".into(),
+                instance.clone(),
+                claim.clone(),
+                "UserInput".into(),
             )
-            .expect("reserve event");
-        let (event_ref, event_claim) = match reserved {
-            RuntimeResult::EventReserved {
-                event_ref,
-                owner_claim,
-                ..
-            } => (event_ref, owner_claim),
-            other => panic!("event reservation failed: {other:?}"),
+            .unwrap();
+        let RuntimeResult::EventReserved {
+            event_ref,
+            owner_claim: event_claim,
+            ..
+        } = reserved
+        else {
+            panic!("reserve: {reserved:?}")
         };
-        let mut air: AirModule = serde_json::from_slice(
-            &fs::read(fixture_dir().join("canonical-execute.air.json")).expect("fixture AIR"),
-        )
-        .expect("fixture AIR JSON");
-        // Event continuation does not depend on unimplemented child execution.
-        air.semantic_operations
-            .retain(|operation| operation.op == apxm_program::air::SemanticOpKind::AwaitEvent);
-        let event = air
-            .semantic_operations
-            .first_mut()
-            .expect("fixture event wait");
-        event.execution_order = 0;
-        event.operands[0].value_id = event_ref.event_id.clone();
-        let bytes = ExecutableArtifact::from_air(&air)
-            .expect("event artifact")
-            .encode()
-            .expect("event artifact bytes");
-        let digest = service.admit_artifact(bytes.clone());
-        let created = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::ProgramInstanceCreate {
-                    request_id: "resume.create".to_owned(),
-                    artifact_digest: digest,
-                },
-            )
-            .expect("create instance");
-        let (instance, claim) = match created {
-            RuntimeResult::ProgramInstanceCreated {
-                program_instance_id,
-                owner_claim,
-                ..
-            } => (program_instance_id, owner_claim),
-            other => panic!("instance creation failed: {other:?}"),
-        };
-        service
-            .bind_admission(
-                &instance,
-                materials_for_artifact(&bytes, "resume.admission", b"{}".to_vec(), b"{}".to_vec()),
-            )
-            .expect("bind admission");
-        let started = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::ProgramInvocationStart {
-                    request_id: "resume.start".to_owned(),
-                    program_instance_id: instance.clone(),
-                    owner_claim: claim,
-                    input: Value::Null,
-                },
-            )
-            .expect("start invocation");
-        assert!(matches!(
-            started,
-            RuntimeResult::ProgramInvocationStarted { .. }
-        ));
+        let input = serde_json::to_value(&event_ref).unwrap();
+        let started = service.start_invocation(
+            "resume.start".into(),
+            instance.clone(),
+            claim.clone(),
+            input.clone(),
+        );
         assert!(
-            service
-                .execution_backend
-                .load_continuation(&ProgramInstanceRef::new(instance.clone()))
-                .is_some(),
-            "start must persist continuation"
+            matches!(started, RuntimeResult::ProgramInvocationStarted { .. }),
+            "{started:?}"
         );
         let fulfilled = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::EventFulfill {
-                    request_id: "resume.fulfill".to_owned(),
-                    owner_claim: event_claim,
-                    application: EventApplication {
-                        event_ref,
-                        occurrence: EventOccurrence {
-                            occurrence_id: "resume.occurrence".to_owned(),
-                            source_kind: "human.terminal".to_owned(),
-                            mapping_digest: "resume.mapping".to_owned(),
-                            source_record: "resume.source".to_owned(),
-                            payload: serde_json::json!({"answer": "ok"}),
-                        },
-                        idempotency_key: "resume.application".to_owned(),
+            .fulfill_event(
+                "resume.fulfill".into(),
+                event_claim,
+                EventApplication {
+                    event_ref: event_ref.clone(),
+                    occurrence: EventOccurrence {
+                        occurrence_id: "resume.occurrence".into(),
+                        source_kind: "test.source".into(),
+                        mapping_digest: "mapping.1".into(),
+                        source_record: "record.1".into(),
+                        payload: serde_json::json!({"answer":"ok"}),
                     },
+                    idempotency_key: "resume.application".into(),
                 },
             )
-            .expect("fulfill event");
+            .unwrap();
         assert!(matches!(
             fulfilled,
             RuntimeResult::EventApplied {
@@ -5781,29 +5910,40 @@ mod tests {
             }
         ));
         assert!(
-            service
-                .instances
-                .get(&instance)
-                .and_then(|instance| instance.invocation.as_ref())
-                .and_then(|invocation| invocation.result.as_ref())
-                .is_some(),
-            "fulfilled event must settle the resumed invocation"
+            service.instances[&instance]
+                .invocation
+                .as_ref()
+                .unwrap()
+                .result
+                .is_none(),
+            "acceptance does not execute inline"
         );
-        let replay = service
-            .handle(
-                &handshake(),
-                RuntimeRequest::ProgramInvocationStart {
-                    request_id: "resume.start".to_owned(),
-                    program_instance_id: instance.clone(),
-                    owner_claim: owner_claim(&service, &instance),
-                    input: Value::Null,
-                },
-            )
-            .expect("replay resumed invocation");
-        assert!(matches!(
-            replay,
-            RuntimeResult::ProgramInvocationStarted { .. }
-        ));
+        let prepared = service
+            .claim_next_continuation_resume()
+            .unwrap()
+            .expect("durable wake");
+        assert_eq!(prepared.event_ref.reservation(), Some(&event_ref));
+        assert!(service.begin_continuation_resume(&prepared).unwrap());
+        let execution = prepared.execute();
+        assert!(execution.is_ok(), "{execution:?}");
+        let completed = service.finish_continuation_resume(&prepared, execution);
+        assert!(
+            matches!(completed, RuntimeResult::ProgramInvocationStarted { .. }),
+            "{completed:?}"
+        );
+        assert!(
+            service.instances[&instance]
+                .invocation
+                .as_ref()
+                .unwrap()
+                .result
+                .is_some()
+        );
+        assert!(service.claim_next_continuation_resume().unwrap().is_none());
+        assert_eq!(
+            service.start_invocation("resume.start".into(), instance, claim, input),
+            completed
+        );
     }
 
     #[test]
@@ -5851,6 +5991,8 @@ mod tests {
             },
             RuntimeRequest::EventReserve {
                 request_id: String::new(),
+                program_instance_id: "pi.1".to_owned(),
+                owner_claim: owner_claim.clone(),
                 type_id: "UserInput".to_owned(),
             },
             RuntimeRequest::EventFulfill {
@@ -6135,11 +6277,14 @@ mod tests {
     #[test]
     fn event_fulfill_uses_root_application_record() {
         let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, event_air_bytes());
         let reserved = service
             .handle(
                 &handshake(),
                 RuntimeRequest::EventReserve {
                     request_id: "r".to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: owner_claim(&service, &instance),
                     type_id: "UserInput".to_owned(),
                 },
             )
@@ -6165,7 +6310,7 @@ mod tests {
                             source_kind: "human.terminal".to_owned(),
                             mapping_digest: "m".to_owned(),
                             source_record: "s".to_owned(),
-                            payload: serde_json::json!("ok"),
+                            payload: serde_json::json!({"answer":"ok"}),
                         },
                         idempotency_key: "k".to_owned(),
                     },
@@ -6192,7 +6337,7 @@ mod tests {
         assert!(service.artifact_bytes(&artifact_digest(raw_air)).is_none());
     }
 
-    fn create_started(service: &mut RuntimeService, bytes: Vec<u8>) -> String {
+    pub(super) fn create_started(service: &mut RuntimeService, bytes: Vec<u8>) -> String {
         let digest = service.admit_artifact(bytes.clone());
         let created = service
             .handle(

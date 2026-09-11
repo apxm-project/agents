@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+apxm-core.workspace = true
 apxm-program.workspace = true
 apxm-inference.workspace = true
 serde.workspace = true

@@ -256,6 +256,10 @@ pub enum RuntimeRequest {
     EventReserve {
         /// Caller correlation id.
         request_id: String,
+        /// Exact admitted instance that can consume the reservation.
+        program_instance_id: String,
+        /// Exact owner claim returned by instance creation.
+        owner_claim: RuntimeOwnerClaim,
         /// Authored Event type id. Not itself an EventRef.
         type_id: String,
     },
@@ -684,6 +688,9 @@ pub fn capability_fulfillment_is_well_formed(
 struct InMemoryEventApplication {
     event_ref: CanonicalEventRef,
     occurrence_id: String,
+    source_kind: String,
+    mapping_digest: String,
+    source_record: String,
     payload: serde_json::Value,
 }
 
@@ -692,6 +699,9 @@ impl InMemoryEventApplication {
     fn matches(&self, application: &EventApplication<serde_json::Value>) -> bool {
         self.event_ref == application.event_ref
             && self.occurrence_id == application.occurrence.occurrence_id
+            && self.source_kind == application.occurrence.source_kind
+            && self.mapping_digest == application.occurrence.mapping_digest
+            && self.source_record == application.occurrence.source_record
             && self.payload == application.occurrence.payload
     }
 }
@@ -860,7 +870,17 @@ impl InMemoryRuntimePeer {
             RuntimeRequest::EventReserve {
                 request_id,
                 type_id,
+                program_instance_id,
+                owner_claim,
             } => {
+                owner_claim.validate()?;
+                if !self
+                    .instances
+                    .get(&program_instance_id)
+                    .is_some_and(|(expected, _)| expected == &owner_claim)
+                {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
                 if type_id.trim().is_empty() {
                     return Ok(RuntimeResult::Failed {
                         request_id,
@@ -917,7 +937,11 @@ impl InMemoryRuntimePeer {
                 if reservation_claim != &owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
-                if let Some(prior) = self.applications.get(&key) {
+                if let Some(prior) = self.applications.get(&key).or_else(|| {
+                    self.applications
+                        .values()
+                        .find(|prior| prior.event_ref == application.event_ref)
+                }) {
                     if !prior.matches(&application) {
                         return Ok(RuntimeResult::EventApplied {
                             request_id,
@@ -945,6 +969,9 @@ impl InMemoryRuntimePeer {
                     InMemoryEventApplication {
                         event_ref: application.event_ref.clone(),
                         occurrence_id: application.occurrence.occurrence_id.clone(),
+                        source_kind: application.occurrence.source_kind.clone(),
+                        mapping_digest: application.occurrence.mapping_digest.clone(),
+                        source_record: application.occurrence.source_record.clone(),
                         payload: application.occurrence.payload.clone(),
                     },
                 );
@@ -1161,6 +1188,28 @@ mod tests {
         }
     }
 
+    fn event_peer() -> (InMemoryRuntimePeer, String, RuntimeOwnerClaim) {
+        let mut peer = InMemoryRuntimePeer::default();
+        let created = peer
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "event.instance".into(),
+                    artifact_digest: format!("sha256:{}", "a".repeat(64)),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("instance")
+        };
+        (peer, program_instance_id, owner_claim)
+    }
+
     #[test]
     fn unknown_version_fails_closed() {
         let hs = RuntimeHandshake {
@@ -1186,12 +1235,14 @@ mod tests {
 
     #[test]
     fn fulfill_identical_retry_is_idempotent() {
-        let mut peer = InMemoryRuntimePeer::default();
+        let (mut peer, instance, claim) = event_peer();
         let reserved = peer
             .handle(
                 &handshake(),
                 RuntimeRequest::EventReserve {
                     request_id: "r".to_owned(),
+                    program_instance_id: instance,
+                    owner_claim: claim,
                     type_id: "UserInput".to_owned(),
                 },
             )
@@ -1238,12 +1289,14 @@ mod tests {
 
     #[test]
     fn conflicting_retry_is_conflict() {
-        let mut peer = InMemoryRuntimePeer::default();
+        let (mut peer, instance, claim) = event_peer();
         let reserved = peer
             .handle(
                 &handshake(),
                 RuntimeRequest::EventReserve {
                     request_id: "r".to_owned(),
+                    program_instance_id: instance,
+                    owner_claim: claim,
                     type_id: "UserInput".to_owned(),
                 },
             )
@@ -1317,12 +1370,14 @@ mod tests {
 
     #[test]
     fn conflicting_event_ref_retry_is_conflict() {
-        let mut peer = InMemoryRuntimePeer::default();
+        let (mut peer, instance, claim) = event_peer();
         let reserve = |peer: &mut InMemoryRuntimePeer, request_id: &str| {
             peer.handle(
                 &handshake(),
                 RuntimeRequest::EventReserve {
                     request_id: request_id.to_owned(),
+                    program_instance_id: instance.clone(),
+                    owner_claim: claim.clone(),
                     type_id: "UserInput".to_owned(),
                 },
             )
@@ -1423,7 +1478,10 @@ mod tests {
             InvocationBoundary::EventWait
         );
         let binding = EventWaitBinding {
+            program_instance_id: "instance".to_owned(),
             program_invocation_id: "inv".to_owned(),
+            node_id: "node".to_owned(),
+            node_execution_id: "execution".to_owned(),
             event_ref: CanonicalEventRef {
                 event_id: "evt".to_owned(),
                 generation: 1,

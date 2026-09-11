@@ -173,7 +173,7 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
 }
 
 #[derive(Clone)]
-struct InvocationDispatcher {
+pub struct InvocationDispatcher {
     service: Arc<Mutex<RuntimeService>>,
     sender: SyncSender<QueuedInvocation>,
     recovery_preference: Arc<Mutex<bool>>,
@@ -238,7 +238,7 @@ fn claim_recovery_work(
         .lock()
         .map_err(|_| "runtime service lock poisoned")?;
     let work = if *prefer_resume {
-        match guard.claim_next_host_capability_resume()? {
+        match guard.claim_next_continuation_resume()? {
             Some(resume) => Some(InvocationWork::Resume(Box::new(resume))),
             None => guard
                 .claim_next_pending_invocation()?
@@ -248,7 +248,7 @@ fn claim_recovery_work(
         match guard.claim_next_pending_invocation()? {
             Some(start) => Some(InvocationWork::Start(Box::new(start))),
             None => guard
-                .claim_next_host_capability_resume()?
+                .claim_next_continuation_resume()?
                 .map(|resume| InvocationWork::Resume(Box::new(resume))),
         }
     };
@@ -286,7 +286,7 @@ fn execute_invocation_work(service: &Arc<Mutex<RuntimeService>>, queued: QueuedI
             let begin = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned".to_owned())
-                .and_then(|mut guard| guard.begin_host_capability_resume(&prepared));
+                .and_then(|mut guard| guard.begin_continuation_resume(&prepared));
             if !matches!(begin, Ok(true)) {
                 if let Ok(mut guard) = service.lock() {
                     guard.release_invocation_claim(&prepared.invocation_id);
@@ -297,13 +297,26 @@ fn execute_invocation_work(service: &Arc<Mutex<RuntimeService>>, queued: QueuedI
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepared.execute()))
                     .unwrap_or_else(|_| Err("outcome_unknown".to_owned()));
             if let Ok(mut guard) = service.lock() {
-                guard.finish_host_capability_resume(&prepared, execution);
+                guard.finish_continuation_resume(&prepared, execution);
             }
         }
     }
 }
 
 impl InvocationDispatcher {
+    /// Start the same bounded workers used by native transports for an
+    /// embedding transport. Dropping the last dispatcher closes its queue;
+    /// accepted durable work is drained before workers exit.
+    pub fn start(service: Arc<Mutex<RuntimeService>>) -> Result<Self, String> {
+        service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?
+            .reconcile_recovery_state()?;
+        let dispatcher = Self::new(service);
+        dispatcher.recover_available()?;
+        Ok(dispatcher)
+    }
+
     fn new(service: Arc<Mutex<RuntimeService>>) -> Self {
         let (sender, receiver) = sync_channel::<QueuedInvocation>(MAX_ACTIVE_INVOCATIONS);
         let receiver = Arc::new(Mutex::new(receiver));
@@ -679,7 +692,7 @@ fn process_shared_payload(
                 let mut guard = service
                     .lock()
                     .map_err(|_| "runtime service lock poisoned")?;
-                guard.cleanup_expired();
+                guard.cleanup_expired()?;
                 envelope
                     .handshake
                     .admit()
@@ -714,7 +727,7 @@ fn process_shared_payload(
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
-            guard.cleanup_expired();
+            guard.cleanup_expired()?;
             envelope
                 .handshake
                 .admit()
@@ -752,7 +765,7 @@ fn process_shared_payload(
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
-            guard.cleanup_expired();
+            guard.cleanup_expired()?;
             envelope
                 .handshake
                 .admit()
@@ -1619,7 +1632,7 @@ mod tests {
 
     #[test]
     fn unix_shared_dispatch_rejects_blank_invocation_id_before_mutation() {
-        let bytes = fixture_artifact_bytes();
+        let bytes = crate::tests::event_air_bytes();
         let mut service = RuntimeService::default();
         let digest = service
             .try_admit_artifact(bytes.clone())
@@ -1656,6 +1669,8 @@ mod tests {
                 },
                 RuntimeRequest::EventReserve {
                     request_id: "reserve".to_owned(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
                     type_id: "UserInput".to_owned(),
                 },
             )

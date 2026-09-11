@@ -18,13 +18,32 @@ pub struct EventTypeRef {
 }
 
 /// Runtime-minted destination with generation and reservation lineage.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub struct CanonicalEventRef {
     /// Opaque reserved identity. Not a declaration name and not a source id.
     pub event_id: String,
     /// Ownership generation. Wrong generation fails closed.
     pub generation: u64,
+}
+
+impl<'de> Deserialize<'de> for CanonicalEventRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            event_id: String,
+            generation: u64,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let reference = Self {
+            event_id: wire.event_id,
+            generation: wire.generation,
+        };
+        reference.validate().map_err(|error| {
+            serde::de::Error::custom(format!("invalid Event reference: {error:?}"))
+        })?;
+        Ok(reference)
+    }
 }
 
 /// Source-side observation before target application.
@@ -59,8 +78,14 @@ pub struct EventApplication<T> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventWaitBinding {
+    /// Instance that owns the reservation.
+    pub program_instance_id: String,
     /// Invocation that remains `WaitingEvent` until exact wake.
     pub program_invocation_id: String,
+    /// Static authored wait callsite.
+    pub node_id: String,
+    /// Exact logical visit, including its loop occurrence.
+    pub node_execution_id: String,
     /// EventRef the wait consumes. Declaration ids are rejected.
     pub event_ref: CanonicalEventRef,
 }
@@ -125,8 +150,11 @@ pub enum InvocationBoundary {
 impl CanonicalEventRef {
     /// Reject empty ids. Reservation lineage is proven by later phases.
     pub fn validate(&self) -> Result<(), EventContractError> {
-        if self.event_id.trim().is_empty() {
+        if self.event_id.trim().is_empty() || self.event_id.trim() != self.event_id {
             return Err(EventContractError::EmptyRef);
+        }
+        if self.generation == 0 || self.generation > 9_007_199_254_740_991 {
+            return Err(EventContractError::InvalidGeneration);
         }
         Ok(())
     }
@@ -152,6 +180,8 @@ impl<T> EventApplication<T> {
 pub enum EventContractError {
     /// EventRef identity is empty.
     EmptyRef,
+    /// Generations are positive interoperable JSON integers.
+    InvalidGeneration,
     /// Application is missing occurrence or idempotency identity.
     IncompleteApplication,
     /// Occurrence id was reused as the EventRef.

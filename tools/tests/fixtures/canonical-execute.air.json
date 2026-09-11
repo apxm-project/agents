@@ -1,5 +1,13 @@
 {
   "schema_version": "apxm.air",
+  "event_requirements": [
+    {
+      "node_id": "fixture.await",
+      "type_id": "fixture.ready",
+      "payload_schema": { "type": "string" },
+      "schema_digest": "sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+    }
+  ],
   "semantic_operations": [
     {
       "node_id": "fixture.new",
@@ -34,7 +42,14 @@
     }
   ],
   "structural_ir": [
-    { "region_id": "fixture.root", "kind": "function", "execution_order": 0 }
+    {
+      "region_id": "fixture.root",
+      "kind": "function",
+      "execution_order": 0,
+      "block_arguments": [
+        { "value_id": "fixture.ready", "type_ref": "EventRef" }
+      ]
+    }
   ],
   "context_flow": [],
   "source_map": {

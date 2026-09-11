@@ -8,7 +8,8 @@ use serde_json::Value;
 pub use apxm_kernel::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventApplication, EventApplicationResult, EventAwait,
-    EventOutcome, EventPort, EventRef, EventRefError,
+    EventDelivery, EventOutcome, EventPort, EventRef, EventRefError, EventWaitContract,
+    EventWaitRejection,
 };
 
 /// The canonical memory scope for scoped session state. Short-term memory is

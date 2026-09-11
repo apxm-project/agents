@@ -220,6 +220,23 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
                     .filter(|argument| argument.type_ref == "ConversationInput")
                     .map(|argument| (argument.value_id.clone(), json!({"message": "hello"})))
             }))
+            .chain(
+                air.semantic_operations
+                    .iter()
+                    .filter(|operation| operation.op == apxm_program::SemanticOpKind::AwaitEvent)
+                    .flat_map(|operation| {
+                        operation
+                            .operands
+                            .iter()
+                            .filter(|operand| operand.slot == "event_ref")
+                            .map(|operand| {
+                                (
+                                    operand.value_id.clone(),
+                                    json!({"event_id":"event.input","generation":1}),
+                                )
+                            })
+                    }),
+            )
             .collect(),
         air,
         hook_bindings: Vec::new(),
@@ -374,7 +391,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "result": {"value_id": "value.after.output", "type_ref": "ModelOutput"}
         })
     };
-    decode_air(json!({
+    let mut air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air",
         "semantic_operations": [
             {
@@ -390,7 +407,19 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
         "structural_ir": structural,
         "context_flow": [],
         "source_map": source_map(&["loop.main"])
-    }))
+    })).expect("interrupted-loop AIR");
+    if interrupt_kind == "park" {
+        air.event_requirements = vec![
+            apxm_program::event::EventRequirement::new(
+                "node.park".into(),
+                "TestEvent".into(),
+                serde_json::from_value(json!({"type":"string"})).unwrap(),
+            )
+            .unwrap(),
+        ];
+    }
+    assert!(air.verify().is_accepted());
+    air
 }
 
 struct SequencedModel {
