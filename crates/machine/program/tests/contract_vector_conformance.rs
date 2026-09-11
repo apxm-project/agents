@@ -196,6 +196,7 @@ const VECTORS_READ_ELSEWHERE: &[(&str, &str)] = &[
         "apxm.inference-graph-hints.json",
         "tests/graph_hint_conformance.rs",
     ),
+    ("apxm.input-schema.json", "tests/semantic_conformance.rs"),
     (
         "apxm.package-local-skill.json",
         "tests/skill_conformance.rs",
