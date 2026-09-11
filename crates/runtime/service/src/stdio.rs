@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{MAX_ACTIVE_INVOCATIONS, PreparedInvocation, PreparedResume, RuntimeService};
 use apxm_runtime_protocol::{
-    RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
+    ProtocolError, RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
     RuntimeExecutionAdmissionHandshake, RuntimeExecutionAdmissionRequest, RuntimeHandshake,
     RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2, RuntimeResult,
     capability_fulfillment_is_well_formed,
@@ -154,14 +154,18 @@ pub fn serve_unix(path: &str, service: RuntimeService) -> Result<(), String> {
         let Some(permit) = UnixConnectionPermit::try_acquire(active_connections.clone()) else {
             continue;
         };
-        stream
+        // A peer that hung up before its connection was configured (a host
+        // whose deadline expired) must not stop the endpoint for every other
+        // client: only that connection is dropped.
+        let configured = stream
             .set_read_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
-            .map_err(|error| error.to_string())?;
-        stream
-            .set_write_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
-            .map_err(|error| error.to_string())?;
-        let reader =
-            std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+            .and_then(|()| {
+                stream.set_write_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
+            })
+            .and_then(|()| stream.try_clone());
+        let Ok(reader) = configured.map(std::io::BufReader::new) else {
+            continue;
+        };
         let shared = shared.clone();
         let dispatcher = dispatcher.clone();
         std::thread::spawn(move || {
@@ -476,50 +480,126 @@ fn serve_frames<R: BufRead, W: Write>(
                 frame.channel, RUNTIME_CHANNEL
             ));
         }
-        let payload: serde_json::Value =
-            serde_json::from_str(&frame.payload).map_err(|error| error.to_string())?;
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&frame.payload) else {
+            write_result(
+                &mut writer,
+                refusal(&serde_json::Value::Null, INVALID_REQUEST),
+            )?;
+            continue;
+        };
         if is_observation_stream(&payload) {
             return Err("long-lived observation streams require a Unix endpoint".to_owned());
         }
-        let result = process_payload(payload, service)?;
+        let result = process_payload(&payload, service);
         write_result(&mut writer, result)?;
     }
     Ok(())
 }
 
-fn process_payload(
-    payload: serde_json::Value,
-    service: &mut RuntimeService,
-) -> Result<serde_json::Value, String> {
+const INVALID_REQUEST: &str = "invalid_request";
+const INTERNAL_ERROR: &str = "internal_error";
+/// Longest refused request id echoed back verbatim. Anything larger is
+/// reported as `unknown` rather than reflected.
+const MAX_ECHOED_REQUEST_ID_BYTES: usize = 256;
+
+/// Best-effort identity of a request the typed decoders refused, so the host
+/// can still correlate the refusal. Protocol/2 carries it in the read context;
+/// Protocol/1 and execution admission carry it on the request itself.
+fn refused_request_id(payload: &serde_json::Value) -> String {
+    let request = payload.get("request");
+    request
+        .and_then(|request| request.get("context"))
+        .and_then(|context| context.get("request_id"))
+        .or_else(|| request.and_then(|request| request.get("request_id")))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_ECHOED_REQUEST_ID_BYTES)
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+/// The typed `failed` result every runtime protocol shares, for a request
+/// that could not be decoded, admitted or validated. An accepted connection
+/// is always answered: a host must read a code, never an empty reply.
+fn refusal(payload: &serde_json::Value, code: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "failed",
+        "request_id": refused_request_id(payload),
+        "code": code,
+    })
+}
+
+/// Protocol/2 refusals use the closed `RuntimeFailureCode` vocabulary.
+fn read_protocol_error_code(error: ProtocolError) -> &'static str {
+    match error {
+        ProtocolError::IncompatibleVersion
+        | ProtocolError::SchemaMismatch
+        | ProtocolError::InvalidHandshake => "protocol_skew",
+        ProtocolError::UnsupportedFeature => "unsupported_feature",
+        ProtocolError::InvalidRequest
+        | ProtocolError::InvalidOwnerClaim
+        | ProtocolError::OwnerMismatch
+        | ProtocolError::UnknownReservation
+        | ProtocolError::SourceAsExecutable
+        | ProtocolError::ForbiddenEventMethod
+        | ProtocolError::GenerationExhausted => INVALID_REQUEST,
+    }
+}
+
+/// Protocol/1 refusals name the exact admission error in the open snake_case
+/// code vocabulary the service already uses for its typed failures.
+fn protocol_error_code(error: ProtocolError) -> &'static str {
+    match error {
+        ProtocolError::IncompatibleVersion => "incompatible_version",
+        ProtocolError::InvalidOwnerClaim => "invalid_owner_claim",
+        ProtocolError::OwnerMismatch => "owner_mismatch",
+        ProtocolError::UnknownReservation => "unknown_reservation",
+        ProtocolError::SourceAsExecutable => "source_as_executable",
+        ProtocolError::ForbiddenEventMethod => "forbidden_event_method",
+        ProtocolError::GenerationExhausted => "generation_exhausted",
+        ProtocolError::SchemaMismatch => "schema_mismatch",
+        ProtocolError::InvalidHandshake => "invalid_handshake",
+        ProtocolError::UnsupportedFeature => "unsupported_feature",
+        ProtocolError::InvalidRequest => INVALID_REQUEST,
+    }
+}
+
+/// Encode a typed result, or state that the service could not.
+fn encoded<T: Serialize>(payload: &serde_json::Value, result: T) -> serde_json::Value {
+    serde_json::to_value(result).unwrap_or_else(|_| refusal(payload, INTERNAL_ERROR))
+}
+
+/// Answer one decoded payload. A request the protocol refuses is answered
+/// with the typed refusal; nothing on this path closes the connection.
+fn process_payload(payload: &serde_json::Value, service: &mut RuntimeService) -> serde_json::Value {
     let protocol_version = payload
         .get("handshake")
         .and_then(|handshake| handshake.get("protocol_version"))
         .and_then(serde_json::Value::as_str);
     if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION) {
-        let envelope: EnvelopeV2 =
-            serde_json::from_value(payload).map_err(|error| error.to_string())?;
-        serde_json::to_value(
-            service
-                .handle_v2(&envelope.handshake, envelope.request)
-                .map_err(|error| format!("{error:?}"))?,
-        )
-        .map_err(|error| error.to_string())
+        let Ok(envelope) = serde_json::from_value::<EnvelopeV2>(payload.clone()) else {
+            return refusal(payload, INVALID_REQUEST);
+        };
+        match service.handle_v2(&envelope.handshake, envelope.request) {
+            Ok(result) => encoded(payload, result),
+            Err(error) => refusal(payload, read_protocol_error_code(error)),
+        }
     } else if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
-        let envelope: ExecutionAdmissionEnvelope =
-            serde_json::from_value(payload).map_err(|error| error.to_string())?;
-        serde_json::to_value(
+        let Ok(envelope) = serde_json::from_value::<ExecutionAdmissionEnvelope>(payload.clone())
+        else {
+            return refusal(payload, INVALID_REQUEST);
+        };
+        encoded(
+            payload,
             service.handle_execution_admission(&envelope.handshake, envelope.request),
         )
-        .map_err(|error| error.to_string())
     } else {
-        let envelope: Envelope =
-            serde_json::from_value(payload).map_err(|error| error.to_string())?;
-        serde_json::to_value(
-            service
-                .handle(&envelope.handshake, envelope.request)
-                .map_err(|error| format!("{error:?}"))?,
-        )
-        .map_err(|error| error.to_string())
+        let Ok(envelope) = serde_json::from_value::<Envelope>(payload.clone()) else {
+            return refusal(payload, INVALID_REQUEST);
+        };
+        match service.handle(&envelope.handshake, envelope.request) {
+            Ok(result) => encoded(payload, result),
+            Err(error) => refusal(payload, protocol_error_code(error)),
+        }
     }
 }
 
@@ -586,67 +666,87 @@ fn serve_shared_frames(
             ));
         }
         validate_frame(&frame)?;
-        let payload: serde_json::Value =
-            serde_json::from_str(&frame.payload).map_err(|error| error.to_string())?;
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&frame.payload) else {
+            write_result(
+                &mut writer,
+                refusal(&serde_json::Value::Null, INVALID_REQUEST),
+            )?;
+            continue;
+        };
         if is_observation_stream(&payload) {
             return serve_observation_stream(payload, &mut writer, service);
         }
-        let mut result = process_shared_payload(payload, service.clone())?;
-        let invocation_id = result
-            .get("program_invocation_id")
-            .and_then(serde_json::Value::as_str)
-            .filter(|_| {
-                result.get("kind").and_then(serde_json::Value::as_str)
-                    == Some("program_invocation_started")
-            })
-            .map(str::to_owned);
-        let capability_request_id = result
-            .get("capability_request_id")
-            .and_then(serde_json::Value::as_str)
-            .filter(|_| {
-                result.get("kind").and_then(serde_json::Value::as_str) == Some("capability_settled")
-            })
-            .map(str::to_owned);
-        let gate = if let Some(invocation_id) = invocation_id {
-            match dispatcher.schedule(&invocation_id) {
-                Ok(gate) => gate,
-                Err(error) => {
-                    let code = match error.as_str() {
-                        "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
-                        _ => "runtime_state_unavailable".to_owned(),
-                    };
-                    let failure = service
-                        .lock()
-                        .map_err(|_| "runtime service lock poisoned")?
-                        .fail_pending_invocation(&invocation_id, &code);
-                    result = serde_json::to_value(failure).map_err(|error| error.to_string())?;
-                    None
-                }
-            }
-        } else if let Some(capability_request_id) = capability_request_id {
-            match dispatcher.schedule_resume(&capability_request_id) {
-                Ok(gate) => gate,
-                Err(error) => {
-                    let code = match error.as_str() {
-                        "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
-                        _ => "runtime_state_unavailable".to_owned(),
-                    };
-                    let request_id = result
-                        .get("request_id")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown")
-                        .to_owned();
-                    result = serde_json::to_value(RuntimeResult::Failed { request_id, code })
-                        .map_err(|error| error.to_string())?;
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // A service that cannot answer (a poisoned mutex, unavailable durable
+        // state) says so as an internal error rather than closing the
+        // connection; the host then reads a code it can act on.
+        let (result, gate) = answer_shared_request(&payload, &service, &dispatcher)
+            .unwrap_or_else(|_| (refusal(&payload, INTERNAL_ERROR), None));
         write_result_and_release(&mut writer, result, gate)?;
     }
     Ok(())
+}
+
+/// Dispatch one request and reserve execution for the work it admitted. The
+/// error is a service that could not answer at all, never a refused request.
+fn answer_shared_request(
+    payload: &serde_json::Value,
+    service: &Arc<Mutex<RuntimeService>>,
+    dispatcher: &InvocationDispatcher,
+) -> Result<(serde_json::Value, Option<StartGate>), String> {
+    let mut result = process_shared_payload(payload, service.clone())?;
+    let invocation_id = result
+        .get("program_invocation_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|_| {
+            result.get("kind").and_then(serde_json::Value::as_str)
+                == Some("program_invocation_started")
+        })
+        .map(str::to_owned);
+    let capability_request_id = result
+        .get("capability_request_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|_| {
+            result.get("kind").and_then(serde_json::Value::as_str) == Some("capability_settled")
+        })
+        .map(str::to_owned);
+    let gate = if let Some(invocation_id) = invocation_id {
+        match dispatcher.schedule(&invocation_id) {
+            Ok(gate) => gate,
+            Err(error) => {
+                let code = match error.as_str() {
+                    "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
+                    _ => "runtime_state_unavailable".to_owned(),
+                };
+                let failure = service
+                    .lock()
+                    .map_err(|_| "runtime service lock poisoned")?
+                    .fail_pending_invocation(&invocation_id, &code);
+                result = serde_json::to_value(failure).map_err(|error| error.to_string())?;
+                None
+            }
+        }
+    } else if let Some(capability_request_id) = capability_request_id {
+        match dispatcher.schedule_resume(&capability_request_id) {
+            Ok(gate) => gate,
+            Err(error) => {
+                let code = match error.as_str() {
+                    "invocation_capacity_exhausted" | "invocation_workers_unavailable" => error,
+                    _ => "runtime_state_unavailable".to_owned(),
+                };
+                let request_id = result
+                    .get("request_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned();
+                result = serde_json::to_value(RuntimeResult::Failed { request_id, code })
+                    .map_err(|error| error.to_string())?;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok((result, gate))
 }
 
 /// Dispatch one Unix request while allowing an invocation driver to run
@@ -654,33 +754,25 @@ fn serve_shared_frames(
 /// serialized by that mutex; only the immutable execution lease crosses the
 /// unlocked interval.
 fn process_shared_payload(
-    payload: serde_json::Value,
+    payload: &serde_json::Value,
     service: Arc<Mutex<RuntimeService>>,
 ) -> Result<serde_json::Value, String> {
     let protocol_version = payload
         .get("handshake")
         .and_then(|handshake| handshake.get("protocol_version"))
         .and_then(serde_json::Value::as_str);
-    if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION) {
+    if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION)
+        || protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION)
+    {
         let mut guard = service
             .lock()
             .map_err(|_| "runtime service lock poisoned")?;
-        return process_payload(payload, &mut guard);
+        return Ok(process_payload(payload, &mut guard));
     }
 
-    if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
-        let envelope: ExecutionAdmissionEnvelope =
-            serde_json::from_value(payload).map_err(|error| error.to_string())?;
-        let mut guard = service
-            .lock()
-            .map_err(|_| "runtime service lock poisoned")?;
-        return serde_json::to_value(
-            guard.handle_execution_admission(&envelope.handshake, envelope.request),
-        )
-        .map_err(|error| error.to_string());
-    }
-
-    let envelope: Envelope = serde_json::from_value(payload).map_err(|error| error.to_string())?;
+    let Ok(envelope) = serde_json::from_value::<Envelope>(payload.clone()) else {
+        return Ok(refusal(payload, INVALID_REQUEST));
+    };
     match envelope.request {
         RuntimeRequest::ProgramInvocationStart {
             request_id,
@@ -693,27 +785,26 @@ fn process_shared_payload(
                     .lock()
                     .map_err(|_| "runtime service lock poisoned")?;
                 guard.cleanup_expired()?;
-                envelope
-                    .handshake
-                    .admit()
-                    .map_err(|error| format!("{error:?}"))?;
+                if let Err(error) = envelope.handshake.admit() {
+                    return Ok(refusal(payload, protocol_error_code(error)));
+                }
                 guard.prepare_invocation(request_id, program_instance_id, owner_claim, input)
             };
             let prepared = match prepared {
                 Ok(prepared) => prepared,
-                Err(result) => {
-                    return serde_json::to_value(result).map_err(|error| error.to_string());
-                }
+                Err(result) => return Ok(encoded(payload, result)),
             };
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
             guard.release_invocation_claim(&prepared.invocation_id);
-            serde_json::to_value(RuntimeResult::ProgramInvocationStarted {
-                request_id: prepared.request_id.clone(),
-                program_invocation_id: prepared.invocation_id.clone(),
-            })
-            .map_err(|error| error.to_string())
+            Ok(encoded(
+                payload,
+                RuntimeResult::ProgramInvocationStarted {
+                    request_id: prepared.request_id.clone(),
+                    program_invocation_id: prepared.invocation_id.clone(),
+                },
+            ))
         }
         RuntimeRequest::CapabilityFulfill {
             request_id,
@@ -728,10 +819,9 @@ fn process_shared_payload(
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
             guard.cleanup_expired()?;
-            envelope
-                .handshake
-                .admit()
-                .map_err(|error| format!("{error:?}"))?;
+            if let Err(error) = envelope.handshake.admit() {
+                return Ok(refusal(payload, protocol_error_code(error)));
+            }
             let result = if request_id.trim().is_empty()
                 || !capability_fulfillment_is_well_formed(
                     &capability_request_id,
@@ -754,7 +844,7 @@ fn process_shared_payload(
                     false,
                 )
             };
-            serde_json::to_value(result).map_err(|error| error.to_string())
+            Ok(encoded(payload, result))
         }
         RuntimeRequest::CapabilityCancel {
             request_id,
@@ -766,10 +856,9 @@ fn process_shared_payload(
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
             guard.cleanup_expired()?;
-            envelope
-                .handshake
-                .admit()
-                .map_err(|error| format!("{error:?}"))?;
+            if let Err(error) = envelope.handshake.admit() {
+                return Ok(refusal(payload, protocol_error_code(error)));
+            }
             let result = if request_id.trim().is_empty()
                 || !apxm_core::types::host_capability::is_host_capability_request_id(
                     &capability_request_id,
@@ -790,18 +879,16 @@ fn process_shared_payload(
                     false,
                 )
             };
-            serde_json::to_value(result).map_err(|error| error.to_string())
+            Ok(encoded(payload, result))
         }
         request => {
             let mut guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
-            serde_json::to_value(
-                guard
-                    .handle(&envelope.handshake, request)
-                    .map_err(|error| format!("{error:?}"))?,
-            )
-            .map_err(|error| error.to_string())
+            Ok(match guard.handle(&envelope.handshake, request) {
+                Ok(result) => encoded(payload, result),
+                Err(error) => refusal(payload, protocol_error_code(error)),
+            })
         }
     }
 }
@@ -828,13 +915,15 @@ fn serve_observation_stream(
         .lock()
         .map_err(|_| "runtime service lock poisoned")?
         .observation_signal();
-    let request_value = payload
+    if let Some(request_value) = payload
         .get_mut("request")
         .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "observation stream request is not an object".to_owned())?;
-    request_value.remove("stream");
-    let envelope: EnvelopeV2 =
-        serde_json::from_value(payload).map_err(|error| error.to_string())?;
+    {
+        request_value.remove("stream");
+    }
+    let Ok(envelope) = serde_json::from_value::<EnvelopeV2>(payload.clone()) else {
+        return write_result(writer, refusal(&payload, INVALID_REQUEST));
+    };
     let handshake = envelope.handshake;
     let mut request = envelope.request;
     if !matches!(request, RuntimeRequestV2::ObservationSubscribe { .. }) {
@@ -846,9 +935,15 @@ fn serve_observation_stream(
             let guard = service
                 .lock()
                 .map_err(|_| "runtime service lock poisoned")?;
-            guard
-                .handle_v2(&handshake, request.clone())
-                .map_err(|error| format!("{error:?}"))?
+            match guard.handle_v2(&handshake, request.clone()) {
+                Ok(result) => result,
+                Err(error) => {
+                    return write_result(
+                        writer,
+                        refusal(&payload, read_protocol_error_code(error)),
+                    );
+                }
+            }
         };
         let is_page = matches!(
             &result,
@@ -1707,7 +1802,7 @@ mod tests {
             }
         });
 
-        let result = process_shared_payload(payload, Arc::clone(&shared)).expect("dispatch");
+        let result = process_shared_payload(&payload, Arc::clone(&shared)).expect("dispatch");
         let result: RuntimeResult = serde_json::from_value(result).expect("runtime result");
         assert!(matches!(
             result,
