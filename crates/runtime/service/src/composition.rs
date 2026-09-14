@@ -10,6 +10,7 @@ use crate::ports::capability::LocalCapabilityPort;
 use crate::ports::model::{LocalModelInferencePort, LocalModelRequestMetadata};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
+use apxm_capability::builtins::InlineSkill;
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_core::types::host_capability::{
     ManifestCapabilities, is_host_capability_ref, minted_host_capability_refs,
@@ -784,6 +785,21 @@ pub async fn resume_admitted_artifact_with_runtime_ports(
     .await
 }
 
+fn inline_skills_from_artifact(artifact: &ExecutableArtifact) -> Vec<InlineSkill> {
+    artifact
+        .source_bundle
+        .as_ref()
+        .into_iter()
+        .flat_map(|bundle| bundle.skill_requirements.iter())
+        .filter_map(|requirement| match &requirement.instruction_source {
+            apxm_program::frontend_graph::SkillInstructionSource::Inline { text } => {
+                Some(InlineSkill::new(requirement.skill_id.clone(), text.clone()))
+            }
+            apxm_program::frontend_graph::SkillInstructionSource::Entry { .. } => None,
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn resume_admitted_artifact_with_events(
     air: AirModule,
@@ -801,6 +817,9 @@ pub(crate) async fn resume_admitted_artifact_with_events(
     events: Option<Arc<dyn EventPort>>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
+    let artifact =
+        ExecutableArtifact::decode_for_execution(artifact_bytes, &admission.artifact_digest)?;
+    let inline_skills = inline_skills_from_artifact(&artifact);
     let descriptor = canonical_runtime_descriptor();
     if admission.port_bindings_digest != canonical_port_bindings_digest()
         || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
@@ -821,10 +840,11 @@ pub(crate) async fn resume_admitted_artifact_with_events(
     )
     .map_err(|error| error.to_string())?;
     let capability = Arc::new(
-        LocalCapabilityPort::with_package_root_and_sandbox(
+        LocalCapabilityPort::with_package_root_and_sandbox_and_inline_skills(
             handlers,
             package_root,
             sandbox_registry,
+            inline_skills,
         )
         .map_err(|error| error.to_string())?,
     );
@@ -922,7 +942,9 @@ async fn drive_admitted_artifact(
     events: Option<Arc<dyn EventPort>>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
-    let artifact = ExecutableArtifact::decode(artifact_bytes).map_err(|error| error.to_string())?;
+    let artifact =
+        ExecutableArtifact::decode_for_execution(artifact_bytes, &admission.artifact_digest)?;
+    let inline_skills = inline_skills_from_artifact(&artifact);
     let initial_context = match artifact.entrypoints.as_slice() {
         [entrypoint] => entrypoint
             .default_context
@@ -957,12 +979,17 @@ async fn drive_admitted_artifact(
     .map_err(|error| error.to_string())?;
     let capability = Arc::new(
         match sandbox_registry {
-            Some(registry) => LocalCapabilityPort::with_package_root_and_sandbox(
+            Some(registry) => LocalCapabilityPort::with_package_root_and_sandbox_and_inline_skills(
                 handlers,
                 package_root,
                 Some(registry),
+                inline_skills,
             ),
-            None => LocalCapabilityPort::with_package_root(handlers, package_root),
+            None => LocalCapabilityPort::with_package_root_and_inline_skills(
+                handlers,
+                package_root,
+                inline_skills,
+            ),
         }
         .map_err(|error| error.to_string())?,
     );

@@ -31,6 +31,9 @@
     "source_bundle_digest": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
+    "source_bundle": {
+      "$ref": "#/$defs/SourceBundle"
+    },
     "execution_lineage_ref": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
@@ -62,6 +65,63 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "SourceBundle": {
+      "description": "The exact authoring bundle when the artifact was compiled from a FrontendGraph. Its digest is the integrity anchor; runtime uses it only to serve inline Skill instructions.",
+      "type": "object",
+      "required": [
+        "program_definitions",
+        "imported_program_refs",
+        "hook_bindings",
+        "capability_requirements",
+        "model_requirements",
+        "skill_requirements"
+      ],
+      "properties": {
+        "program_definitions": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/ProgramDefinition"
+          }
+        },
+        "imported_program_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/ImportedProgramRef"
+          }
+        },
+        "hook_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/HookBinding"
+          }
+        },
+        "capability_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/CapabilityRequirement"
+          }
+        },
+        "model_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/ModelRequirement"
+          }
+        },
+        "event_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/EventRequirement"
+          }
+        },
+        "skill_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.frontend-graph#/$defs/SkillRequirement"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "HookBinding": {
       "type": "object",
       "required": [

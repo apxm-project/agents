@@ -463,6 +463,9 @@ pub struct ModelRequirement {
 /// from authoring to execution.
 pub const MAX_INSTRUCTION_BYTES: usize = 128 * 1024;
 
+/// Aggregate ceiling for inline Skill bodies in one authoring bundle.
+pub const MAX_INLINE_SKILL_BYTES: usize = 1024 * 1024;
+
 /// Where an authored skill's instructions live.
 ///
 /// The two branches reach the artifact digest by different routes, which is why
@@ -2033,6 +2036,7 @@ fn collect_hook_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
 /// than the reader will load.
 fn collect_skill_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
     let mut seen: HashSet<&str> = HashSet::new();
+    let mut inline_bytes = 0usize;
     for requirement in &graph.skill_requirements {
         check_identifier(verdict, &requirement.skill_id, "skill requirement skill_id");
         if !seen.insert(requirement.skill_id.as_str()) {
@@ -2053,6 +2057,7 @@ fn collect_skill_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
                 }
             }
             SkillInstructionSource::Inline { text } => {
+                inline_bytes = inline_bytes.saturating_add(text.len());
                 if text.is_empty() || text.len() > MAX_INSTRUCTION_BYTES {
                     verdict.push(Diagnostic::new(
                         DiagnosticCode::SchemaViolation,
@@ -2062,6 +2067,13 @@ fn collect_skill_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
                 }
             }
         }
+    }
+    if inline_bytes > MAX_INLINE_SKILL_BYTES {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "skill_requirements",
+            "inline skill bodies do not exceed the aggregate instruction ceiling",
+        ));
     }
 }
 

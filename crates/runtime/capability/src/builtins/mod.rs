@@ -24,8 +24,8 @@ pub use mcp_bridge::McpBridgeCapability;
 pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};
 pub use skills::{
-    ListSkillsCapability, ReadSkillCapability, SearchSkillsCapability, SkillRootConfig,
-    SkillsConfig,
+    InlineSkill, ListSkillsCapability, ReadSkillCapability, SearchSkillsCapability,
+    SkillRootConfig, SkillsConfig,
 };
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
@@ -530,6 +530,16 @@ pub fn register_standard_tools(
     capability_system: &CapabilitySystem,
     config: &ToolsConfig,
 ) -> Result<(), RuntimeError> {
+    register_standard_tools_with_inline_skills(capability_system, config, Vec::new())
+}
+
+/// Register standard tools and exact inline Skill bodies carried by an Agent
+/// Program source bundle.
+pub fn register_standard_tools_with_inline_skills(
+    capability_system: &CapabilitySystem,
+    config: &ToolsConfig,
+    inline_skills: Vec<InlineSkill>,
+) -> Result<(), RuntimeError> {
     if config.bash.enabled {
         capability_system.register(Arc::new(BashCapability::with_config(config.bash.clone())))?;
     }
@@ -572,9 +582,12 @@ pub fn register_standard_tools(
         capability_system.register(Arc::new(SearchSkillsCapability::with_config(
             config.skills.clone(),
         )))?;
-        capability_system.register(Arc::new(ReadSkillCapability::with_config(
-            config.skills.clone(),
-        )))?;
+        capability_system.register(Arc::new(
+            ReadSkillCapability::with_config_and_inline_skills(
+                config.skills.clone(),
+                inline_skills,
+            ),
+        ))?;
     }
     Ok(())
 }

@@ -37,8 +37,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use apxm_capability::CapabilitySystem;
 use apxm_capability::builtins::{
-    BashConfig, HttpConfig, ReadConfig, SkillRootConfig, SkillsConfig, ToolsConfig,
-    register_standard_tools, untrusted_content_value,
+    BashConfig, HttpConfig, InlineSkill, ReadConfig, SkillRootConfig, SkillsConfig, ToolsConfig,
+    register_standard_tools, register_standard_tools_with_inline_skills, untrusted_content_value,
 };
 use apxm_capability::executor::CapabilityExecutor;
 use apxm_capability::interceptor::{
@@ -782,23 +782,66 @@ impl LocalCapabilityPort {
     ///
     /// Returns the registration error if a standard tool or a package
     /// Capability cannot be registered.
+    #[allow(dead_code)]
     pub fn with_package_root(
         handlers: Option<&crate::AdmittedPackageHandlers>,
         package_root: Option<&Path>,
     ) -> Result<Self, RuntimeError> {
-        Self::with_package_root_and_sandbox(handlers, package_root, None)
+        Self::with_package_root_and_sandbox_and_inline_skills(
+            handlers,
+            package_root,
+            None,
+            Vec::new(),
+        )
+    }
+
+    /// Build the local capability surface with inline Skills carried by the
+    /// admitted Agent Program artifact.
+    pub fn with_package_root_and_inline_skills(
+        handlers: Option<&crate::AdmittedPackageHandlers>,
+        package_root: Option<&Path>,
+        inline_skills: Vec<InlineSkill>,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_package_root_and_sandbox_and_inline_skills(
+            handlers,
+            package_root,
+            None,
+            inline_skills,
+        )
     }
 
     /// Build the local capability surface with an explicitly injected sandbox
     /// registry for package workers. The registry is host authority; package
     /// metadata cannot supply or select it.
+    #[allow(dead_code)]
     pub fn with_package_root_and_sandbox(
         handlers: Option<&crate::AdmittedPackageHandlers>,
         package_root: Option<&Path>,
         sandbox_registry: Option<Arc<SandboxRegistry>>,
     ) -> Result<Self, RuntimeError> {
+        Self::with_package_root_and_sandbox_and_inline_skills(
+            handlers,
+            package_root,
+            sandbox_registry,
+            Vec::new(),
+        )
+    }
+
+    /// Build the local capability surface with inline Skills and an optional
+    /// host-owned sandbox registry.
+    pub fn with_package_root_and_sandbox_and_inline_skills(
+        handlers: Option<&crate::AdmittedPackageHandlers>,
+        package_root: Option<&Path>,
+        sandbox_registry: Option<Arc<SandboxRegistry>>,
+        inline_skills: Vec<InlineSkill>,
+    ) -> Result<Self, RuntimeError> {
         let system = CapabilitySystem::new();
-        register_standard_tools(&system, &local_tools_config(package_root))?;
+        let tools = local_tools_config(package_root);
+        if inline_skills.is_empty() {
+            register_standard_tools(&system, &tools)?;
+        } else {
+            register_standard_tools_with_inline_skills(&system, &tools, inline_skills)?;
+        }
         if let Some(handlers) = handlers {
             register_package_handlers(&system, handlers, package_root, sandbox_registry)?;
         }

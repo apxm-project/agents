@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
+use apxm_program::frontend_graph::MAX_INLINE_SKILL_BYTES;
 use apxm_program::skill::{RootTier, verify_skill_discovery_root_json};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -68,6 +69,25 @@ pub struct SkillsConfig {
     #[serde(default)]
     pub roots: Vec<SkillRootConfig>,
 }
+
+/// One inline Agent Skill body carried by an executable artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineSkill {
+    pub skill_id: String,
+    pub text: String,
+}
+
+impl InlineSkill {
+    #[must_use]
+    pub fn new(skill_id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            skill_id: skill_id.into(),
+            text: text.into(),
+        }
+    }
+}
+
+const INLINE_ROOT_ID: &str = "inline";
 
 impl Default for SkillsConfig {
     fn default() -> Self {
@@ -596,6 +616,7 @@ impl CapabilityExecutor for SearchSkillsCapability {
 pub struct ReadSkillCapability {
     metadata: RuntimeCapability,
     config: SkillsConfig,
+    inline_skills: Vec<InlineSkill>,
 }
 
 impl ReadSkillCapability {
@@ -604,6 +625,13 @@ impl ReadSkillCapability {
     }
 
     pub fn with_config(config: SkillsConfig) -> Self {
+        Self::with_config_and_inline_skills(config, Vec::new())
+    }
+
+    pub fn with_config_and_inline_skills(
+        config: SkillsConfig,
+        inline_skills: Vec<InlineSkill>,
+    ) -> Self {
         Self {
             metadata: RuntimeCapability::new(
                 capabilities::READ_SKILL,
@@ -626,6 +654,7 @@ impl ReadSkillCapability {
             .with_read_only()
             .with_latency(20),
             config,
+            inline_skills,
         }
     }
 }
@@ -643,33 +672,40 @@ impl CapabilityExecutor for ReadSkillCapability {
         let skills = index_all(&self.config.roots, &self.metadata.name)?;
         let candidates = filter_by_root(skills, &args);
 
-        let matches: Vec<&IndexedSkill> = candidates
+        let file_matches: Vec<&IndexedSkill> = candidates
             .iter()
             .filter(|skill| skill.skill_id == skill_id)
             .collect();
-        match matches.as_slice() {
-            [] => Err(capability_error(
+        let inline_matches: Vec<&InlineSkill> = self
+            .inline_skills
+            .iter()
+            .filter(|skill| skill.skill_id == skill_id)
+            .filter(|_| match args.get("root_id").and_then(Value::as_str) {
+                Some(root_id) => root_id == INLINE_ROOT_ID,
+                None => true,
+            })
+            .collect();
+        let inline_bytes = self.inline_skills.iter().fold(0usize, |total, skill| {
+            total.saturating_add(skill.text.len())
+        });
+        if inline_bytes > MAX_INLINE_SKILL_BYTES {
+            return Err(capability_error(
                 &self.metadata.name,
                 format!(
-                    "no skill '{skill_id}' in the configured discovery roots; call list_skills \
-                     to see what is available"
+                    "inline skill bodies exceed the {MAX_INLINE_SKILL_BYTES} byte aggregate \
+                     instruction limit"
                 ),
-            )),
-            // The same id in two roots is a real ambiguity, not a precedence
-            // puzzle for this capability to guess at. The caller names the root.
-            [_, _, ..] => Err(capability_error(
+            ));
+        }
+        match (file_matches.as_slice(), inline_matches.as_slice()) {
+            ([], []) => Err(capability_error(
                 &self.metadata.name,
                 format!(
-                    "skill '{skill_id}' is published by more than one root ({}); name one with \
-                     root_id",
-                    matches
-                        .iter()
-                        .map(|skill| skill.root_id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "no skill '{skill_id}' in the configured discovery roots or inline source; \
+                     call list_skills to see what is available"
                 ),
             )),
-            [skill] => {
+            ([skill], []) => {
                 let body =
                     read_instruction(&skill.root_path, &skill.instructions, &self.metadata.name)?;
                 untrusted_content_value(
@@ -677,6 +713,40 @@ impl CapabilityExecutor for ReadSkillCapability {
                     format!("skill://{}/{}", skill.root_id, skill.skill_id),
                     body,
                 )
+            }
+            ([], [skill]) => {
+                if skill.text.is_empty() || skill.text.len() > MAX_INSTRUCTION_BYTES {
+                    return Err(capability_error(
+                        &self.metadata.name,
+                        format!(
+                            "inline skill '{}' is empty or exceeds the {MAX_INSTRUCTION_BYTES} \
+                             byte instruction limit",
+                            skill.skill_id
+                        ),
+                    ));
+                }
+                untrusted_content_value(
+                    &self.metadata.name,
+                    format!("skill://{INLINE_ROOT_ID}/{}", skill.skill_id),
+                    skill.text.clone(),
+                )
+            }
+            _ => {
+                let mut roots = file_matches
+                    .iter()
+                    .map(|skill| skill.root_id.as_str())
+                    .collect::<Vec<_>>();
+                if !inline_matches.is_empty() {
+                    roots.push(INLINE_ROOT_ID);
+                }
+                Err(capability_error(
+                    &self.metadata.name,
+                    format!(
+                        "skill '{skill_id}' is published by more than one root ({}); name one \
+                         with root_id",
+                        roots.join(", ")
+                    ),
+                ))
             }
         }
     }
@@ -828,6 +898,110 @@ mod tests {
             .await
             .expect_err("an unknown skill is an error");
         assert!(format!("{error}").contains("no skill 'absent'"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_inline_skill_is_read_without_a_filesystem_root() {
+        let port = ReadSkillCapability::with_config_and_inline_skills(
+            SkillsConfig::default(),
+            vec![InlineSkill::new(
+                "review",
+                "# Review\nUse the submitted change.",
+            )],
+        );
+        let body = port
+            .execute(HashMap::from([(
+                "skill_id".to_string(),
+                Value::String("review".into()),
+            )]))
+            .await
+            .expect("inline skill read");
+        let body = envelope_content(&body);
+        assert_eq!(body, "# Review\nUse the submitted change.");
+    }
+
+    #[tokio::test]
+    async fn mounted_and_inline_skills_require_an_explicit_root_when_ids_overlap() {
+        let temporary = tempfile::tempdir().expect("temporary root");
+        write_skill(
+            temporary.path(),
+            "review",
+            "name: review\ndescription: Mounted review instructions.",
+            "Mounted review body.",
+        );
+        let port = ReadSkillCapability::with_config_and_inline_skills(
+            root_of(temporary.path()),
+            vec![InlineSkill::new("review", "Inline review body.")],
+        );
+
+        let error = port
+            .execute(HashMap::from([(
+                "skill_id".to_string(),
+                Value::String("review".into()),
+            )]))
+            .await
+            .expect_err("an overlapping id must not choose a source implicitly");
+        assert!(format!("{error}").contains("more than one root"), "{error}");
+
+        let inline = port
+            .execute(HashMap::from([
+                ("skill_id".to_string(), Value::String("review".into())),
+                ("root_id".to_string(), Value::String("inline".into())),
+            ]))
+            .await
+            .expect("explicit inline root");
+        assert_eq!(envelope_content(&inline), "Inline review body.");
+
+        let mounted = port
+            .execute(HashMap::from([
+                ("skill_id".to_string(), Value::String("review".into())),
+                ("root_id".to_string(), Value::String("project".into())),
+            ]))
+            .await
+            .expect("explicit mounted root");
+        assert_eq!(envelope_content(&mounted), "Mounted review body.\n");
+    }
+
+    #[tokio::test]
+    async fn an_inline_skill_respects_the_instruction_ceiling() {
+        let port = ReadSkillCapability::with_config_and_inline_skills(
+            SkillsConfig::default(),
+            vec![InlineSkill::new(
+                "oversized",
+                "x".repeat(MAX_INSTRUCTION_BYTES + 1),
+            )],
+        );
+        let error = port
+            .execute(HashMap::from([(
+                "skill_id".to_string(),
+                Value::String("oversized".into()),
+            )]))
+            .await
+            .expect_err("oversized inline body");
+        assert!(format!("{error}").contains("instruction limit"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn inline_skill_bodies_have_an_aggregate_ceiling() {
+        let body = "x".repeat(MAX_INLINE_SKILL_BYTES / 2 + 1);
+        let port = ReadSkillCapability::with_config_and_inline_skills(
+            SkillsConfig::default(),
+            vec![
+                InlineSkill::new("first", body.clone()),
+                InlineSkill::new("second", body),
+            ],
+        );
+        let error = port
+            .execute(HashMap::from([(
+                "skill_id".to_string(),
+                Value::String("first".into()),
+            )]))
+            .await
+            .expect_err("aggregate inline body limit");
+        assert!(
+            format!("{error}").contains("aggregate instruction limit"),
+            "{error}"
+        );
     }
 
     /// A directory whose frontmatter name disagrees with its directory name

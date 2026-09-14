@@ -218,6 +218,11 @@ pub struct ExecutableArtifact {
     pub air_digest: String,
     pub air: AirModule,
     pub source_bundle_digest: String,
+    /// The exact authoring bundle when this artifact came from a
+    /// FrontendGraph. Runtime execution uses its inline Skill bodies; the
+    /// digest is still checked against this value before any body is served.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bundle: Option<SourceBundle>,
     /// Opaque commitment to the exact source bundle, canonical AIR, and
     /// compiler identity used to produce this artifact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,6 +363,7 @@ impl ExecutableArtifact {
             air_digest: air_digest.clone(),
             air: air.clone(),
             source_bundle_digest: source_bundle_digest.clone(),
+            source_bundle: Some(bundle),
             execution_lineage_ref: Some(execution_lineage_ref(
                 &source_bundle_digest,
                 &air_digest,
@@ -426,6 +432,7 @@ impl ExecutableArtifact {
             air_digest: air_digest.clone(),
             air: air.clone(),
             source_bundle_digest: source_bundle_digest.clone(),
+            source_bundle: None,
             execution_lineage_ref: Some(execution_lineage_ref(
                 &source_bundle_digest,
                 &air_digest,
@@ -506,6 +513,26 @@ impl ExecutableArtifact {
             &self.source_bundle_digest,
             "source_bundle_digest",
         );
+        if let Some(source_bundle) = &self.source_bundle {
+            match source_bundle.digest() {
+                Ok(actual) if actual == self.source_bundle_digest => {}
+                Ok(actual) => verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    "source_bundle",
+                    format!(
+                        "embedded source bundle matches source_bundle_digest: computed {actual} \
+                         but artifact declares {}",
+                        self.source_bundle_digest
+                    ),
+                )),
+                Err(error) => verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    "source_bundle",
+                    format!("embedded source bundle serializes canonically: {error}"),
+                )),
+            }
+            validate_inline_skill_sources(&mut verdict, source_bundle);
+        }
         if let Some(lineage) = &self.execution_lineage_ref {
             check_digest(&mut verdict, lineage, "execution_lineage_ref");
             let expected = execution_lineage_ref(
@@ -1000,6 +1027,40 @@ fn check_digest(verdict: &mut Verdict, value: &str, location: &str) {
     }
 }
 
+fn validate_inline_skill_sources(verdict: &mut Verdict, source_bundle: &SourceBundle) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut inline_bytes = 0usize;
+    for requirement in &source_bundle.skill_requirements {
+        check_identifier(verdict, &requirement.skill_id, "skill_id");
+        if !seen.insert(requirement.skill_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                requirement.skill_id.clone(),
+                "source bundle declares the same skill_id more than once",
+            ));
+        }
+        if let crate::frontend_graph::SkillInstructionSource::Inline { text } =
+            &requirement.instruction_source
+        {
+            inline_bytes = inline_bytes.saturating_add(text.len());
+            if text.is_empty() || text.len() > crate::frontend_graph::MAX_INSTRUCTION_BYTES {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    requirement.skill_id.clone(),
+                    "an inline skill body is neither empty nor beyond the instruction ceiling",
+                ));
+            }
+        }
+    }
+    if inline_bytes > crate::frontend_graph::MAX_INLINE_SKILL_BYTES {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "source_bundle.skill_requirements",
+            "inline skill bodies do not exceed the aggregate instruction ceiling",
+        ));
+    }
+}
+
 /// Validate an artifact presented as JSON, failing closed on decode errors.
 #[must_use]
 pub fn validate_artifact_json(value: &serde_json::Value) -> Verdict {
@@ -1198,6 +1259,7 @@ mod from_air_tests {
         assert!(is_digest(&artifact.artifact_digest));
         assert!(is_digest(&artifact.air_digest));
         assert!(is_digest(&artifact.source_bundle_digest));
+        assert!(artifact.source_bundle.is_none());
         assert_eq!(artifact.entrypoints.len(), 1);
         assert!(
             artifact.validate().is_accepted(),
@@ -1409,6 +1471,73 @@ mod from_graph_tests {
         assert_eq!(
             artifact.source_bundle_digest,
             bundle.digest().expect("bundle digest")
+        );
+    }
+
+    #[test]
+    fn graph_artifacts_carry_inline_skill_source_and_bind_its_digest() {
+        let mut graph = specialist_graph();
+        graph
+            .skill_requirements
+            .push(crate::frontend_graph::SkillRequirement {
+                skill_id: "review".to_owned(),
+                instruction_source: crate::frontend_graph::SkillInstructionSource::Inline {
+                    text: "Review the submitted change.".to_owned(),
+                },
+            });
+        let artifact = ExecutableArtifact::from_frontend_graph(&graph).expect("artifact");
+        let source_bundle = artifact.source_bundle.as_ref().expect("source bundle");
+        assert_eq!(source_bundle.skill_requirements, graph.skill_requirements);
+        assert_eq!(
+            source_bundle.digest().expect("source bundle digest"),
+            artifact.source_bundle_digest
+        );
+        assert!(
+            ExecutableArtifact::decode_for_execution(
+                &artifact.encode().expect("artifact bytes"),
+                &artifact.artifact_digest,
+            )
+            .is_ok()
+        );
+
+        let mut tampered = artifact.clone();
+        let Some(source_bundle) = tampered.source_bundle.as_mut() else {
+            panic!("source bundle");
+        };
+        let crate::frontend_graph::SkillInstructionSource::Inline { text } =
+            &mut source_bundle.skill_requirements[0].instruction_source
+        else {
+            panic!("inline source");
+        };
+        *text = "Changed instructions.".to_owned();
+        tampered.artifact_digest = tampered.canonical_digest().expect("tampered digest");
+        assert!(
+            !tampered.validate().is_accepted(),
+            "changed inline source must disagree with its source bundle digest"
+        );
+    }
+
+    #[test]
+    fn graph_artifacts_reject_an_oversized_aggregate_of_inline_skill_sources() {
+        let mut graph = specialist_graph();
+        let body = "x".repeat(crate::frontend_graph::MAX_INLINE_SKILL_BYTES / 2 + 1);
+        graph.skill_requirements = vec![
+            crate::frontend_graph::SkillRequirement {
+                skill_id: "first".to_owned(),
+                instruction_source: crate::frontend_graph::SkillInstructionSource::Inline {
+                    text: body.clone(),
+                },
+            },
+            crate::frontend_graph::SkillRequirement {
+                skill_id: "second".to_owned(),
+                instruction_source: crate::frontend_graph::SkillInstructionSource::Inline {
+                    text: body,
+                },
+            },
+        ];
+        assert!(
+            ExecutableArtifact::from_frontend_graph(&graph).is_err(),
+            "inline skill bodies must have an aggregate bound"
         );
     }
 
