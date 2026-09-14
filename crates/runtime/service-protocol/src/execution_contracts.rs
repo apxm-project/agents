@@ -948,6 +948,69 @@ pub struct EvidenceRecord {
     /// failure classification inspectable without exposing the raw fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_error: Option<EvidenceTypedError>,
+    /// The exact non-secret model-attempt fact for an `attempt.recorded`
+    /// evidence row. This is a typed projection of an existing committed
+    /// runtime fact; it carries no prompt, credential, owner claim, or output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_attempt: Option<ModelAttemptEvidence>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelAttemptEvidence {
+    pub fact_id: String,
+    pub event_sequence: u64,
+    pub program_invocation_id: String,
+    pub node_execution_id: String,
+    pub air_node_id: String,
+    pub attempt_id: String,
+    pub attempt_index: u32,
+    pub model_effect_id: String,
+    pub request_digest: String,
+    pub model_target_ref: String,
+    pub model_target_digest: String,
+    pub model_deployment_ref: String,
+    pub exact_port_binding_digest: String,
+    pub target_commitment_digest: String,
+    pub generation_cohort_digest: String,
+    pub target_generation: u64,
+    pub target_port_contract_digest: String,
+    pub target_composition_digest: String,
+    pub native_input_tokens: u64,
+    pub native_output_tokens: u64,
+}
+
+impl ModelAttemptEvidence {
+    fn validate(&self) -> Result<(), ContractValidationError> {
+        for (kind, value) in [
+            ("fact_id", &self.fact_id),
+            ("program_invocation_id", &self.program_invocation_id),
+            ("node_execution_id", &self.node_execution_id),
+            ("air_node_id", &self.air_node_id),
+            ("attempt_id", &self.attempt_id),
+            ("model_effect_id", &self.model_effect_id),
+            ("model_target_ref", &self.model_target_ref),
+            ("model_deployment_ref", &self.model_deployment_ref),
+        ] {
+            if value.is_empty() || value.len() > MAX_REF_BYTES || !is_identifier(value) {
+                return Err(ContractValidationError::InvalidRef { kind });
+            }
+        }
+        for value in [
+            &self.request_digest,
+            &self.model_target_digest,
+            &self.exact_port_binding_digest,
+            &self.target_commitment_digest,
+            &self.generation_cohort_digest,
+            &self.target_port_contract_digest,
+            &self.target_composition_digest,
+        ] {
+            if !is_digest(value) {
+                return Err(ContractValidationError::InvalidDigest);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1016,6 +1079,8 @@ impl EvidenceRecord {
             occurrence_id: &'a Option<OccurrenceId>,
             #[serde(skip_serializing_if = "Option::is_none")]
             typed_error: &'a Option<EvidenceTypedError>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            model_attempt: &'a Option<ModelAttemptEvidence>,
         }
         let envelope = EvidenceEnvelope {
             evidence_ref: &self.evidence_ref,
@@ -1025,6 +1090,7 @@ impl EvidenceRecord {
             node_execution_id: &self.node_execution_id,
             occurrence_id: &self.occurrence_id,
             typed_error: &self.typed_error,
+            model_attempt: &self.model_attempt,
         };
         let bytes = serde_json::to_vec(&envelope).expect("typed evidence envelope serializes");
         let mut hasher = Sha256::new();
@@ -1047,6 +1113,20 @@ impl EvidenceRecord {
                 return Err(ContractValidationError::InvalidReadRequest);
             }
             error.validate()?;
+        }
+        if self.fact_kind == EvidenceFactKind::AttemptRecorded {
+            let Some(attempt) = &self.model_attempt else {
+                return Err(ContractValidationError::InvalidReadRequest);
+            };
+            if attempt.program_invocation_id != self.program_invocation_id.as_str()
+                || self.node_execution_id.as_ref().map(|value| value.as_str())
+                    != Some(attempt.node_execution_id.as_str())
+            {
+                return Err(ContractValidationError::InvalidReadRequest);
+            }
+            attempt.validate()?;
+        } else if self.model_attempt.is_some() {
+            return Err(ContractValidationError::InvalidReadRequest);
         }
         if self.evidence_digest != self.computed_digest() {
             return Err(ContractValidationError::InvalidDigest);
@@ -1618,6 +1698,72 @@ mod tests {
         assert_eq!(status, ProgramInvocationStatus::OutcomeUnknown);
         assert!(serde_json::from_value::<ProgramInvocationStatus>(json!("succeeded")).is_err());
         assert!(serde_json::from_value::<EvidenceFactKind>(json!("made_up")).is_err());
+    }
+
+    fn model_attempt() -> ModelAttemptEvidence {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        ModelAttemptEvidence {
+            fact_id: "fact.invocation.1.1".to_owned(),
+            event_sequence: 1,
+            program_invocation_id: "invocation.1".to_owned(),
+            node_execution_id: "node-execution.1".to_owned(),
+            air_node_id: "node.model".to_owned(),
+            attempt_id: "model-attempt.node-execution.1.0".to_owned(),
+            attempt_index: 0,
+            model_effect_id: "effect.model.1".to_owned(),
+            request_digest: digest.clone(),
+            model_target_ref: "model-target.1".to_owned(),
+            model_target_digest: digest.clone(),
+            model_deployment_ref: "deployment.1".to_owned(),
+            exact_port_binding_digest: digest.clone(),
+            target_commitment_digest: digest.clone(),
+            generation_cohort_digest: digest.clone(),
+            target_generation: 1,
+            target_port_contract_digest: digest.clone(),
+            target_composition_digest: digest,
+            native_input_tokens: 4,
+            native_output_tokens: 5,
+        }
+    }
+
+    #[test]
+    fn evidence_model_attempt_is_typed_digest_bound_and_closed() {
+        let mut record = EvidenceRecord {
+            evidence_ref: EvidenceRef::new("evidence.invocation.1.1").expect("ref"),
+            program_invocation_id: ProgramInvocationId::new("invocation.1").expect("invocation"),
+            sequence: 1,
+            fact_kind: EvidenceFactKind::AttemptRecorded,
+            evidence_digest: String::new(),
+            node_execution_id: Some(NodeExecutionId::new("node-execution.1").expect("node")),
+            occurrence_id: None,
+            typed_error: None,
+            model_attempt: Some(model_attempt()),
+        };
+        record.evidence_digest = record.computed_digest();
+        assert!(record.validate().is_ok());
+        let wire = serde_json::to_value(&record).expect("wire");
+        assert_eq!(wire["model_attempt"]["model_target_ref"], "model-target.1");
+        assert!(!wire.to_string().contains("owner_claim"));
+
+        let mut missing = record.clone();
+        missing.model_attempt = None;
+        missing.evidence_digest = missing.computed_digest();
+        assert_eq!(
+            missing.validate(),
+            Err(ContractValidationError::InvalidReadRequest)
+        );
+
+        let mut forged = record;
+        forged
+            .model_attempt
+            .as_mut()
+            .expect("attempt")
+            .model_target_digest = "sha256:not-a-digest".to_owned();
+        forged.evidence_digest = forged.computed_digest();
+        assert_eq!(
+            forged.validate(),
+            Err(ContractValidationError::InvalidDigest)
+        );
     }
 
     #[test]

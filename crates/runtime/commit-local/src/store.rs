@@ -16,9 +16,9 @@ use apxm_runtime_protocol::execution_contracts::OccurrenceId;
 use apxm_runtime_protocol::{
     Commitment, ContentReadResult, ContentRef, CorrelationId, EvidenceErrorCategory,
     EvidenceFactKind, EvidenceRecord, EvidenceTypedError, ExecutionCursor, ExecutionObservation,
-    ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, NodeExecutionId,
-    ObservationKind, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId, ReadContext,
-    ReadPurpose, SESSION_OUTPUT_REF_CONTRACT, ScopeRef, SessionOutputRef,
+    ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, ModelAttemptEvidence,
+    NodeExecutionId, ObservationKind, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
+    ReadContext, ReadPurpose, SESSION_OUTPUT_REF_CONTRACT, ScopeRef, SessionOutputRef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1415,6 +1415,7 @@ impl CommitLocalStore {
                 node_execution_id,
                 occurrence_id,
                 typed_error: evidence_typed_error(fact),
+                model_attempt: model_attempt_evidence(fact),
             };
             evidence_ref.evidence_digest = evidence_ref.computed_digest();
             evidence_ref
@@ -1959,6 +1960,34 @@ impl CommitLocalStore {
         );
         Ok(())
     }
+}
+
+fn model_attempt_evidence(fact: &Fact) -> Option<ModelAttemptEvidence> {
+    let apxm_program::runtime_evidence::Fact::AttemptRecorded(value) = fact else {
+        return None;
+    };
+    Some(ModelAttemptEvidence {
+        fact_id: value.fact_id.clone(),
+        event_sequence: value.event_sequence,
+        program_invocation_id: value.program_invocation_id.clone(),
+        node_execution_id: value.node_execution_id.clone(),
+        air_node_id: value.air_node_id.clone(),
+        attempt_id: value.attempt_id.clone(),
+        attempt_index: value.attempt_index,
+        model_effect_id: value.model_effect_id.clone(),
+        request_digest: value.request_digest.clone(),
+        model_target_ref: value.model_target_ref.clone(),
+        model_target_digest: value.model_target_digest.clone(),
+        model_deployment_ref: value.model_deployment_ref.clone(),
+        exact_port_binding_digest: value.exact_port_binding_digest.clone(),
+        target_commitment_digest: value.target_commitment_digest.clone(),
+        generation_cohort_digest: value.generation_cohort_digest.clone(),
+        target_generation: value.target_generation,
+        target_port_contract_digest: value.target_port_contract_digest.clone(),
+        target_composition_digest: value.target_composition_digest.clone(),
+        native_input_tokens: value.native_input_tokens,
+        native_output_tokens: value.native_output_tokens,
+    })
 }
 
 fn commit_scope_key(request: &ExecutionCommitRequest) -> String {

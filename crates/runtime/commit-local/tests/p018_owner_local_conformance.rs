@@ -13,8 +13,8 @@ use apxm_kernel::{
     ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef, continuation_digest,
 };
 use apxm_program::runtime_evidence::{
-    Fact, FactKind, LoopIterationCompletedFact, NodeExecutionRecordedFact, NodeExecutionScope,
-    RuntimeFact,
+    Fact, FactKind, LoopIterationCompletedFact, ModelAttemptRecordedFact,
+    NodeExecutionRecordedFact, NodeExecutionScope, RuntimeFact,
 };
 use apxm_program::{common::ErrorCategory, common::TypedErrorEnvelope};
 use apxm_runtime_protocol::{
@@ -1605,6 +1605,73 @@ async fn observation_and_evidence_pages_resume_without_skipping_or_repeating() {
             "evidence.invoke.pages.commit.pages.3",
         ]
     );
+}
+
+#[tokio::test]
+async fn evidence_read_projects_committed_model_attempt_without_private_fields() {
+    let port = InMemoryExecutionCommit::with_read_access_hook(Arc::new(AllowReadAccess));
+    let invocation = "invoke.model";
+    let attempt_digest = digest('a');
+    let attempt = Fact::AttemptRecorded(ModelAttemptRecordedFact {
+        fact_id: "fact.invoke.model.1".into(),
+        event_sequence: 1,
+        program_invocation_id: invocation.into(),
+        node_execution_id: "node.execution".into(),
+        air_node_id: "node.model".into(),
+        attempt_id: "model-attempt.node.execution.0".into(),
+        attempt_index: 0,
+        model_effect_id: "effect.model.1".into(),
+        request_digest: attempt_digest.clone(),
+        model_target_ref: "model-target.1".into(),
+        model_target_digest: attempt_digest.clone(),
+        model_deployment_ref: "deployment.1".into(),
+        exact_port_binding_digest: attempt_digest.clone(),
+        target_commitment_digest: attempt_digest.clone(),
+        generation_cohort_digest: attempt_digest.clone(),
+        target_generation: 1,
+        target_port_contract_digest: attempt_digest.clone(),
+        target_composition_digest: attempt_digest.clone(),
+        native_input_tokens: 4,
+        native_output_tokens: 5,
+    });
+    let mut commit = request("commit.model", "instance.model", 0, None);
+    commit.program_invocation_ref = ProgramInvocationRef::new(invocation);
+    commit.tuple.evidence = vec![attempt.clone()];
+    commit.evidence_batch = vec![attempt];
+    commit.tuple.output_refs.clear();
+    bind_observation_digest(&mut commit);
+    assert!(matches!(
+        port.commit(commit).await,
+        ExecutionCommitResult::Committed { .. }
+    ));
+
+    let result = port
+        .read_execution(ExecutionReadRequest::EvidenceRead {
+            context: read_context(ReadPurpose::Evidence, "scope.model"),
+            program_invocation_id: apxm_runtime_protocol::ProgramInvocationId::new(invocation)
+                .expect("invocation"),
+            after_cursor: None,
+            limit: 10,
+        })
+        .expect("evidence read");
+    let ExecutionReadResult::EvidencePage { page } = result else {
+        panic!("wrong evidence page kind");
+    };
+    let record = &page.items[0];
+    let model = record.model_attempt.as_ref().expect("typed model attempt");
+    assert_eq!(
+        record.fact_kind,
+        apxm_runtime_protocol::EvidenceFactKind::AttemptRecorded
+    );
+    assert_eq!(model.model_target_ref, "model-target.1");
+    assert_eq!(model.model_target_digest, digest('a'));
+    assert_eq!(model.program_invocation_id, invocation);
+    assert!(
+        !serde_json::to_string(record)
+            .expect("record JSON")
+            .contains("owner_claim")
+    );
+    assert!(record.validate().is_ok());
 }
 
 #[tokio::test]

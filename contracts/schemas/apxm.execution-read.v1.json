@@ -209,6 +209,7 @@
         "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
         "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
         "typed_error": { "$ref": "#/$defs/EvidenceTypedError" }
+        ,"model_attempt": { "$ref": "#/$defs/ModelAttemptEvidence" }
       },
       "allOf": [
         {
@@ -220,8 +221,47 @@
               }
             }
           }
+        },
+        {
+          "if": { "properties": { "fact_kind": { "const": "attempt.recorded" } } },
+          "then": { "required": ["model_attempt"] },
+          "else": { "not": { "required": ["model_attempt"] } }
         }
       ],
+      "additionalProperties": false
+    },
+    "ModelAttemptEvidence": {
+      "type": "object",
+      "required": [
+        "fact_id", "event_sequence", "program_invocation_id", "node_execution_id",
+        "air_node_id", "attempt_id", "attempt_index", "model_effect_id", "request_digest",
+        "model_target_ref", "model_target_digest", "model_deployment_ref",
+        "exact_port_binding_digest", "target_commitment_digest", "generation_cohort_digest",
+        "target_generation", "target_port_contract_digest", "target_composition_digest",
+        "native_input_tokens", "native_output_tokens"
+      ],
+      "properties": {
+        "fact_id": { "$ref": "#/$defs/OpaqueRef" },
+        "event_sequence": { "type": "integer", "minimum": 0 },
+        "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+        "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+        "air_node_id": { "$ref": "#/$defs/OpaqueRef" },
+        "attempt_id": { "$ref": "#/$defs/OpaqueRef" },
+        "attempt_index": { "type": "integer", "minimum": 0 },
+        "model_effect_id": { "$ref": "#/$defs/OpaqueRef" },
+        "request_digest": { "$ref": "#/$defs/Digest" },
+        "model_target_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "model_target_digest": { "$ref": "#/$defs/Digest" },
+        "model_deployment_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "exact_port_binding_digest": { "$ref": "#/$defs/Digest" },
+        "target_commitment_digest": { "$ref": "#/$defs/Digest" },
+        "generation_cohort_digest": { "$ref": "#/$defs/Digest" },
+        "target_generation": { "type": "integer", "minimum": 0 },
+        "target_port_contract_digest": { "$ref": "#/$defs/Digest" },
+        "target_composition_digest": { "$ref": "#/$defs/Digest" },
+        "native_input_tokens": { "type": "integer", "minimum": 0 },
+        "native_output_tokens": { "type": "integer", "minimum": 0 }
+      },
       "additionalProperties": false
     },
     "EvidencePage": {

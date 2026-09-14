@@ -28,8 +28,8 @@ pub use execution_contracts::{
     EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceErrorCategory, EvidenceFactKind,
     EvidenceRecord, EvidenceRef, EvidenceTypedError, ExecutionCursor, ExecutionObservation,
     ExecutionPage, ExecutionReadRequest, ExecutionReadResult, GrantRef, HostCapabilityObservation,
-    HostCapabilityOutcomeKind, NODE_EXECUTION_INSPECTION_CONTRACT, NodeExecutionId,
-    NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
+    HostCapabilityOutcomeKind, ModelAttemptEvidence, NODE_EXECUTION_INSPECTION_CONTRACT,
+    NodeExecutionId, NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
     ObservationTiming, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
     ProgramInvocationId, ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef,
     ReadContext, ReadPurpose, RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef,
@@ -69,7 +69,7 @@ pub const EXECUTION_ADMISSION_CONTRACT: &str = "apxm.runtime.execution-admission
 /// silently widened; clients opt into this separately negotiated surface.
 pub const RUNTIME_PROTOCOL_V2_VERSION: &str = "apxm.runtime.protocol/2";
 pub const EXECUTION_READ_SCHEMA_DIGEST: &str =
-    "sha256:18a60760ac119570c3ef0e0facba4b7c8030035bb2a93f38430b128a8f5c375a";
+    "sha256:9efac27f04ec5e68e208aa45b115d973eaee6ef63439b9bd1cd7bde51faf9ece";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
