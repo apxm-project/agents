@@ -106,7 +106,10 @@ fn observation(
         value["output_ref"] = json!(output_ref);
     }
     if let Some(event_ref) = event_ref {
-        value["event_ref"] = json!({"event_ref": event_ref});
+        value["event_ref"] = json!({
+            "event_ref": event_ref,
+            "generation": 1
+        });
     }
     value
 }
@@ -425,7 +428,8 @@ fn observation_event_ref_cannot_cross_commits_or_mutate_the_store() {
     let mut second = request("commit.observation-event-second", "instance.event", 1, None);
     second.tuple.event_wait = Some(json!({
         "continuation_id": "continuation.second",
-        "event_ref": "event.second"
+        "event_ref": "event.second",
+        "generation": 1
     }));
     second.tuple.observations = vec![observation(
         "event_waiting",
@@ -1806,13 +1810,19 @@ async fn node_inspection_is_invocation_bound_and_has_no_synthetic_air_node() {
     let mut waiting = observation_value("invoke.node", 2);
     waiting["node_execution_id"] = json!("node.execution");
     waiting["observation_kind"] = json!("event_waiting");
-    waiting["event_ref"] = json!({"event_ref": "event.node"});
+    waiting["event_ref"] = json!({
+        "event_ref": "event.node",
+        "generation": 1
+    });
     let mut committed = observation_value("invoke.node", 4);
     committed["node_execution_id"] = json!("node.execution");
     committed["observation_kind"] = json!("content_committed");
     committed["commitment"] = json!("committed");
     committed["output_ref"] = json!(prepared.output_ref);
-    commit.tuple.event_wait = Some(json!({"event_ref": "event.node"}));
+    commit.tuple.event_wait = Some(json!({
+        "event_ref": "event.node",
+        "generation": 1
+    }));
     commit.tuple.observations = vec![started, waiting, committed];
     bind_observation_digest(&mut commit);
     assert!(matches!(
