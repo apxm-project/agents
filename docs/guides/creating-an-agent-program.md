@@ -9,7 +9,7 @@
   (`tools/scripts/check_frontend_surface.py`). That gate reads the frontend
   packages and every authoring document, this guide included, so a snippet
   here that imports a name the surface does not publish, or binds a capability
-  reference no catalogue mints, fails CI rather than review.
+  reference no catalogue mints, fails validation rather than review.
 - Implementation contract:
   [Agent Program composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 - Audience: Python and TypeScript authors

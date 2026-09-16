@@ -12,22 +12,16 @@ Skill-authoring conventions live in `.agents/skills/README.md`
 
 ## SSOT
 
-- `.agents/project.md` — the body of every agent config.
+- `AGENTS.md` — the body of every agent config.
 - `.agents/skills/_shared/` — shared rules loaded by skills.
 - `.agents/skills/<name>/SKILL.md` — individual skill files.
 
-Mirrored outputs (no generator exists — update each by hand from
-`.agents/project.md`):
+Generated adapters (synchronized by the workspace agent-skill tooling):
 
-- `AGENTS.md` — canonical portable instructions (Codex CLI per `.agents.json`,
-  Aider, and other `AGENTS.md` readers; also the filename APXM writes for
-  `codex` profile session nodes)
-- `CLAUDE.md` — Claude Code entrypoint (same body as `AGENTS.md` today)
-- `CODEX.md` — duplicate filename for Codex-named workflows; Codex CLI still
-  resolves to `AGENTS.md` in `.agents.json`
-- `.agents.json` (machine-readable manifest)
-- `.cursorrules` (Cursor)
-- `.github/copilot-instructions.md` (GitHub Copilot)
+- `CLAUDE.md`, `CODEX.md`, `.cursorrules`, and
+  `.github/copilot-instructions.md` — thin pointers to `AGENTS.md`
+- `.agents.json` — machine-readable instruction and skill index
+- `.claude/skills` — link to `.agents/skills`
 
 ## MCP
 
@@ -37,11 +31,6 @@ Mirrored outputs (no generator exists — update each by hand from
 - Rust `mcp-server` owns local stdio compile/query tools and outbound bridge
   glue.
 - Register supported clients with `dekk agents mcp install`.
-
-## CI
-
-- `.github/workflows/validate.yml` (PR-2) — validates skills and MCP-surface
-  compile coverage.
 
 ## Related rules
 

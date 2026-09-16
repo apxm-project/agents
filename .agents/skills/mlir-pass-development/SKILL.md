@@ -39,8 +39,8 @@ After editing a pass source (without touching ops or `.td`):
 dekk agents test-compiler
 ```
 
-`dekk agents test -p <crate>` does not scope anything — `test` is a fixed
-command chain ending in pytest. Use the named per-crate recipe.
+There is no bare `dekk agents test -p <crate>` scope. Use the named per-crate
+recipe.
 
 ## Rules
 

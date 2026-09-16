@@ -1,76 +1,77 @@
 {
-  "project": "agents",
-  "source_of_truth": ".agents/",
-  "agent_configs": {
-    "claude": {
-      "instructions": "CLAUDE.md",
-      "skills": ".claude/skills/"
-    },
-    "codex": {
-      "instructions": "AGENTS.md",
-      "skills": "~/.codex/skills/"
-    },
-    "copilot": {
-      "instructions": ".github/copilot-instructions.md",
-      "per_directory": ".github/instructions/"
-    },
-    "cursor": {
-      "instructions": ".cursorrules"
-    }
-  },
+  "schema": "agent-skills.v1",
+  "source_of_truth": [
+    "AGENTS.md",
+    ".agents/skills/"
+  ],
+  "instructions": [
+    "AGENTS.md"
+  ],
   "skills": [
     {
       "name": "ais-op-design",
-      "description": "Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence."
+      "description": "Use before adding or modifying an AIS op in apxm-ais. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence.",
+      "path": ".agents/skills/ais-op-design/SKILL.md"
     },
     {
       "name": "backend-add",
-      "description": "Register a model-inference implementation or exact target binding."
+      "description": "Register a model-inference implementation or exact target binding.",
+      "path": ".agents/skills/backend-add/SKILL.md"
     },
     {
       "name": "commit",
-      "description": "Commit gate \u2014 runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs."
+      "description": "Commit gate — runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs.",
+      "path": ".agents/skills/commit/SKILL.md"
     },
     {
       "name": "compile-and-execute",
-      "description": "Compile canonical Agent Programs and execute admitted AIR through the APXM runtime."
+      "description": "Compile canonical Agent Programs and execute admitted AIR through the APXM runtime.",
+      "path": ".agents/skills/compile-and-execute/SKILL.md"
     },
     {
       "name": "context",
-      "description": "Prime an APXM session before broad work \u2014 runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change."
+      "description": "Prime an APXM session before broad work — runs doctor, reads AGENTS.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change.",
+      "path": ".agents/skills/context/SKILL.md"
     },
     {
       "name": "design-docs",
-      "description": "Use when editing conceptual docs under docs/. Gates two shipped failure modes \u2014 overclaim (present-tense prose about unwired behavior) and citation drift (claims with no anchor to shipped code)."
+      "description": "Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behavior) and citation drift (claims with no anchor to shipped code).",
+      "path": ".agents/skills/design-docs/SKILL.md"
     },
     {
       "name": "execute-plan",
-      "description": "Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan."
+      "description": "Drive a written APXM plan to completion without scope creep. Runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately.",
+      "path": ".agents/skills/execute-plan/SKILL.md"
     },
     {
       "name": "finish",
-      "description": "Pre-claim gate \u2014 runs focused Dekk tests, doctor, secrets, and artifact-placement checks before any claim of completion. Refuses to claim done until all pass."
+      "description": "Pre-claim gate — runs focused Dekk tests, doctor, secrets, and artifact-placement checks before any claim of completion. Refuses to claim done until all pass.",
+      "path": ".agents/skills/finish/SKILL.md"
     },
     {
       "name": "frontend-implementation",
-      "description": "Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR."
+      "description": "Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR.",
+      "path": ".agents/skills/frontend-implementation/SKILL.md"
     },
     {
       "name": "mcp-server",
-      "description": "Use when working on APXM MCP contract constants or local stdio registration."
+      "description": "Use when working on APXM MCP contract constants or local stdio registration.",
+      "path": ".agents/skills/mcp-server/SKILL.md"
     },
     {
       "name": "mlir-pass-development",
-      "description": "Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits."
+      "description": "Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth in apxm-ais, the AIS ownership rule, and the build-dialect + codegen cadence after .td edits.",
+      "path": ".agents/skills/mlir-pass-development/SKILL.md"
     },
     {
       "name": "plan",
-      "description": "Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact)."
+      "description": "Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact).",
+      "path": ".agents/skills/plan/SKILL.md"
     },
     {
       "name": "simplify",
-      "description": "Pre-finish review pass \u2014 remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before finish and any commit."
+      "description": "Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before finish and any commit.",
+      "path": ".agents/skills/simplify/SKILL.md"
     }
-  ],
-  "cli": "dekk agents"
+  ]
 }

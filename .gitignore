@@ -61,7 +61,8 @@ Thumbs.db
 # npm may create a package-local cache when a delegated command supplies a
 # relative cache path. Keep that generated state out of the source checkout.
 **/.npm-cache/
-/.claude/
+/.claude/*
+!/.claude/skills
 /.mcp.json
 /.worktrees/
 

@@ -208,6 +208,12 @@
         "value": { "$ref": "#/$defs/Expression" },
         "left": { "$ref": "#/$defs/Expression" },
         "right": { "$ref": "#/$defs/Expression" },
+        "prompt": { "$ref": "#/$defs/Expression" },
+        "choices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OwnerChoice" }
+        },
+        "expires_in_seconds": { "type": "integer", "minimum": 1 },
         "context": { "type": "string" },
         "program": { "type": "string" },
         "values": { "type": "object" },
@@ -227,10 +233,20 @@
         "if_equals",
         "set_context",
         "yield",
+        "ask_owner",
         "new_program",
         "task_group",
         "shadow_binding"
       ]
+    },
+    "OwnerChoice": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" }
+      }
     },
     "Expression": {
       "type": "object",

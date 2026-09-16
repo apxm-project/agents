@@ -52,10 +52,10 @@ The historical PXM pages remain because they explain the ideas that shaped the
 current machine. They are theory and lineage only; no current implementation
 may depend on their retired operations or runtime state models.
 
-## Verification and CI
+## Verification
 
-Provision the declared toolchain once, then use the same named gates that CI
-uses. `check` includes every generated-metadata arm, including the generated
+Provision the declared toolchain once, then run the named local gates. `check`
+includes every generated-metadata arm, including the generated
 documentation tables, and also runs frontend parity, frontend-surface, and
 workspace type checks. `check-deversion` is the focused guard for Agents-owned
 versioned ids and filenames; foreign-owner contract ids such as
@@ -89,6 +89,6 @@ python -m pytest tools/tests/
 
 When a contract changes, regenerate the checked-in reference tables with
 `dekk agents codegen-docs`; use `dekk agents check` to fail on drift. The
-workflow at [`.github/workflows/agents-gates.yml`](../.github/workflows/agents-gates.yml)
-keeps both the aggregate workspace suite and these frontend/package/compile/
-execute E2E gates required.
+aggregate workspace suite and the frontend/package/compile/execute E2E gates
+are explicit local Dekk commands, so they can be run independently or as a
+complete verification pass.

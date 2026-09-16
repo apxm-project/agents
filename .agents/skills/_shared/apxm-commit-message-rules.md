@@ -74,8 +74,9 @@ Right: `feat(benchmarks): add telecom workload`.
   not by a plan or ticket id.
 - `chore(agents)`: agent-facing contract and generated-instruction
   maintenance.
-- `docs(<scope>)`: when touching `.agents/project.md`, mirror the change into
-  every repo root by hand in the same commit — no command syncs them.
+- `docs(<scope>)`: when touching `AGENTS.md` or `.agents/skills/`, regenerate
+  the local adapters and include the generated index/pointers in the same
+  commit.
 
 ## Enforcement
 

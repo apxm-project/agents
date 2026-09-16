@@ -31,9 +31,8 @@ when writing tests load `_shared/apxm-test-rules.md`.
   building the Rust workspace or running Python frontend tests.
 - Iterating? Prefer the named per-crate recipes (`test-program`,
   `test-kernel`, `test-compiler`, `test-runtime-seams`, …) over
-  `dekk agents test-all`. `dekk agents test -p <crate>` does **not** work:
-  `test` is a fixed command chain ending in `python -m pytest`, so `-p` is read
-  as a pytest plugin name. `dekk agents check` for a fast type-check,
+  `dekk agents test-all`. There is no bare `dekk agents test -p <crate>` scope;
+  use a named `test-*` recipe. Run `dekk agents check` for a fast type-check,
   `dekk agents fmt` to format, `dekk agents clippy` to lint (deny-warnings).
 - Pre-PR? `dekk agents test-all` + `dekk agents test-cli` (CLI requires the
   MLIR-linked binary, hence the separate command).

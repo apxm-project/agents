@@ -1,7 +1,7 @@
 ---
 name: execute-plan
 group: Lifecycle
-description: Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan.
+description: Drive a written APXM plan to completion without scope creep. Runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately.
 user-invocable: true
 ---
 
@@ -10,16 +10,17 @@ user-invocable: true
 Load `_shared/apxm-development-rules.md` before broad work (it points at
 the comment and test rules).
 
-Execute against an approved plan with disciplined progress and no scope
-creep. Invoke only after `plan` and an explicit user approval.
+Execute against a written plan with disciplined progress and no scope creep.
+Use the authorization already established for the task; ask only when scope
+or an irreversible external action is genuinely unclear.
 
 ## What this skill does
 
 1. **Restate the plan's phase boundaries** at the start. Be explicit
    about what each phase produces and where it ends.
-2. **Track phases with the current harness's task tracker**.
-   Mark each `in_progress` when starting and `completed` as soon as
-   done — do not batch.
+2. **Keep phase progress explicit** in the task update or handoff.
+   State each phase's verification result as soon as it is complete; do not
+   batch unrelated work into one completion claim.
 3. **After each phase, run focused verification** from the plan's
    "Verification per phase" section. Do not run the full workspace
    when a per-crate check suffices.
@@ -37,18 +38,17 @@ creep. Invoke only after `plan` and an explicit user approval.
 ## Per-phase rhythm
 
 ```
-1. Mark task in_progress.
+1. State the phase and its expected output.
 2. Read the relevant file(s).
 3. Make the edit.
 4. Run the phase's verification command.
-5. If green: mark completed, mark next task in_progress, repeat.
-6. If red: stop, summarize, ask for guidance.
+5. If green: report the result and continue; if red, stop and summarize.
 ```
 
 Use the smallest correct command:
 
 - Touched a `crates/<x>` source? Run that crate's named `test-*` recipe
-  (`dekk agents --help`); `dekk agents test -p <x>` does not scope anything.
+  (`dekk agents --help`); there is no bare `test -p <x>` scope.
 - Touched the CLI? `dekk agents test-cli`.
 - Touched Python frontend? `dekk agents test-python-frontend`.
 - Touched `.td`? `build-dialect && codegen` *then* the test commands.

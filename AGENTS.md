@@ -1,23 +1,13 @@
 # agents — agent-facing project memory
 
-The `.agents/` tree is the single source of truth (SSOT) for every coding
-agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
-Gemini, etc.).
-
-The repo-root instruction files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
-`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`) mirror this
-file plus the skill table under `.agents/skills/`. **No command generates
-them.** There is no `dekk agents skills generate`; the roots are maintained by
-hand. Edit `.agents/project.md` first, then copy the change into every root
-yourself, keeping the bodies identical. `dekk agents check-agent-skills`
-validates the skill directories but does not write the roots.
-
-**Which file for which tool:** `CLAUDE.md` is the Claude Code entrypoint.
-`AGENTS.md` is the canonical portable instructions file (Codex CLI uses it
-per `.agents.json`; ACP session output for the `codex` profile also writes
-`AGENTS.md` into per-node dirs). `CODEX.md` duplicates the `AGENTS.md` body for
-workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
-GitHub Copilot reads `.github/copilot-instructions.md`.
+`AGENTS.md` is the canonical portable instruction source for this repository.
+Generated adapters are deliberately thin: `CLAUDE.md`, `CODEX.md`,
+`.cursorrules`, and `.github/copilot-instructions.md` point back to this file;
+`.agents.json` indexes the source and skills; `.claude/skills` points to
+`.agents/skills`. Update `AGENTS.md` and the skills under `.agents/` first, then
+regenerate or validate the adapters with the workspace agent-skill tooling.
+Do not create a second instruction source or copy product-specific vocabulary
+into this product-neutral repository.
 
 ## 1. What agents is
 
@@ -54,11 +44,9 @@ Command groups (see `dekk agents --help` for the live list):
 `dekk agents --help` is the only live list; this one drifts.
 
 Most `dekk agents` recipes are fixed command chains with no argument
-placeholder, so an appended flag lands on whatever binary runs last. In
-particular `dekk agents test -p <crate>` does **not** scope the test run: `test`
-ends in `python -m pytest`, so `-p apxm-core` is read as a pytest plugin name.
-Use the per-crate recipes instead (`test-program`, `test-kernel`,
-`test-compiler`, `test-runtime-seams`, …).
+placeholder. A bare `dekk agents test -p <crate>` is not a supported scoped
+command; use the named per-surface recipes instead (`test-program`,
+`test-kernel`, `test-compiler`, `test-runtime-seams`, …).
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
@@ -69,25 +57,24 @@ lifecycle tool family.
 
 ## 3. Lifecycle workflow
 
-Every non-trivial session ceremonially routes through 6 lifecycle skills.
-They are thin orchestrators (≤100 lines each) — they do not contain rule
-content themselves; they point at `_shared/` rules.
+Use the lifecycle skills when the task scope warrants them. They are thin
+orchestrators (≤100 lines each) — they do not contain rule content themselves;
+they point at `_shared/` rules.
 
 1. **`context`** — prime the session: `dekk agents doctor`,
-   read `.agents/project.md`, pull the relevant `_shared/` rule, recall
+   read `AGENTS.md`, pull the relevant `_shared/` rule, recall
    memory, confirm subsystem ownership. Run before any work touching >1
    file.
 2. **`plan`** — write a plan before implementing. Required
    for changes that touch >3 files, modify a public API/AIS op, introduce
    a claim, or need GPU allocation.
-3. **`execute-plan`** — drive an approved plan to
-   completion with the current harness task tracker, focused per-phase
-   verification, no scope creep.
+3. **`execute-plan`** — drive a written plan to completion with focused
+   per-phase verification and no scope creep.
 4. **`simplify`** — remove copied `_shared/` text, weak
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
-5. **`finish`** — pre-claim gate: run focused
-   `dekk agents test`, `dekk agents doctor`, secrets scan,
+5. **`finish`** — pre-claim gate: run the focused
+   `test-*` recipe, `dekk agents doctor`, secrets scan,
    artifact-placement check. Refuse to claim "done" until all pass.
 6. **`commit`** — commit/push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
@@ -141,7 +128,7 @@ dekk agents doctor                # always run on session start
 dekk agents build                 # build of apxm-cli (driver+metrics)
 dekk agents build-dialect         # rebuild MLIR after .td or C++ shim edits
 dekk agents codegen               # regen Python frontend bindings after .td edits
-dekk agents test                  # workspace tests (excluding compiler+cli)
+dekk agents test-all              # full workspace tests (requires MLIR)
 dekk agents test-cli              # cli-only (preserves MLIR-linked binary)
 dekk agents test-python-frontend  # pytest the Python frontend
 ```
@@ -294,35 +281,3 @@ keep code, schemas, and evidence aligned.
 Read the relevant doc, recall memory, and ask. The cost of one
 clarifying question is far smaller than the cost of an unintended
 push, an overwritten branch, or a tainted benchmark.
-
-<!-- BEGIN SKILLS INVENTORY -->
-## Available Skills
-
-### Other
-
-| Skill | Description | Path |
-| --- | --- | --- |
-| `ais-op-design` | Use before adding or modifying an AIS op in apxm-ais. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence. | `.agents/skills/ais-op-design/SKILL.md` |
-| `backend-add` | Register a model-inference implementation or exact target binding. | `.agents/skills/backend-add/SKILL.md` |
-| `commit` | Commit gate — runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs. | `.agents/skills/commit/SKILL.md` |
-| `compile-and-execute` | Compile canonical Agent Programs and execute admitted AIR through the APXM runtime. | `.agents/skills/compile-and-execute/SKILL.md` |
-| `context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/context/SKILL.md` |
-| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behavior) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
-| `execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan. | `.agents/skills/execute-plan/SKILL.md` |
-| `finish` | Pre-claim gate — runs focused Dekk tests, doctor, secrets, and artifact-placement checks before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/finish/SKILL.md` |
-| `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
-| `mcp-server` | Use when working on APXM MCP contract constants or local stdio registration. | `.agents/skills/mcp-server/SKILL.md` |
-| `mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth in apxm-ais, the AIS ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/mlir-pass-development/SKILL.md` |
-| `plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/plan/SKILL.md` |
-| `simplify` | Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before finish and any commit. | `.agents/skills/simplify/SKILL.md` |
-
-<!-- END SKILLS INVENTORY -->
-
-## Repository-specific notes
-
-This repository owns the APXM compiler and runtime source used by the pinned cohort.
-
-- Run `dekk check` before edits and `dekk test` before handoff.
-- Preserve the published Unix JSONL contracts, release manifest, and source attestation.
-- Keep compiler and runtime implementation details behind their owner protocols.
-- Keep credentials, generated state, and build output private and untracked.

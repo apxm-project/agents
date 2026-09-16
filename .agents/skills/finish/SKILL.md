@@ -19,7 +19,7 @@ Run these in order. If any fail, do **not** claim completion:
 1. **Run `simplify` first** if not already.
 2. **Focused tests for touched crates**:
    - the named `test-*` recipe per crate that changed (`dekk agents --help`);
-     `dekk agents test -p <crate>` does not scope anything.
+     there is no bare `test -p <crate>` scope.
    - `dekk agents test-cli` if `crates/tools/cli/` changed.
    - `dekk agents test-python-frontend` if
      `crates/compiler/frontend/python/` changed.
@@ -27,10 +27,10 @@ Run these in order. If any fail, do **not** claim completion:
    stale MLIR.
 4. **Commit-message lint** for any queued commits:
    `dekk agents commit-lint --range origin/main..HEAD`.
-5. **Skills check** if anything under `.agents/` changed:
-   `dekk agents check-agent-skills`. If `.agents/project.md` changed, also
-   confirm by hand that every repo root carries the same edit — no command
-   syncs them.
+5. **Skills and adapter check** if anything under `.agents/` or `AGENTS.md`
+   changed: run `dekk agents check-agent-skills`, then run the workspace
+   agent-skill check for this checkout so pointers and `.agents.json` are
+   current.
 6. **`git status --short`** and **`git diff --stat`**. Read every
    line. Nothing should be unexpected.
 7. **Secrets scan** if settings/env/deploy files changed:

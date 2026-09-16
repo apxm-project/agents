@@ -10,8 +10,8 @@ other crate in the workspace depends on it.
 This provisions the same conda prefix with that MLIR half removed: Python,
 Node, uv, pytest and git only. Rust comes from the host toolchain the way it
 does for the full environment. What it provisions is exactly what
-`dekk agents check-service` needs, which is why the service CI job calls this
-and never calls `setup`.
+`dekk agents check-service` needs, which is why the service-only gate calls
+this and never calls `setup`.
 
 The package set is not a second list: it is `[environment.packages]` minus
 `MLIR_ONLY_PACKAGES`, so a package added to `.dekk.toml` reaches both
@@ -43,7 +43,7 @@ MLIR_ONLY_PACKAGES: frozenset[str] = frozenset(
 )
 
 #: conda front-ends in preference order. `micromamba` and `mamba` solve the
-#: service set in well under a minute; `conda` is the fallback CI already has.
+#: service set in well under a minute; `conda` is the available fallback.
 CONDA_EXECUTABLES: tuple[str, ...] = ("micromamba", "mamba", "conda")
 
 

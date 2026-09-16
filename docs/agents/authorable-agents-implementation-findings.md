@@ -86,11 +86,11 @@ metadata, Hook `PrepareSearchContext` and `RecordSearchContext` bindings, Hook
 body operations, and permission requests. Canonical execution committed with
 `executed_nodes=3`, `failed_nodes=0`, status `completed`.
 
-## CI coverage closure
+## Verification coverage
 
-The workflow now makes each closure class visible as a required step:
+The local Dekk surface makes each closure class independently runnable:
 
-| Closure class | Workflow gates |
+| Closure class | Local commands |
 | --- | --- |
 | Generated/docs/de-versioning | `check`, `check-frontend-surface`, `check-deversion`, `check-agent-skills` |
 | Build and aggregate tests | `build`, `test`, `test-all`, `test-compiler`, `test-cli` |

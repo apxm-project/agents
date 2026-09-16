@@ -33,9 +33,9 @@ local scope do not require this skill.
    scope creep during execution.
 5. **State a rollback plan** — branch name, what's reversible, what's
    not (e.g. codegen output, manifests committed mid-flight).
-6. **Get user sign-off** — use the harness's plan-approval surface
-   (Claude Code: `ExitPlanMode`) or an explicit confirmation from the
-   user in conversation. Do not proceed without it.
+6. **Record the plan** in the task update or handoff before implementation.
+   Existing task authorization is sufficient; ask only if the requested
+   scope or an irreversible external action is genuinely unclear.
 
 ## Plan template
 
@@ -78,5 +78,5 @@ local scope do not require this skill.
 
 ## Next step
 
-Once the user signs off, invoke `execute-plan`. Do not begin
-implementation before approval.
+Once the plan is recorded, invoke `execute-plan` when the change needs phased
+work. Do not add another approval step to already-authorized work.

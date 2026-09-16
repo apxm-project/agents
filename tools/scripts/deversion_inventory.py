@@ -3,7 +3,7 @@
 
 The de-versioning sweep drops the `.vN` suffix from every id Agents owns. It must
 NOT touch ids owned by another party: renaming those breaks a cross-owner contract
-and violates the product-neutrality boundary in `.agents/project.md` §1.
+and violates the product-neutrality boundary in `AGENTS.md` §1.
 
 This module is the single source of truth for that split. The sweep reads it, and
 the consistency gate reads it, so "which ids are ours" cannot drift between the

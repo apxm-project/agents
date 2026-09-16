@@ -1,7 +1,7 @@
 ---
 name: context
 group: Lifecycle
-description: Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change.
+description: Prime an APXM session before broad work — runs doctor, reads AGENTS.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change.
 user-invocable: true
 ---
 
@@ -21,7 +21,7 @@ for typo fixes or single-line edits.
    `dekk agents ops list`. Confirms what's actually defined in
    `crates/machine/ais/` rather than what you remember.
 3. **Read project memory**:
-   - `.agents/project.md` — the SSOT.
+   - `AGENTS.md` — the SSOT.
    - The closest relevant `_shared/` rule(s):
      - Code edits → `_shared/apxm-development-rules.md`
      - Touching `~/.apxm/config.toml`, HF cache, zoo manifests, build

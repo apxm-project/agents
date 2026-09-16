@@ -28,10 +28,10 @@ the schedule builtin: "Removal lands only after the Server-owned managed
 schedule surface exists."
 
 That product has been removed from scope. Recon across code, ADRs, and
-`.agents/project.md` found no live "Server" counterparty anywhere in this
+`AGENTS.md` found no live "Server" counterparty anywhere in this
 repository or its adjacent workspace documentation. Naming it in an accepted
 ADR is no longer a description of a real boundary; it is dead product residue
-of the kind `.agents/project.md §1` forbids Agents from depending on. Worse,
+of the kind `AGENTS.md §1` forbids Agents from depending on. Worse,
 ADR-0019's precondition as written is now permanently unsatisfiable: it gates
 a deletion on the existence of a surface owned by a product that will never
 exist, which would block that lane's removal forever if read literally.
@@ -108,7 +108,7 @@ ADR-amendment convention and erases the historical record of what was
 decided when.
 
 **Leave the product name in place as harmless documentation residue.**
-Rejected. `.agents/project.md §1` forbids Agents from depending on a
+Rejected. `AGENTS.md §1` forbids Agents from depending on a
 downstream product's identifiers, and an accepted ADR is normative text, not
 incidental commentary; leaving it also leaves ADR-0019's removal gate
 permanently unsatisfiable.

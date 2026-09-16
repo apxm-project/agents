@@ -48,7 +48,8 @@ dekk agents check
 dekk agents test-frontend-examples
 ```
 
-Agent instructions come from `.agents/project.md`. No command generates the
-repo-root mirrors (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.cursorrules`,
-`.github/copilot-instructions.md`) — edit `.agents/project.md` first, then copy
-the change into each root by hand, keeping the bodies identical.
+Agent instructions come from `AGENTS.md`. The workspace agent-skill tooling
+generates and checks the thin root adapters (`CLAUDE.md`, `CODEX.md`,
+`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`, and
+`.claude/skills`) without writing global agent configuration. Edit `AGENTS.md`
+and `.agents/skills/` first, then run the adapter check for this checkout.

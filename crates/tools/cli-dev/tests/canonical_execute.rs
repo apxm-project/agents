@@ -18,14 +18,20 @@ fn fixture(name: &str) -> PathBuf {
 
 fn command(release: &std::path::Path) -> Command {
     let mut command = apxm_dev_bin::command();
+    command.current_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .expect("repository root"),
+    );
     command.args([
         "--json",
         "execute-canonical",
-        fixture("canonical-execute.air.json")
+        fixture("canonical-execute-cli.air.json")
             .to_str()
             .expect("AIR fixture path"),
         "--invocation-admission",
-        fixture("canonical-execute.invocation-admission.json")
+        fixture("canonical-execute-cli.invocation-admission.json")
             .to_str()
             .expect("admission fixture path"),
         "--release",
@@ -39,7 +45,7 @@ fn command(release: &std::path::Path) -> Command {
 }
 
 #[test]
-fn exact_invocation_admission_executes_the_canonical_fixture() {
+fn exact_invocation_admission_executes_the_supported_cli_fixture() {
     let output = command(&fixture("canonical-execute.release.json"))
         .output()
         .expect("execute canonical CLI");
@@ -50,7 +56,7 @@ fn exact_invocation_admission_executes_the_canonical_fixture() {
     );
     let result: Value = serde_json::from_slice(&output.stdout).expect("canonical result JSON");
     assert_eq!(
-        result, "fixture.instance",
+        result, "5",
         "the command returns the typed committed Session Output content"
     );
 }

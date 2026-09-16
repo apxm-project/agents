@@ -2,8 +2,8 @@
 """`dekk agents check-frontend-parity` — canonical frontend parity/drift gate.
 
 Runs every check the canonical frontend parity invariant names so
-FrontendGraph/AIR drift between Rust, Python, and TypeScript fails CI, not just
-local runs:
+FrontendGraph/AIR drift between Rust, Python, and TypeScript fails the parity
+check in both local and externally orchestrated runs:
 
 1. Test the packed Python frontend in a clean consumer.
 2. Test the packed TypeScript frontend in a clean consumer.

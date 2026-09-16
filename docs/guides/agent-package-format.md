@@ -467,7 +467,7 @@ the whole-repo gate: it builds the CLI once and runs `agent lint` +
 `examples/agents/skilled`, the canonical-session fixture under
 `crates/compiler/frontend/python/tests_program/fixtures/`, and the Python
 handler fixture under `tools/tests/fixtures/`), so a package edited without a
-rebuild fails CI the same way it fails locally. The package rebuild command,
+rebuild fails in automation the same way it fails locally. The package rebuild command,
 `dekk agents build-agent-packages`, runs the same five packages through
 `agent build` instead, to regenerate every `integrity.toml` at once.
 

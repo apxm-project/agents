@@ -9,8 +9,8 @@ projection suites, both authoring frontends and the qualification tooling build
 and test on a toolchain that carries Rust, Python and Node and nothing else —
 no MLIR, no LLVM, no libclang, no CMake, no Ninja.
 
-This runs exactly that set. It is the whole content of the service CI job, and
-it is what `install-service` provisions for. The MLIR job keeps `test-all`,
+This runs exactly that set. It is the complete service-only gate, and it is
+what `install-service` provisions for. The MLIR-dependent path keeps `test-all`,
 `test-compiler` and `build-dialect`, which are the only gates that need the
 dialect.
 
@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="STEP",
         help=(
-            "omit one step; the push half of CI omits commit-lint, whose only "
+            "omit one step; a caller using a commit range may omit commit-lint, whose only "
             "remedy on a published branch would be a rewrite"
         ),
     )

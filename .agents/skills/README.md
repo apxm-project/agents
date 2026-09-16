@@ -6,25 +6,24 @@ that points at one or more shared rules in `_shared/`.
 
 ## Source of truth
 
-- `.agents/project.md` — the SSOT body. Edit there.
+- `AGENTS.md` — the SSOT body. Edit there.
 - `.agents/skills/_shared/*.md` — shared rules loaded by skills.
 - `.agents/skills/<name>/SKILL.md` — individual skills.
 
-The repo-root files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
-`.cursorrules`, `.github/copilot-instructions.md`) mirror `.agents/project.md`
-plus the skill table. **No command generates them** — there is no
-`dekk agents skills generate`. Edit `.agents/project.md`, then copy the change
-into each root by hand and keep the bodies identical. Today
-`AGENTS.md` and `CODEX.md` share the same body; Codex CLI is configured on
-`AGENTS.md` in `.agents.json` (see `.agents/domains/meta/README.md`).
+The repo-root adapters (`CLAUDE.md`, `CODEX.md`, `.cursorrules`,
+`.github/copilot-instructions.md`, `.agents.json`, and `.claude/skills`) are
+generated or validated from `AGENTS.md` and `.agents/skills/` by the workspace
+agent-skill tooling. Edit the sources first; never maintain a second copy of
+the instruction body. Codex CLI reads `AGENTS.md` directly (see
+`.agents/domains/meta/README.md`).
 
 ## Lifecycle skills (the workflow backbone)
 
-Run in order for any non-trivial session:
+Use the lifecycle skills when their scope applies:
 
 1. `context` — prime the session.
 2. `plan` — design before implementing.
-3. `execute-plan` — execute the approved plan.
+3. `execute-plan` — execute the written plan.
 4. `simplify` — remove avoidable complexity.
 5. `finish` — pre-claim gate (tests, doctor, secrets, artifacts).
 6. `commit` — commit/push gate; push to `main` only with
@@ -80,5 +79,6 @@ Steps:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the convention above.
 2. `dekk agents check-agent-skills` — validate the skill directory.
-3. Add the skill by hand to the "Available Skills" table in each repo root.
-4. Commit the skill and the root updates together.
+3. Run the workspace agent-skill sync/check for this checkout so generated
+   adapters and the skill index stay aligned.
+4. Commit the skill and the source instruction change together.

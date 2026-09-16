@@ -104,9 +104,9 @@ dekk agents check-deversion
 dekk agents check-agent-skills
 ```
 
-For a CI-equivalent local pass, add `dekk agents build`, `dekk agents test`,
+For a complete local verification pass, add `dekk agents build`, `dekk agents test`,
 and `dekk agents test-all`, then run the focused shipping-path checks listed in
-the [verification runbook](../README.md#verification-and-ci).
+the [verification runbook](../README.md#verification).
 
 The frontend captures source intent; Rust selects and verifies AIR/AIS; an
 admitted runtime executes the artifact. This keeps source readable without

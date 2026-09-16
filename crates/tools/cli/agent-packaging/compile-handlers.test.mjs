@@ -24,7 +24,8 @@ const schema = JSON.parse(
   ),
 );
 // `apxm.contract-common.v1` is owned by the coordinating APXM workspace, so a
-// standalone `agents` clone (and CI, which checks out `workspace/agents` alone)
+// standalone `agents` clone (and a clean checkout, which may not have
+// `workspace/runtime/apxm/agents` alone)
 // has no copy. The handler manifest schema only reaches into it for
 // `Identifier`, so vendor that one definition and keep the gate running; the
 // workspace copy wins whenever it is present.
