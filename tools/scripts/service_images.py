@@ -41,6 +41,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from release_qualification import _discover_shipped_schemas
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 SOURCE_DESCRIPTOR_REL = Path("deploy/services/source-revision.v1.json")
@@ -297,6 +299,12 @@ def _candidate_descriptors(snapshot: Path, revision: str) -> None:
     manifest = _load_json(snapshot / RELEASE_MANIFEST_REL)
     manifest["source_revision"] = revision
     manifest["owner_descriptor_digest"] = owner_digest
+    # An unpublished candidate binds its actual snapshot contracts, including
+    # schema changes that have not entered a published release cohort.
+    manifest["schemas"] = [
+        {"name": name, "path": relative.as_posix(), "digest": _digest_file(snapshot / relative)}
+        for name, relative in _discover_shipped_schemas(snapshot)
+    ]
     (snapshot / RELEASE_MANIFEST_REL).write_bytes(_canonical_json(manifest))
 
 

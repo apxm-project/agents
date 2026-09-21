@@ -68,7 +68,8 @@ The command freezes tracked and nonignored source beneath
 `.apxm/service-image-candidates/`, records each path, file mode and content
 hash, and builds both services from that one snapshot. Absolute and escaping
 source symlinks are refused. Input and build-tree digests are separate because
-only the snapshot's source/owner descriptors are rebased to the real Git HEAD;
+the snapshot's source/owner descriptors are rebased to the real Git HEAD and
+its manifest records the actual snapshot schema digests;
 the working checkout and its release descriptors are untouched. In a candidate,
 `source_revision` identifies that base commit, while `source_tree_digest`
 identifies the exact source bytes. It does not claim the edits were committed.

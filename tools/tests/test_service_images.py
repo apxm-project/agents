@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 from unittest import mock
 import tomllib
@@ -61,7 +62,8 @@ def instructions(text: str) -> list[str]:
 class ServiceImageContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.images = load_module(SERVICE_IMAGES_PATH, "service_images")
+        with mock.patch.object(sys, "path", [str(SERVICE_IMAGES_PATH.parent), *sys.path]):
+            cls.images = load_module(SERVICE_IMAGES_PATH, "service_images")
         with DEKK_MANIFEST_PATH.open("rb") as handle:
             cls.manifest = tomllib.load(handle)
         cls.dockerfiles = {
@@ -75,6 +77,9 @@ class ServiceImageContractTests(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((REPOSITORY_ROOT / relative).read_bytes())
+        schema = root / "contracts/schemas/apxm.frontend-conformance.json"
+        schema.parent.mkdir(parents=True, exist_ok=True)
+        schema.write_text('{"changed":true}\n', encoding="utf-8")
         (root / "driver.rs").write_text("changed driver\n", encoding="utf-8")
         paths = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
         def run(command, **kwargs):
@@ -106,6 +111,43 @@ class ServiceImageContractTests(unittest.TestCase):
             (root / "driver.rs").write_text("later edit\n", encoding="utf-8")
             self.assertEqual((snapshot / "driver.rs").read_text(), "changed driver\n")
             self.assertNotEqual(provenance["input_tree_digest"], provenance["source_tree_digest"])
+
+    def test_candidate_rehashes_changed_schema_without_rewriting_release_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = self.candidate_fixture(root)
+            manifest_path = root / self.images.RELEASE_MANIFEST_REL
+            original = manifest_path.read_bytes()
+            with mock.patch.object(self.images, "_run", side_effect=run):
+                output, provenance = self.images.snapshot_candidate(root)
+            snapshot = output / "source"
+            candidate = json.loads((snapshot / self.images.RELEASE_MANIFEST_REL).read_bytes())
+            relative = "contracts/schemas/apxm.frontend-conformance.json"
+            self.assertEqual(candidate["schemas"], [{"name": "apxm.frontend-conformance",
+                "path": relative, "digest": self.images._digest_file(snapshot / relative)}])
+            self.assertEqual(manifest_path.read_bytes(), original)
+            original_value = json.loads(original)
+            for key in original_value.keys() - {"source_revision", "owner_descriptor_digest", "schemas"}:
+                self.assertEqual(candidate[key], original_value[key])
+            self.assertFalse(provenance["published"])
+
+    def test_normal_image_descriptors_still_refuse_changed_schema(self):
+        owner = sys.modules["release_qualification"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.candidate_fixture(root)
+            relatives = (owner.SOURCE_DESCRIPTOR_REL, owner.OWNER_DESCRIPTOR_REL,
+                         owner.OWNER_DESCRIPTOR_SIDECAR_REL, owner.RELEASE_MANIFEST_REL)
+            documents = {relative: (root / relative).read_bytes() for relative in relatives}
+            manifest = json.loads(documents[owner.RELEASE_MANIFEST_REL])
+            manifest["schemas"][0]["digest"] = "sha256:" + "f" * 64
+            documents[owner.RELEASE_MANIFEST_REL] = self.images._canonical_json(manifest)
+            with mock.patch.object(owner, "build_release_documents", return_value=documents):
+                with self.assertRaisesRegex(ValueError, "schema digests do not match"):
+                    owner.generate_image_descriptors(root, compilation_service_path="unused",
+                        runtime_service_path="unused", output_dir=root / "out",
+                        source_revision="a" * 40)
+            self.assertFalse((root / "out").exists())
 
     def test_candidate_builds_one_snapshot_with_distinct_tags_and_provenance(self):
         with tempfile.TemporaryDirectory() as temporary:
