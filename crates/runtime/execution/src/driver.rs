@@ -1327,6 +1327,23 @@ struct CanonicalModelRequestEnvelope<'a> {
     authored_request: &'a Value,
 }
 
+/// Bind branch visits without exceeding the identifier limit for nested loops.
+fn branch_occurrence_identity(
+    invocation: &str,
+    iteration: &str,
+    branch: &str,
+    arm: usize,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"apxm.branch-occurrence\0");
+    for coordinate in [invocation, iteration, branch] {
+        hasher.update(coordinate.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(arm.to_string().as_bytes());
+    format!("branch-occurrence.{:x}", hasher.finalize())
+}
+
 fn model_effect_identity(program_invocation_id: &str, node_execution_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"apxm.model-effect\0");
@@ -2194,12 +2211,11 @@ async fn drive_from(
                         frame.dynamic_occurrence_id, frame.iteration_index
                     )
                 });
-                let occurrence_id = format!(
-                    "branch-occurrence.{}.{}.{}.{}",
-                    state.program_invocation_id,
+                let occurrence_id = branch_occurrence_identity(
+                    &state.program_invocation_id,
                     iteration_occurrence_id.as_deref().unwrap_or("root"),
                     static_branch_id,
-                    selected
+                    selected,
                 );
                 state.observe(
                     ports,
@@ -2255,12 +2271,11 @@ async fn drive_from(
                     .branch_decisions
                     .get(static_branch_id)
                     .map(|selected| {
-                        format!(
-                            "branch-occurrence.{}.{}.{}.{}",
-                            state.program_invocation_id,
+                        branch_occurrence_identity(
+                            &state.program_invocation_id,
                             iteration_occurrence_id.as_deref().unwrap_or("root"),
                             static_branch_id,
-                            selected
+                            *selected,
                         )
                     });
                 state.observe(
@@ -5858,6 +5873,33 @@ mod loop_evidence_tests {
                 edge_spans: Vec::new(),
             },
         }
+    }
+
+    #[test]
+    fn branch_occurrences_admit_long_coordinates_and_distinguish_each_visit() {
+        let invocation = "i".repeat(256);
+        let iteration = "r".repeat(256);
+        let branch = "b".repeat(256);
+        let identity = branch_occurrence_identity(&invocation, &iteration, &branch, 0);
+        assert!(
+            apxm_runtime_protocol::execution_contracts::OccurrenceId::new(identity.clone()).is_ok()
+        );
+        assert_eq!(
+            identity,
+            branch_occurrence_identity(&invocation, &iteration, &branch, 0)
+        );
+        for other in [
+            branch_occurrence_identity("other", &iteration, &branch, 0),
+            branch_occurrence_identity(&invocation, "other", &branch, 0),
+            branch_occurrence_identity(&invocation, &iteration, "other", 0),
+            branch_occurrence_identity(&invocation, &iteration, &branch, 1),
+        ] {
+            assert_ne!(identity, other);
+        }
+        assert_ne!(
+            branch_occurrence_identity("a.b", "c", "d", 0),
+            branch_occurrence_identity("a", "b.c", "d", 0)
+        );
     }
 
     #[test]
