@@ -30,8 +30,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -69,6 +71,11 @@ SERVICE_DIGEST_LABEL = "io.apxm.service-digest"
 RELEASE_MANIFEST_DIGEST_LABEL = "io.apxm.release-manifest-digest"
 FRONTEND_NATIVE_DIGEST_LABEL = "io.apxm.python-frontend-native-digest"
 REVISION_LABEL = "org.opencontainers.image.revision"
+CANDIDATE_LABEL = "io.apxm.candidate"
+TREE_DIGEST_LABEL = "io.apxm.source-tree-digest"
+PROVENANCE_DIGEST_LABEL = "io.apxm.source-provenance-digest"
+CANDIDATE_SCHEMA = "apxm.agents.service-images-candidate.v1"
+OWNER_SIDECAR_REL = OWNER_DESCRIPTOR_REL.with_suffix(".sha256")
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DEFAULT_PLATFORM = "linux/arm64"
@@ -156,12 +163,15 @@ def build_service_image(
     platform: str,
     prefix: str,
     no_cache: bool = False,
+    tag_suffix: str | None = None,
+    labels: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build one service image and return the cohort values it was stamped with."""
 
     spec = SERVICES[service]
-    tag = _tag(prefix, service, revision)
-    release_tag = f"{prefix}/{service}-release:{revision[:8]}"
+    suffix = tag_suffix or revision[:8]
+    tag = f"{prefix}/{service}:{suffix}"
+    release_tag = f"{prefix}/{service}-release:{suffix}"
     common = [
         "docker",
         "build",
@@ -174,8 +184,10 @@ def build_service_image(
     ]
     if no_cache:
         common.append("--no-cache")
+    for key, value in sorted((labels or {}).items()):
+        common.extend(["--label", f"{key}={value}"])
 
-    _run([*common, "--target", "release", "--tag", release_tag, "."])
+    _run([*common, "--target", "release", "--tag", release_tag, "."], cwd=root)
     descriptors = json.loads(
         _run(
             ["docker", "run", "--rm", "--platform", platform, release_tag,
@@ -201,7 +213,7 @@ def build_service_image(
     ]
     if service == "compilation-service":
         arguments += ["--build-arg", f"APXM_PYTHON_FRONTEND_NATIVE_DIGEST={frontend_digest}"]
-    _run([*common, *arguments, "--tag", tag, "."])
+    _run([*common, *arguments, "--tag", tag, "."], cwd=root)
     return {
         "service": service,
         "tag": tag,
@@ -239,6 +251,165 @@ def build_images(
     }
 
 
+def _canonical_json(value: Any) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _source_paths(root: Path) -> list[str]:
+    paths = _run(
+        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        capture=True,
+    ).split("\0")
+    return sorted({name for name in paths if name and ((root / name).exists() or (root / name).is_symlink())})
+
+
+def _tree_manifest(root: Path, paths: list[str] | None = None) -> list[dict[str, Any]]:
+    if paths is None:
+        paths = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if not path.is_dir() or path.is_symlink())
+    manifest = []
+    for name in paths:
+        path = root / name
+        mode = path.lstat().st_mode
+        if path.is_symlink():
+            target = os.readlink(path)
+            if Path(target).is_absolute() or not path.resolve().is_relative_to(root.resolve()):
+                raise ImageError(f"candidate source symlink escapes its snapshot: {name}")
+            manifest.append({"path": name, "kind": "symlink", "target": target})
+        elif stat.S_ISREG(mode):
+            manifest.append({"path": name, "kind": "file", "mode": stat.S_IMODE(mode), "digest": _digest_file(path)})
+        else:
+            raise ImageError(f"candidate source is not a regular file or internal symlink: {name}")
+    return manifest
+
+
+def _candidate_descriptors(snapshot: Path, revision: str) -> None:
+    source = _load_json(snapshot / SOURCE_DESCRIPTOR_REL)
+    source["source_revision"] = revision
+    source_bytes = _canonical_json(source)
+    (snapshot / SOURCE_DESCRIPTOR_REL).write_bytes(source_bytes)
+    owner = _load_json(snapshot / OWNER_DESCRIPTOR_REL)
+    owner["source_revision"] = revision
+    owner["source_descriptor_digest"] = _digest_bytes(source_bytes)
+    owner_bytes = _canonical_json(owner)
+    (snapshot / OWNER_DESCRIPTOR_REL).write_bytes(owner_bytes)
+    owner_digest = _digest_bytes(owner_bytes)
+    (snapshot / OWNER_SIDECAR_REL).write_text(f"{owner_digest}  {OWNER_DESCRIPTOR_REL.as_posix()}\n", encoding="utf-8")
+    manifest = _load_json(snapshot / RELEASE_MANIFEST_REL)
+    manifest["source_revision"] = revision
+    manifest["owner_descriptor_digest"] = owner_digest
+    (snapshot / RELEASE_MANIFEST_REL).write_bytes(_canonical_json(manifest))
+
+
+def snapshot_candidate(root: Path) -> tuple[Path, dict[str, Any]]:
+    """Freeze tracked and nonignored source; record both input and build trees."""
+    revision = _run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).strip()
+    if not HEX40.fullmatch(revision):
+        raise ImageError("candidate base HEAD must be a real full Git revision")
+    status = _run(["git", "-C", str(root), "status", "--porcelain"], capture=True)
+    paths = _source_paths(root)
+    original = _tree_manifest(root, paths)
+    parent = root / ".apxm" / "service-image-candidates"
+    parent.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix=f"{revision[:8]}-", dir=parent))
+    snapshot = output / "source"
+    snapshot.mkdir()
+    for name in paths:
+        source, destination = root / name, snapshot / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_symlink():
+            destination.symlink_to(os.readlink(source))
+        else:
+            shutil.copy2(source, destination)
+    if (_tree_manifest(snapshot) != original or _tree_manifest(root, _source_paths(root)) != original
+            or _run(["git", "-C", str(root), "rev-parse", "HEAD"], capture=True).strip() != revision):
+        raise ImageError(f"source changed while freezing candidate; refusing snapshot {snapshot}")
+    _candidate_descriptors(snapshot, revision)
+    build_tree = _tree_manifest(snapshot)
+    provenance = {
+        "schema": "apxm.agents.candidate-source.v1",
+        "semantic_owner": "agents",
+        "base_revision": revision,
+        "dirty": bool(status.strip()),
+        "published": False,
+        "source_selection": "tracked-and-nonignored-working-tree",
+        "input_tree_digest": _digest_bytes(_canonical_json(original)),
+        "source_tree_digest": _digest_bytes(_canonical_json(build_tree)),
+        "input_files": original,
+        "build_files": build_tree,
+        "descriptor_revision_semantics": "base-git-revision; exact candidate source identified by source_tree_digest",
+    }
+    (output / "source-provenance.json").write_bytes(_canonical_json(provenance))
+    return output, provenance
+
+
+def build_candidate_images(root: Path, *, platform: str, prefix: str, services: tuple[str, ...], no_cache: bool = False) -> dict[str, Any]:
+    output, provenance = snapshot_candidate(root)
+    snapshot = output / "source"
+    revision = provenance["base_revision"]
+    tree_digest = provenance["source_tree_digest"]
+    labels = {
+        CANDIDATE_LABEL: "true", TREE_DIGEST_LABEL: tree_digest,
+        PROVENANCE_DIGEST_LABEL: _digest_bytes(_canonical_json(provenance)),
+        "io.apxm.source-dirty": str(provenance["dirty"]).lower(),
+        "io.apxm.published": "false",
+    }
+    images = []
+    for service in services:
+        if _tree_manifest(snapshot) != provenance["build_files"]:
+            raise ImageError("candidate snapshot changed before image build")
+        images.append(build_service_image(snapshot, service, revision=revision, platform=platform,
+            prefix=prefix, no_cache=no_cache, tag_suffix=f"candidate-{revision[:8]}-{tree_digest[7:19]}", labels=labels))
+    if _tree_manifest(snapshot) != provenance["build_files"]:
+        raise ImageError("candidate snapshot changed during image build")
+    payload = {"schema": CANDIDATE_SCHEMA, "semantic_owner": "agents", "published": False,
+        "source": provenance, "source_provenance_digest": labels[PROVENANCE_DIGEST_LABEL],
+        "snapshot_path": str(snapshot), "platform": platform, "images": images,
+        "receipt_path": str(output / "candidate.json")}
+    (output / "candidate.json").write_bytes(_canonical_json(payload))
+    return payload
+
+
+def verify_candidate_images(root: Path, receipt: Path) -> dict[str, Any]:
+    receipt = receipt.resolve()
+    parent = (root / ".apxm" / "service-image-candidates").resolve()
+    if not receipt.is_relative_to(parent):
+        raise ImageError("candidate receipt must be inside the owner's .apxm/service-image-candidates")
+    candidate = _load_json(receipt)
+    if candidate.get("schema") != CANDIDATE_SCHEMA or candidate.get("published") is not False:
+        raise ImageError("not an unpromoted candidate receipt")
+    snapshot = receipt.parent / "source"
+    provenance = _load_json(receipt.parent / "source-provenance.json")
+    provenance_digest = _digest_bytes(_canonical_json(provenance))
+    if (candidate.get("source") != provenance or candidate.get("source_provenance_digest") != provenance_digest
+            or provenance.get("published") is not False or _tree_manifest(snapshot) != provenance.get("build_files")
+            or _digest_bytes(_canonical_json(provenance["build_files"])) != provenance.get("source_tree_digest")):
+        raise ImageError("candidate source provenance or frozen snapshot changed")
+    images = []
+    for image in candidate["images"]:
+        tag, service = image["tag"], image["service"]
+        labels = (_inspect(tag).get("Config") or {}).get("Labels") or {}
+        expected = {CANDIDATE_LABEL: "true", TREE_DIGEST_LABEL: provenance["source_tree_digest"],
+            PROVENANCE_DIGEST_LABEL: provenance_digest, "io.apxm.published": "false",
+            "io.apxm.source-dirty": str(provenance["dirty"]).lower()}
+        if any(labels.get(key) != value for key, value in expected.items()):
+            raise ImageError(f"candidate provenance labels disagree for {tag}")
+        result = verify_service_image(snapshot, service, tag, allow_candidate=True)
+        pinned_fields = ("source_revision", "service_digest", "release_manifest_digest", "owner_descriptor_digest")
+        if service == "compilation-service":
+            pinned_fields += ("frontend_native_digest",)
+        if any(result.get(key) != image.get(key) for key in pinned_fields):
+            result["qualified"] = False
+            result["diagnostics"].append({"code": "candidate-build-result-mismatch", "message": "image bytes differ from the recorded candidate build"})
+        if result["platform"] != candidate["platform"]:
+            result["qualified"] = False
+            result["diagnostics"].append({"code": "candidate-platform-mismatch", "message": "image platform differs from candidate receipt"})
+        images.append(result)
+    return {"schema": "apxm.agents.service-images-verification.v1", "semantic_owner": "agents",
+        "qualification_scope": "local-unpromoted-candidate", "published": False,
+        "source_revision": provenance["base_revision"], "source_tree_digest": provenance["source_tree_digest"],
+        "qualified": bool(images) and all(image["qualified"] for image in images), "images": images}
+
+
 def _inspect(tag: str) -> dict[str, Any]:
     document = json.loads(_run(["docker", "image", "inspect", tag], capture=True))
     if not document:
@@ -258,7 +429,7 @@ def _extract(tag: str, members: dict[str, Path]) -> None:
         _run(["docker", "rm", "--force", container], capture=True)
 
 
-def verify_service_image(root: Path, service: str, tag: str) -> dict[str, Any]:
+def verify_service_image(root: Path, service: str, tag: str, *, allow_candidate: bool = False) -> dict[str, Any]:
     """Verify one image's labels, manifest and bytes from the consumer side."""
 
     spec = SERVICES[service]
@@ -269,6 +440,8 @@ def verify_service_image(root: Path, service: str, tag: str) -> dict[str, Any]:
 
     inspected = _inspect(tag)
     labels = (inspected.get("Config") or {}).get("Labels") or {}
+    if labels.get(CANDIDATE_LABEL) == "true" and not allow_candidate:
+        raise ImageError("candidate images require explicit candidate-provenance verification")
     image_platform = f"{inspected.get('Os')}/{inspected.get('Architecture')}"
 
     with tempfile.TemporaryDirectory() as temporary:
@@ -383,6 +556,7 @@ def verify_service_image(root: Path, service: str, tag: str) -> dict[str, Any]:
         "service": service,
         "tag": tag,
         "platform": image_platform,
+        "image_id": inspected.get("Id"),
         "qualified": not diagnostics,
         "labels": {
             key: labels.get(key)
@@ -393,6 +567,11 @@ def verify_service_image(root: Path, service: str, tag: str) -> dict[str, Any]:
                 RELEASE_MANIFEST_DIGEST_LABEL,
                 FRONTEND_NATIVE_DIGEST_LABEL,
                 "io.apxm.base-image",
+                CANDIDATE_LABEL,
+                TREE_DIGEST_LABEL,
+                PROVENANCE_DIGEST_LABEL,
+                "io.apxm.source-dirty",
+                "io.apxm.published",
             )
             if labels.get(key) is not None
         },
@@ -432,10 +611,12 @@ def main(argv: list[str] | None = None) -> int:
     build_parser.add_argument("--repository-prefix", default=DEFAULT_REPOSITORY_PREFIX)
     build_parser.add_argument("--service", choices=tuple(SERVICES), action="append")
     build_parser.add_argument("--no-cache", action="store_true")
+    build_parser.add_argument("--candidate", action="store_true", help="build an unpublished working-tree snapshot with exact source provenance")
 
     verify_parser = subparsers.add_parser("verify", help="verify both service images as a consumer")
     verify_parser.add_argument("--repository-prefix", default=DEFAULT_REPOSITORY_PREFIX)
     verify_parser.add_argument("--service", choices=tuple(SERVICES), action="append")
+    verify_parser.add_argument("--candidate-provenance", type=Path, help="verify an unpublished candidate receipt and its frozen source snapshot")
 
     args = parser.parse_args(argv)
     if shutil.which("docker") is None:
@@ -446,7 +627,8 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         if args.mode == "build":
-            payload = build_images(
+            builder = build_candidate_images if args.candidate else build_images
+            payload = builder(
                 root,
                 platform=args.platform,
                 prefix=args.repository_prefix,
@@ -454,7 +636,8 @@ def main(argv: list[str] | None = None) -> int:
                 no_cache=args.no_cache,
             )
         else:
-            payload = verify_images(root, prefix=args.repository_prefix, services=services)
+            payload = (verify_candidate_images(root, args.candidate_provenance) if args.candidate_provenance
+                else verify_images(root, prefix=args.repository_prefix, services=services))
     except (ImageError, OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         print(f"service images {args.mode} failed: {exc}", file=sys.stderr)
         return 1
