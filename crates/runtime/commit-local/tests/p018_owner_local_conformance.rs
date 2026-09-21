@@ -1867,6 +1867,219 @@ async fn node_inspection_is_invocation_bound_and_has_no_synthetic_air_node() {
     );
 }
 
+fn host_capability_projection_commits(
+    outcome: &str,
+) -> (ExecutionCommitRequest, ExecutionCommitRequest) {
+    let invocation = "invoke.host-projection";
+    let mut requested = observation_value(invocation, 1);
+    requested["observation_kind"] = json!("capability_requested");
+    requested["node_execution_id"] = json!("node.host");
+    requested["host_capability"] = json!({
+        "capability_request_id": "request.host", "capability_ref": "host:notes.read",
+        "input": "{}", "authored_permission": "allow"
+    });
+    let mut settled = observation_value(invocation, 2);
+    settled["observation_kind"] = json!("capability_settled");
+    settled["node_execution_id"] = json!("node.host");
+    settled["host_capability"] = json!({
+        "capability_request_id": "request.host", "capability_ref": "host:notes.read",
+        "outcome": outcome, "receipt_ref": "receipt.host"
+    });
+    let mut later = observation_value(invocation, 3);
+    later["observation_kind"] = json!("node_started");
+    later["node_execution_id"] = json!("node.later");
+    let mut commits = Vec::new();
+    for (index, node, observations) in [
+        (0, "host", vec![requested]),
+        (1, "later", vec![settled, later]),
+    ] {
+        let mut commit = request(
+            &format!("commit.host.{index}"),
+            "instance.host",
+            index,
+            Some(json!({"pc": index + 1})),
+        );
+        commit.program_invocation_ref = ProgramInvocationRef::new(invocation);
+        commit.tuple.output_refs.clear();
+        let fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
+            fact_id: format!("fact.{invocation}.{index}"),
+            event_sequence: index + 1,
+            program_invocation_id: invocation.into(),
+            node_execution_id: format!("node.{node}"),
+            air_node_id: format!("air.{node}"),
+            parent_node_execution_id: None,
+            execution_scope: NodeExecutionScope::NonLoop,
+        });
+        commit.tuple.evidence = vec![fact.clone()];
+        commit.evidence_batch = vec![fact];
+        commit.tuple.observations = observations;
+        if index == 0 {
+            commit.tuple.event_wait = Some(json!({"event_ref":"request.host", "generation":1}));
+        }
+        bind_observation_digest(&mut commit);
+        commits.push(commit);
+    }
+    (commits.remove(0), commits.remove(0))
+}
+
+fn host_node_read(node: &str) -> ExecutionReadRequest {
+    ExecutionReadRequest::ProgramInvocationInspect {
+        context: read_context(ReadPurpose::Inspection, "scope.host"),
+        program_invocation_id: apxm_runtime_protocol::ProgramInvocationId::new(
+            "invoke.host-projection",
+        )
+        .unwrap(),
+        node_execution_id: Some(apxm_runtime_protocol::NodeExecutionId::new(node).unwrap()),
+    }
+}
+
+fn inspected_status(result: ExecutionReadResult) -> apxm_runtime_protocol::NodeExecutionStatus {
+    let ExecutionReadResult::NodeExecutionInspection { inspection } = result else {
+        panic!("node inspection expected")
+    };
+    assert_eq!(
+        inspection.commitment,
+        apxm_runtime_protocol::Commitment::Committed
+    );
+    inspection.status
+}
+
+#[tokio::test]
+async fn host_capability_node_projection_is_durable_exact_and_survives_reopen() {
+    use apxm_runtime_protocol::NodeExecutionStatus::{
+        Failed, Running, Succeeded, Unknown, Waiting,
+    };
+    for (outcome, expected) in [
+        ("ok", Succeeded),
+        ("denied", Failed),
+        ("failed", Failed),
+        ("unknown", Unknown),
+        ("cancelled", Unknown),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let port = FilesystemExecutionCommit::open_with_read_access_hook(
+            directory.path(),
+            Arc::new(AllowReadAccess),
+        )
+        .unwrap();
+        let (park, settle) = host_capability_projection_commits(outcome);
+        assert!(matches!(
+            port.commit(park).await,
+            ExecutionCommitResult::Committed { .. }
+        ));
+        assert_eq!(
+            inspected_status(port.read_execution(host_node_read("node.host")).unwrap()),
+            Waiting
+        );
+        let live = vec![serde_json::from_value(settle.tuple.observations[0].clone()).unwrap()];
+        assert_eq!(
+            inspected_status(
+                port.read_execution_with_live(host_node_read("node.host"), &live)
+                    .unwrap()
+            ),
+            Waiting,
+            "a live provisional settlement must not change committed inspection"
+        );
+        assert!(matches!(
+            port.commit(settle).await,
+            ExecutionCommitResult::Committed { .. }
+        ));
+        assert_eq!(
+            inspected_status(port.read_execution(host_node_read("node.host")).unwrap()),
+            expected
+        );
+        assert_eq!(
+            inspected_status(port.read_execution(host_node_read("node.later")).unwrap()),
+            Running
+        );
+        drop(port);
+        let reopened = FilesystemExecutionCommit::open_with_read_access_hook(
+            directory.path(),
+            Arc::new(AllowReadAccess),
+        )
+        .unwrap();
+        assert_eq!(
+            inspected_status(
+                reopened
+                    .read_execution(host_node_read("node.host"))
+                    .unwrap()
+            ),
+            expected
+        );
+        assert_eq!(
+            inspected_status(
+                reopened
+                    .read_execution(host_node_read("node.later"))
+                    .unwrap()
+            ),
+            Running
+        );
+    }
+}
+
+#[test]
+fn retained_settlement_repairs_a_legacy_running_node_index_without_crossing_identity() {
+    use apxm_runtime_protocol::NodeExecutionStatus::{Running, Succeeded, Waiting};
+    let (park, settle) = host_capability_projection_commits("ok");
+    let mut store = CommitLocalStore::new();
+    store.commit(&park).unwrap();
+    store.commit(&settle).unwrap();
+    for node in store.node_executions.values_mut() {
+        node.status = Running;
+    }
+    let restored: CommitLocalStore =
+        serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+    assert_eq!(
+        inspected_status(
+            restored
+                .read_execution(host_node_read("node.host"), &[7; 32], &AllowReadAccess)
+                .unwrap()
+        ),
+        Succeeded
+    );
+    assert_eq!(
+        inspected_status(
+            restored
+                .read_execution(host_node_read("node.later"), &[7; 32], &AllowReadAccess)
+                .unwrap()
+        ),
+        Running
+    );
+    let mut terminal = restored.clone();
+    terminal
+        .node_executions
+        .get_mut("invoke.host-projection:node.host")
+        .unwrap()
+        .status = apxm_runtime_protocol::NodeExecutionStatus::Failed;
+    assert_eq!(
+        inspected_status(
+            terminal
+                .read_execution(host_node_read("node.host"), &[7; 32], &AllowReadAccess)
+                .unwrap()
+        ),
+        apxm_runtime_protocol::NodeExecutionStatus::Failed,
+        "retained settlement must not overwrite an existing terminal error"
+    );
+    let mut missing = restored.clone();
+    missing
+        .observations
+        .get_mut("invoke.host-projection")
+        .unwrap()
+        .retain(|observation| {
+            observation.observation_kind
+                != apxm_runtime_protocol::ObservationKind::CapabilitySettled
+        });
+    assert_eq!(
+        inspected_status(
+            missing
+                .read_execution(host_node_read("node.host"), &[7; 32], &AllowReadAccess)
+                .unwrap()
+        ),
+        Waiting,
+        "without retained settlement a legacy index cannot fabricate success"
+    );
+}
+
 #[tokio::test]
 async fn tuple_size_bound_fails_closed() {
     let port = InMemoryExecutionCommit::new();

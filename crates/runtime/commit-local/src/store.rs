@@ -1071,15 +1071,36 @@ impl CommitLocalStore {
                         program_invocation_id.as_str(),
                         node_execution_id.as_str()
                     );
-                    let node = self.node_executions.get(&node_key).ok_or_else(|| {
-                        CommitLocalError::InvalidRead("node execution not found".into())
-                    })?;
+                    let mut node =
+                        self.node_executions
+                            .get(&node_key)
+                            .cloned()
+                            .ok_or_else(|| {
+                                CommitLocalError::InvalidRead("node execution not found".into())
+                            })?;
                     if node.program_invocation_id != program_invocation_id
                         || node.node_execution_id != node_execution_id
                     {
                         return Err(CommitLocalError::InvalidRead(
                             "node execution is not part of the invocation".into(),
                         ));
+                    }
+                    // Older checkpoints may contain a Running index for a settled host
+                    // node. Repair only from retained observations in committed tuples;
+                    // their telemetry commitment can still be Provisional. Live overlays
+                    // are deliberately excluded from this authoritative inspection.
+                    if let Some(observations) =
+                        self.observations.get(program_invocation_id.as_str())
+                    {
+                        for observation in observations {
+                            if observation.program_invocation_id == program_invocation_id
+                                && observation.node_execution_id.as_ref()
+                                    == Some(&node_execution_id)
+                                && let Some(status) = host_capability_node_status(observation)
+                            {
+                                node.status = fold_node_status(node.status, status);
+                            }
+                        }
                     }
                     node.validate()
                         .map_err(|error| CommitLocalError::InvalidRead(error.to_string()))?;
@@ -1096,9 +1117,7 @@ impl CommitLocalStore {
                             "node execution references do not belong to the invocation".into(),
                         ));
                     }
-                    return Ok(ExecutionReadResult::NodeExecutionInspection {
-                        inspection: node.clone(),
-                    });
+                    return Ok(ExecutionReadResult::NodeExecutionInspection { inspection: node });
                 }
                 Ok(ExecutionReadResult::ProgramInvocationInspection { inspection })
             }
@@ -1870,6 +1889,9 @@ impl CommitLocalStore {
         {
             inspection.evidence_refs.push(evidence_ref);
         }
+        if let Some(status) = host_capability_node_status(observation) {
+            inspection.status = fold_node_status(inspection.status, status);
+        }
         match observation.observation_kind {
             ObservationKind::NodeStarted
             | ObservationKind::ModelAttempt
@@ -2060,6 +2082,29 @@ fn fact_is_explicit_invocation_resolution(fact: &Fact) -> bool {
             )
         ),
         _ => false,
+    }
+}
+
+// Called only for observations retained by a committed tuple. The host outcome
+// mapping mirrors execution: cancellation leaves the effect outcome unknown.
+fn host_capability_node_status(
+    observation: &ExecutionObservation,
+) -> Option<apxm_runtime_protocol::NodeExecutionStatus> {
+    use apxm_runtime_protocol::{HostCapabilityOutcomeKind, NodeExecutionStatus};
+    match observation.observation_kind {
+        ObservationKind::CapabilityRequested => Some(NodeExecutionStatus::Waiting),
+        ObservationKind::CapabilitySettled => {
+            match observation.host_capability.as_ref()?.outcome? {
+                HostCapabilityOutcomeKind::Ok => Some(NodeExecutionStatus::Succeeded),
+                HostCapabilityOutcomeKind::Denied | HostCapabilityOutcomeKind::Failed => {
+                    Some(NodeExecutionStatus::Failed)
+                }
+                HostCapabilityOutcomeKind::Unknown | HostCapabilityOutcomeKind::Cancelled => {
+                    Some(NodeExecutionStatus::Unknown)
+                }
+            }
+        }
+        _ => None,
     }
 }
 

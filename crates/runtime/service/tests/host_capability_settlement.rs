@@ -1617,6 +1617,94 @@ fn published_request(parked: &mut Parked) -> (String, String) {
 }
 
 #[test]
+fn host_capability_node_inspection_settles_while_the_next_node_waits() {
+    use apxm_runtime_protocol::{NodeExecutionId, NodeExecutionInspection, NodeExecutionStatus};
+    fn inspect(
+        service: &mut RuntimeService,
+        invocation: &str,
+        node: &NodeExecutionId,
+    ) -> NodeExecutionInspection {
+        let result = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: ReadContext {
+                        request_id: RequestId::new("read.host.node").unwrap(),
+                        scope_ref: ScopeRef::new("scope.host-capability").unwrap(),
+                        principal_ref: PrincipalRef::new("principal.host-capability").unwrap(),
+                        grant_ref: GrantRef::new("grant.host-capability").unwrap(),
+                        correlation_id: None,
+                        purpose: ReadPurpose::Inspection,
+                    },
+                    program_invocation_id: ProgramInvocationId::new(invocation).unwrap(),
+                    node_execution_id: Some(node.clone()),
+                },
+            )
+            .unwrap();
+        let RuntimeResultV2::NodeExecutionInspection { inspection, .. } = result else {
+            panic!("expected node inspection: {result:?}")
+        };
+        assert_eq!(&inspection.node_execution_id, node);
+        inspection
+    }
+    let mut parked = start_fixture("invocation.host.node-inspection");
+    let invocation = parked.invocation.clone();
+    let stream = observations(&mut parked.service, &invocation);
+    let first = of_kind(&stream, ObservationKind::CapabilityRequested)[0]
+        .node_execution_id
+        .clone()
+        .unwrap();
+    assert_eq!(
+        inspect(&mut parked.service, &invocation, &first).status,
+        NodeExecutionStatus::Waiting
+    );
+    let (request, _) = published_request(&mut parked);
+    assert!(matches!(
+        fulfill(
+            &mut parked,
+            "settle.node.first",
+            &request,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"matches\":2}")
+        ),
+        RuntimeResult::CapabilitySettled { .. }
+    ));
+    let stream = observations(&mut parked.service, &invocation);
+    let second = of_kind(&stream, ObservationKind::CapabilityRequested)[1]
+        .node_execution_id
+        .clone()
+        .unwrap();
+    assert_ne!(first, second);
+    assert_eq!(
+        inspect(&mut parked.service, &invocation, &first).status,
+        NodeExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        inspect(&mut parked.service, &invocation, &second).status,
+        NodeExecutionStatus::Waiting
+    );
+    let (request, _) = published_request(&mut parked);
+    assert!(matches!(
+        fulfill(
+            &mut parked,
+            "settle.node.second",
+            &request,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"appended\":true}")
+        ),
+        RuntimeResult::CapabilitySettled { .. }
+    ));
+    assert_eq!(
+        inspect(&mut parked.service, &invocation, &first).status,
+        NodeExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        inspect(&mut parked.service, &invocation, &second).status,
+        NodeExecutionStatus::Succeeded
+    );
+}
+
+#[test]
 fn a_host_reference_publishes_a_request_and_parks_the_invocation() {
     let mut parked = start_fixture("invocation.host.request");
     let invocation = parked.invocation.clone();
