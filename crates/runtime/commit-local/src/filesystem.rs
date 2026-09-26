@@ -346,10 +346,10 @@ fn load_or_create_auth_key(root: &Path) -> Result<[u8; 32], CommitLocalError> {
         .write(true)
         .open(&path)
         .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    restrict_permissions(&file)?;
     file.write_all(&key)
         .and_then(|()| file.sync_all())
         .map_err(|e| CommitLocalError::Io(e.to_string()))?;
-    restrict_permissions(&file)?;
     Ok(key)
 }
 
