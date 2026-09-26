@@ -5,6 +5,7 @@
 //! Program Instance, and Program Invocation.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use apxm_kernel::{
     CommittedContinuation, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
@@ -660,7 +661,7 @@ pub struct CommitLocalStore {
     /// service. It is authenticated and atomically persisted with the
     /// execution record, but the commit adapter never interprets its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_metadata: Option<Value>,
+    runtime_metadata: Option<Arc<Value>>,
 }
 
 impl CommitLocalStore {
@@ -689,17 +690,20 @@ impl CommitLocalStore {
     /// authority to interpret it.
     #[must_use]
     pub fn runtime_metadata(&self) -> Option<Value> {
-        self.runtime_metadata.clone()
+        self.runtime_metadata.as_deref().cloned()
     }
 
     /// Replace opaque composition metadata in the staged store.
     pub fn set_runtime_metadata(&mut self, metadata: Option<Value>) {
-        self.runtime_metadata = metadata;
+        self.runtime_metadata = metadata.map(Arc::new);
     }
 
     /// Swap opaque metadata while the filesystem owner holds its exclusive
     /// store lock. The previous value can be restored if persistence refuses.
-    pub(crate) fn replace_runtime_metadata(&mut self, metadata: Option<Value>) -> Option<Value> {
+    pub(crate) fn replace_runtime_metadata(
+        &mut self,
+        metadata: Option<Arc<Value>>,
+    ) -> Option<Arc<Value>> {
         std::mem::replace(&mut self.runtime_metadata, metadata)
     }
 
@@ -2063,6 +2067,70 @@ impl CommitLocalStore {
             },
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod runtime_metadata_sharing_tests {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Serialize};
+    use serde_json::{Value, json};
+
+    use super::CommitLocalStore;
+
+    #[test]
+    fn staged_clone_shares_opaque_metadata_but_mutations_are_independent() {
+        let mut original = CommitLocalStore::new();
+        original.set_runtime_metadata(Some(json!({"nested": {"value": "original"}})));
+        let mut staged = original.clone();
+        assert!(Arc::ptr_eq(
+            original.runtime_metadata.as_ref().unwrap(),
+            staged.runtime_metadata.as_ref().unwrap()
+        ));
+
+        staged.set_runtime_metadata(Some(json!({"nested": {"value": "staged"}})));
+        assert_eq!(
+            original.runtime_metadata(),
+            Some(json!({"nested": {"value": "original"}}))
+        );
+        assert_eq!(
+            staged.runtime_metadata(),
+            Some(json!({"nested": {"value": "staged"}}))
+        );
+
+        let mut returned = original.runtime_metadata().unwrap();
+        returned["nested"]["value"] = json!("caller mutation");
+        assert_eq!(
+            original.runtime_metadata(),
+            Some(json!({"nested": {"value": "original"}}))
+        );
+    }
+
+    #[test]
+    fn opaque_metadata_json_matches_owned_value_for_none_null_and_object() {
+        #[derive(Serialize, Deserialize)]
+        struct LegacyMetadata {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            runtime_metadata: Option<Value>,
+        }
+
+        for metadata in [None, Some(Value::Null), Some(json!({"value": [1, 2]}))] {
+            let mut store = CommitLocalStore::new();
+            store.set_runtime_metadata(metadata.clone());
+            let encoded = serde_json::to_value(&store).unwrap();
+            let legacy_encoded = serde_json::to_value(LegacyMetadata {
+                runtime_metadata: metadata,
+            })
+            .unwrap();
+            assert_eq!(
+                encoded.get("runtime_metadata"),
+                legacy_encoded.get("runtime_metadata")
+            );
+            let decoded: CommitLocalStore = serde_json::from_value(encoded).unwrap();
+            let legacy_decoded: LegacyMetadata = serde_json::from_value(legacy_encoded).unwrap();
+            assert_eq!(decoded.runtime_metadata(), legacy_decoded.runtime_metadata);
+        }
     }
 }
 

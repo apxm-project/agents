@@ -223,7 +223,7 @@ impl FilesystemExecutionCommit {
     /// store. The adapter does not inspect or interpret the JSON value.
     pub fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), CommitLocalError> {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
-        let previous = guard.replace_runtime_metadata(metadata);
+        let previous = guard.replace_runtime_metadata(metadata.map(Arc::new));
         if let Err(error) = persist(&self.root, &guard, &self.auth_key) {
             guard.replace_runtime_metadata(previous);
             return Err(error);
