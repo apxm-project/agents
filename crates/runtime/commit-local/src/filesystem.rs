@@ -738,6 +738,19 @@ mod compact_store_tests {
     };
     use serde_json::json;
 
+    #[test]
+    fn sha256_and_multipart_hmac_match_independent_known_vectors() {
+        assert_eq!(
+            format!("{:x}", Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let key = [0x0b_u8; 32];
+        let expected =
+            "hmac-sha256:198a607eb44bfbc69903a0f1cf2bbdc5ba0aa3f3d9ae3c1c7a3b1696a0b68cf7";
+        assert_eq!(keyed_digest_parts(&key, &[b"Hi ", b"There"]), expected);
+        assert_eq!(keyed_digest(&key, b"Hi There"), expected);
+    }
+
     fn digest(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
     }
