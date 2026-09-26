@@ -307,6 +307,45 @@ describe("language-local TypeScript frontend facts", () => {
     expect(() => capturedInputContract("{ reference: string }", "", body)).toThrow(CaptureError);
   });
 
+  it("locates a capture error at the innermost construct it rejected", () => {
+    const text = [
+      'import { Workflow } from "@apxm/frontend";',
+      "const Located = Workflow<{ reference: string }, unknown>({",
+      '  name: "Located",',
+      "  async run(agent, input) {",
+      "    const mapped = input;",
+      "    input.reference = 'changed';",
+      "    return mapped;",
+      "  },",
+      "});",
+      "",
+    ].join("\n");
+    let rejected: unknown;
+    try {
+      captureProgram({
+        programId: "Located",
+        entrypoint: "Located",
+        declared: [],
+        source: { fileName: "located.ts", text },
+      });
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toBeInstanceOf(CaptureError);
+    const error = rejected as CaptureError;
+    expect(error.detail).not.toContain(error.code);
+    expect(error.span).toBeDefined();
+    const span = error.span!;
+    expect(span.source_file).toBe("located.ts");
+    const lines = text.split("\n");
+    // 1-based lines, 0-based columns: the source map's coordinates.
+    expect(span.start_line).toBe(6);
+    expect(span.end_line).toBe(6);
+    expect(lines[span.start_line - 1]!.slice(span.start_column, span.end_column)).toBe(
+      "input.reference = 'changed'",
+    );
+  });
+
   it("emits standard SHA-256 digests without a Node-only root import", () => {
     expect(stableDigest("abc")).toBe(
       "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",

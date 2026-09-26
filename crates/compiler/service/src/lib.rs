@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_ais::{SLOT_CAPABILITY_REF, SemanticOpKind};
 use apxm_compilation_protocol::{
-    CompilationHandshake, CompilationRequest, CompilationResult, ProtocolError,
+    CompilationHandshake, CompilationRequest, CompilationResult, CompileDiagnostic,
+    DiagnosticReport, Location, Phase, ProtocolError, Severity,
 };
 use apxm_core::types::host_capability::{
     ManifestCapabilities, host_capability_ref, minted_host_capability_refs,
@@ -25,7 +26,7 @@ use apxm_core::types::host_capability::{
 use apxm_program::{ExecutableArtifact, air::AirModule};
 use apxm_source_port::{
     Frontend, FrontendDrivers, FrontendRoots, PackageSnapshot, SnapshotError, SourceBundleRequest,
-    compile_source_bundle, content_digest,
+    compile_source_bundle, content_digest, diagnostic_report,
 };
 
 pub use apxm_source_port::{
@@ -148,7 +149,10 @@ impl CompilationService {
             return Err(ProtocolError::InvalidRequest);
         }
         if let Err(error) = snapshot.validate() {
-            return Ok(failed(&request_id, snapshot_error_code(error)));
+            return Ok(CompilationResult::failed(
+                request_id,
+                package_failure(snapshot_error_code(error)),
+            ));
         }
         let fingerprint = snapshot.snapshot_digest.clone();
         if let Some(prior) = self.idempotency.get(&idempotency_key)
@@ -159,7 +163,10 @@ impl CompilationService {
         self.idempotency.insert(idempotency_key, fingerprint);
 
         match compile_snapshot(&snapshot, &self.roots, &self.drivers) {
-            Ok(artifact_json) => {
+            Ok(CompiledSnapshot {
+                artifact_json,
+                diagnostics,
+            }) => {
                 let artifact = ExecutableArtifact::decode(artifact_json.as_bytes())
                     .map_err(|_| ProtocolError::InvalidRequest)?;
                 let artifact_digest = artifact.artifact_digest.clone();
@@ -170,7 +177,12 @@ impl CompilationService {
                 if let Some(dir) = &self.artifact_dir
                     && persist_artifact(dir, &artifact_digest, artifact_json.as_bytes()).is_err()
                 {
-                    return Ok(failed(&request_id, "artifact_persist"));
+                    return Ok(CompilationResult::failed_with(
+                        request_id,
+                        "artifact_persist",
+                        Phase::Admission,
+                        "the compiled artifact could not be persisted to the artifact store",
+                    ));
                 }
                 self.store.commit(artifact_digest.clone(), artifact_json);
                 Ok(CompilationResult::ArtifactCommitted {
@@ -179,18 +191,59 @@ impl CompilationService {
                     artifact: Box::new(artifact),
                     execution_lineage_ref,
                     build_key: format!("{}:{}", snapshot.frontend.wire(), snapshot.snapshot_digest),
+                    diagnostics,
                 })
             }
-            Err(code) => Ok(failed(&request_id, &code)),
+            Err(diagnostics) => Ok(CompilationResult::failed(request_id, diagnostics)),
         }
     }
 }
 
-fn failed(request_id: &str, code: &str) -> CompilationResult {
-    CompilationResult::Failed {
-        request_id: request_id.to_owned(),
-        code: code.to_owned(),
+/// A compiled snapshot: the canonical artifact bytes and the non-error
+/// diagnostics raised producing them.
+struct CompiledSnapshot {
+    artifact_json: String,
+    diagnostics: DiagnosticReport,
+}
+
+/// The human explanation of a package-phase code. The code is the contract;
+/// this text is never used for control flow.
+fn package_message(code: &str) -> &'static str {
+    match code {
+        "unsupported_contract" => "the package snapshot names an unsupported snapshot contract",
+        "incomplete_snapshot" => "the package snapshot is incomplete",
+        "unsafe_path" => "the package snapshot contains an unsafe path",
+        "digest_mismatch" => "a package file does not match its recorded digest",
+        "duplicate_path" => "the package snapshot repeats a path",
+        "lock_drift" => "the package lock does not match its recorded digest",
+        "missing_entrypoint" => "the package entrypoint is not in the snapshot",
+        "missing_frontend" => "the package manifest declares no [compile] frontend",
+        "invalid_manifest" => "the package manifest is not a valid agent.toml",
+        "frontend_mismatch" => {
+            "the package manifest's frontend differs from the snapshot's frontend"
+        }
+        "entrypoint_mismatch" => {
+            "the package manifest's entry differs from the snapshot's entrypoint"
+        }
+        "integrity_invalid" => "the package integrity record is not a valid integrity.toml",
+        "integrity_mismatch" => "the package integrity record does not match the package files",
+        "entrypoint_not_utf8" => "the package entrypoint is not UTF-8 text",
+        "missing_program" => "the package entrypoint declares no authored Agent or Workflow",
+        _ => "the package was rejected",
     }
+}
+
+/// One package-phase error; no later phase ran.
+fn package_failure(code: &str) -> DiagnosticReport {
+    DiagnosticReport::from_diagnostics(
+        [CompileDiagnostic::new(
+            Severity::Error,
+            code,
+            Phase::Package,
+            package_message(code),
+        )],
+        Some(Phase::Package),
+    )
 }
 
 /// File name for a digest in a shared artifact directory (`:` is not portable).
@@ -286,45 +339,124 @@ fn compile_snapshot(
     snapshot: &PackageSnapshot,
     roots: &FrontendRoots,
     drivers: &FrontendDrivers,
-) -> Result<String, String> {
-    let manifest = declared_manifest(snapshot)?;
+) -> Result<CompiledSnapshot, DiagnosticReport> {
+    let manifest = declared_manifest(snapshot).map_err(|code| package_failure(&code))?;
     if manifest.frontend != snapshot.frontend {
-        return Err("frontend_mismatch".to_owned());
+        return Err(package_failure("frontend_mismatch"));
     }
     if manifest.entry != snapshot.entrypoint {
-        return Err("entrypoint_mismatch".to_owned());
+        return Err(package_failure("entrypoint_mismatch"));
     }
-    verify_integrity(snapshot)?;
+    verify_integrity(snapshot).map_err(|code| package_failure(&code))?;
 
     let entry = snapshot
         .file(&snapshot.entrypoint)
-        .ok_or_else(|| "missing_entrypoint".to_owned())?;
-    let source =
-        String::from_utf8(entry.bytes.clone()).map_err(|_| "entrypoint_not_utf8".to_owned())?;
-    let program = authored_program_name(snapshot.frontend, &source)?;
+        .ok_or_else(|| package_failure("missing_entrypoint"))?;
+    let source = String::from_utf8(entry.bytes.clone())
+        .map_err(|_| package_failure("entrypoint_not_utf8"))?;
+    let program =
+        authored_program_name(snapshot.frontend, &source).map_err(|code| package_failure(&code))?;
     let compiled = compile_source_bundle(
         &SourceBundleRequest::new(snapshot.frontend, program, source)
             .with_host_capabilities(manifest.host_capabilities.clone()),
         roots,
         drivers,
     )
-    .map_err(|diagnostics| {
-        diagnostics.first().map_or_else(
-            || "compile_failed".to_owned(),
-            |diagnostic| {
-                if diagnostic.message.is_empty() {
-                    diagnostic.code.slug().to_owned()
-                } else {
-                    format!("{}: {}", diagnostic.code.slug(), diagnostic.message)
-                }
-            },
+    .map_err(|diagnostics| diagnostic_report(&diagnostics))?;
+    // Admission reports every refusal it finds, then stops: nothing after
+    // admission runs over a program it refused.
+    let warnings = compiled
+        .diagnostics
+        .iter()
+        .map(apxm_source_port::SourceDiagnostic::to_compile_diagnostic)
+        .collect::<Vec<_>>();
+    let mut refusals = check_capability_references(snapshot, &manifest, &compiled.air);
+    refusals.extend(check_package_permissions(
+        snapshot,
+        &compiled.air,
+        &manifest,
+    ));
+    if !refusals.is_empty() {
+        return Err(DiagnosticReport::from_diagnostics(
+            warnings.into_iter().chain(refusals),
+            Some(Phase::Admission),
+        ));
+    }
+    let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+        .map_err(|error| {
+            DiagnosticReport::from_diagnostics(
+                warnings
+                    .iter()
+                    .cloned()
+                    .chain(artifact_build_diagnostics(error)),
+                Some(Phase::Lowering),
+            )
+        })?;
+    let artifact_json = serde_json::to_string(&artifact).map_err(|_| {
+        DiagnosticReport::from_diagnostics(
+            [CompileDiagnostic::new(
+                Severity::Error,
+                "artifact_codec",
+                Phase::Lowering,
+                "the executable artifact could not be encoded",
+            )],
+            Some(Phase::Lowering),
         )
     })?;
-    check_capability_references(snapshot, &manifest, &compiled.air)?;
-    check_package_permissions(snapshot, &compiled.air, &manifest)?;
-    let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
-        .map_err(|error| error.to_string())?;
-    serde_json::to_string(&artifact).map_err(|error| error.to_string())
+    Ok(CompiledSnapshot {
+        artifact_json,
+        diagnostics: DiagnosticReport::from_diagnostics(warnings, None),
+    })
+}
+
+/// Every verifier diagnostic an artifact build raised, under its own code.
+fn artifact_build_diagnostics(error: apxm_program::ArtifactBuildError) -> Vec<CompileDiagnostic> {
+    let verdict = match error {
+        apxm_program::ArtifactBuildError::Lowering(verdict)
+        | apxm_program::ArtifactBuildError::Requirements(verdict)
+        | apxm_program::ArtifactBuildError::Validation(verdict) => verdict,
+        apxm_program::ArtifactBuildError::Codec(_) => {
+            return vec![CompileDiagnostic::new(
+                Severity::Error,
+                "artifact_codec",
+                Phase::Lowering,
+                "the executable artifact could not be encoded",
+            )];
+        }
+    };
+    let diagnostics = verdict
+        .into_diagnostics()
+        .into_iter()
+        .map(|diagnostic| {
+            let mut item = CompileDiagnostic::new(
+                Severity::Error,
+                diagnostic.code.slug(),
+                Phase::Lowering,
+                diagnostic.message,
+            );
+            if !diagnostic.location.is_empty() {
+                item.field_path = Some(
+                    diagnostic
+                        .location
+                        .split('.')
+                        .filter(|segment| !segment.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                );
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    if diagnostics.is_empty() {
+        vec![CompileDiagnostic::new(
+            Severity::Error,
+            "artifact_rejected",
+            Phase::Lowering,
+            "the executable artifact did not validate",
+        )]
+    } else {
+        diagnostics
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -678,39 +810,56 @@ fn granted_capability_ids(
     granted
 }
 
+/// One admission error per semantic operation that invokes a capability the
+/// package does not grant, located at the operation's source span.
 fn check_capability_references(
     snapshot: &PackageSnapshot,
     manifest: &DeclaredManifest,
     module: &AirModule,
-) -> Result<(), String> {
+) -> Vec<CompileDiagnostic> {
     let granted = granted_capability_ids(snapshot, manifest);
-    let mut ungranted: Vec<&str> = module
+    module
         .semantic_operations
         .iter()
         .filter(|operation| operation.op == SemanticOpKind::CapabilityInvoke)
         .filter_map(|operation| {
-            operation
+            let capability_ref = operation
                 .operands
                 .iter()
                 .find(|operand| operand.slot == SLOT_CAPABILITY_REF)
-                .map(|operand| operand.value_id.as_str())
+                .map(|operand| operand.value_id.as_str())?;
+            if granted.contains(capability_ref) {
+                return None;
+            }
+            let mut item = CompileDiagnostic::new(
+                Severity::Error,
+                "ungranted_capability",
+                Phase::Admission,
+                format!(
+                    "the program invokes the Capability '{capability_ref}', which the package \
+                     neither declares nor ships a handler for"
+                ),
+            );
+            item.node_id = Some(operation.node_id.clone());
+            item.location = module
+                .source_map
+                .node_spans
+                .iter()
+                .find(|span| span.node_id == operation.node_id)
+                .map(|span| Location {
+                    source_file: span.source_file.clone(),
+                    span: span.span,
+                });
+            Some(item)
         })
-        .filter(|capability_ref| !granted.contains(*capability_ref))
-        .collect();
-    ungranted.sort_unstable();
-    ungranted.dedup();
-    if ungranted.is_empty() {
-        Ok(())
-    } else {
-        Err("ungranted_capability".to_owned())
-    }
+        .collect()
 }
 
 fn check_package_permissions(
     snapshot: &PackageSnapshot,
     module: &AirModule,
     manifest: &DeclaredManifest,
-) -> Result<(), String> {
+) -> Option<CompileDiagnostic> {
     let grantable = granted_capability_ids(snapshot, manifest);
     let requested: LayerDecisions = grantable
         .iter()
@@ -729,8 +878,15 @@ fn check_package_permissions(
         requested,
         manifest.permissions.clone().into_iter().collect(),
     )
-    .map(|_| ())
-    .map_err(|_| "permission_widening".to_owned())
+    .err()
+    .map(|_| {
+        CompileDiagnostic::new(
+            Severity::Error,
+            "permission_widening",
+            Phase::Admission,
+            "the program requests a Capability permission wider than the package manifest allows",
+        )
+    })
 }
 
 fn workspace_root() -> PathBuf {
@@ -838,8 +994,22 @@ export const Reviewer = Agent<ReviewRequest, Review>({
     }
 
     fn package_snapshot(frontend: Frontend, entry: &str, source: &str) -> PackageSnapshot {
+        package_snapshot_with(frontend, entry, source, "")
+    }
+
+    const NOTES_SEARCH_HOST: &str = "\n[[capabilities.host]]\nid = \"notes.search\"\neffect = \"read\"\ninput_schema = { type = \"object\" }\noutput_schema = { type = \"object\" }\n";
+
+    fn package_snapshot_with(
+        frontend: Frontend,
+        entry: &str,
+        source: &str,
+        manifest_tail: &str,
+    ) -> PackageSnapshot {
         let mut contents = vec![
-            SnapshotContent::from_bytes("agent.toml", agent_toml(frontend, entry).into_bytes()),
+            SnapshotContent::from_bytes(
+                "agent.toml",
+                format!("{}{manifest_tail}", agent_toml(frontend, entry)).into_bytes(),
+            ),
             SnapshotContent::from_bytes(entry, source.as_bytes().to_vec()),
         ];
         let files = contents
@@ -881,15 +1051,18 @@ export const Reviewer = Agent<ReviewRequest, Review>({
                     },
                 )
                 .unwrap();
+            assert!(result.diagnostics_are_consistent(), "{result:?}");
             let CompilationResult::ArtifactCommitted {
                 artifact_digest,
                 execution_lineage_ref,
+                diagnostics,
                 ..
             } = result
             else {
                 panic!("commit for {}", frontend.wire());
             };
             assert!(execution_lineage_ref.starts_with("sha256:"));
+            assert_eq!(diagnostics, DiagnosticReport::empty());
             let bytes = service
                 .store()
                 .get(&artifact_digest)
@@ -990,8 +1163,204 @@ async def Harness(agent, request):
                 },
             )
             .unwrap();
-        assert!(matches!(result, CompilationResult::Failed { .. }));
+        assert!(result.diagnostics_are_consistent(), "{result:?}");
+        let CompilationResult::Failed {
+            code, diagnostics, ..
+        } = result
+        else {
+            panic!("an invalid program fails: {result:?}");
+        };
+        assert!(!diagnostics.items.is_empty());
+        assert_eq!(diagnostics.first_error_code(), Some(code.as_str()));
+        assert!(
+            diagnostics.stopped_at.is_some(),
+            "a failed compile names where it stopped"
+        );
         assert!(service.store().is_empty());
+    }
+
+    fn compile_package(
+        service: &mut CompilationService,
+        id: &str,
+        snapshot: PackageSnapshot,
+    ) -> CompilationResult {
+        let result = service
+            .handle(
+                &handshake(),
+                CompilationRequest::Compile {
+                    request_id: id.to_owned(),
+                    idempotency_key: id.to_owned(),
+                    snapshot,
+                },
+            )
+            .unwrap();
+        assert!(result.diagnostics_are_consistent(), "{result:?}");
+        result
+    }
+
+    /// Every undeclared host reference reaches the protocol as its own located
+    /// error; the envelope's code is the first error's code, and the report
+    /// stops before capture.
+    #[test]
+    fn undeclared_host_references_fail_with_every_location() {
+        if !frontend_present(Frontend::Typescript) {
+            return;
+        }
+        let source = TYPESCRIPT_PROGRAM.replace(
+            "const SearchWeb = Tool<ReviewRequest, Review>(\"search_web\");",
+            "const SearchWeb = Tool<ReviewRequest, Review>(\"search_web\");\n\
+             const Append = Capability<ReviewRequest, Review>(\"host:notes.append\");\n\
+             const Delete = Capability<ReviewRequest, Review>(\"host:notes.delete\");",
+        );
+        let mut service = CompilationService::default();
+        let result = compile_package(
+            &mut service,
+            "undeclared",
+            package_snapshot(Frontend::Typescript, "src/agent.ts", &source),
+        );
+        let CompilationResult::Failed {
+            code, diagnostics, ..
+        } = result
+        else {
+            panic!("undeclared host references fail: {result:?}");
+        };
+        assert_eq!(code, "graph_rejected");
+        assert_eq!(diagnostics.total_count, 2);
+        assert_eq!(diagnostics.stopped_at, Some(Phase::TypeCheck));
+        let lines = diagnostics
+            .items
+            .iter()
+            .map(|item| {
+                let location = item.location.as_ref().expect("every item is located");
+                assert_eq!(location.source_file, "submitted_source.ts");
+                location.span.start_line
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_ne!(lines[0], lines[1], "distinct locations: {diagnostics:?}");
+        assert!(service.store().is_empty());
+    }
+
+    /// A compiler warning does not stop a commit: it rides on the committed
+    /// artifact's report, which never carries an error or a stopping phase.
+    #[test]
+    fn a_warning_rides_on_the_committed_artifact() {
+        if !frontend_present(Frontend::Python) {
+            return;
+        }
+        let source = PYTHON_PROGRAM.replacen(
+            "\n\n\nclass ReviewRequest:",
+            "\n\nIDENTITY = 1 is 1\n\nclass ReviewRequest:",
+            1,
+        );
+        let mut service = CompilationService::default();
+        let result = compile_package(
+            &mut service,
+            "warning",
+            package_snapshot(Frontend::Python, "src/agent.py", &source),
+        );
+        let CompilationResult::ArtifactCommitted { diagnostics, .. } = result else {
+            panic!("a warning does not stop a commit: {result:?}");
+        };
+        assert_eq!(diagnostics.items.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics.items[0].severity, Severity::Warning);
+        assert_eq!(diagnostics.items[0].code, "source_warning");
+        assert!(diagnostics.items[0].location.is_some());
+        assert_eq!(diagnostics.stopped_at, None);
+    }
+
+    /// A TypeScript program compiled through the service carries a node span
+    /// for every semantic operation: a host capability call, and the same Tool
+    /// invoked in both arms of a branch as two operations with two spans.
+    #[test]
+    fn typescript_artifact_source_map_spans_every_operation() {
+        if !frontend_present(Frontend::Typescript) {
+            return;
+        }
+        let source = r#"import { Workflow, Capability, Tool } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
+
+type ReviewRequest = { urgent: boolean };
+type Review = object;
+
+const Notes = Capability<ReviewRequest, Review>("host:notes.search");
+const SearchWeb = Tool<ReviewRequest, Review>("search_web");
+
+export const Reviewer = Workflow<ReviewRequest, Review>({
+  name: "Reviewer",
+  async run(agent, request) {
+    const noted = await Notes(request);
+    if (request.urgent) {
+      return await SearchWeb(request);
+    } else {
+      return await SearchWeb(request);
+    }
+  },
+});
+"#;
+        let mut service = CompilationService::default();
+        let result = compile_package(
+            &mut service,
+            "spans",
+            package_snapshot_with(
+                Frontend::Typescript,
+                "src/agent.ts",
+                source,
+                NOTES_SEARCH_HOST,
+            ),
+        );
+        let CompilationResult::ArtifactCommitted { artifact, .. } = result else {
+            panic!("the branched program commits: {result:?}");
+        };
+        assert_eq!(artifact.source_map, artifact.air.source_map);
+        let spans = artifact
+            .source_map
+            .node_spans
+            .iter()
+            .map(|span| (span.node_id.as_str(), span))
+            .collect::<BTreeMap<_, _>>();
+        for operation in &artifact.air.semantic_operations {
+            assert!(
+                spans.contains_key(operation.node_id.as_str()),
+                "{} has no span in {:?}",
+                operation.node_id,
+                artifact.source_map.node_spans
+            );
+        }
+        let lines = source.lines().collect::<Vec<_>>();
+        let invoked = artifact
+            .air
+            .semantic_operations
+            .iter()
+            .filter(|operation| operation.op == SemanticOpKind::CapabilityInvoke)
+            .map(|operation| {
+                let span = spans[operation.node_id.as_str()];
+                assert_eq!(span.source_file, "submitted_source.ts");
+                let line = lines[usize::try_from(span.span.start_line).unwrap() - 1];
+                (
+                    operation.node_id.clone(),
+                    span.span.start_line,
+                    line.trim().to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(invoked.len(), 3, "{invoked:?}");
+        assert_eq!(
+            invoked
+                .iter()
+                .filter(|(_, _, line)| line.contains("Notes(request)"))
+                .count(),
+            1
+        );
+        let searches = invoked
+            .iter()
+            .filter(|(_, _, line)| line.contains("SearchWeb(request)"))
+            .collect::<Vec<_>>();
+        assert_eq!(searches.len(), 2, "{invoked:?}");
+        assert_ne!(searches[0].0, searches[1].0);
+        assert_ne!(searches[0].1, searches[1].1);
     }
 
     #[test]
@@ -1019,7 +1388,14 @@ async def Harness(agent, request):
             )
             .unwrap();
         match result {
-            CompilationResult::Failed { code, .. } => assert_eq!(code, "missing_frontend"),
+            CompilationResult::Failed {
+                code, diagnostics, ..
+            } => {
+                assert_eq!(code, "missing_frontend");
+                assert_eq!(diagnostics.items.len(), 1);
+                assert_eq!(diagnostics.items[0].phase, Phase::Package);
+                assert_eq!(diagnostics.stopped_at, Some(Phase::Package));
+            }
             other => panic!("expected missing frontend, got {other:?}"),
         }
         assert!(service.store().is_empty());

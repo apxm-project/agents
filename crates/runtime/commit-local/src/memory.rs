@@ -88,6 +88,14 @@ impl InMemoryExecutionCommit {
             .invocation_status(invocation)
     }
 
+    #[must_use]
+    pub fn terminal_failure_code(&self, invocation: &str) -> Option<String> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .terminal_failure_code(invocation)
+    }
+
     /// Failure-injection hook used by owner-local conformance suites.
     pub fn inject_outcome_unknown(&self, commit_id: impl Into<String>) {
         self.store

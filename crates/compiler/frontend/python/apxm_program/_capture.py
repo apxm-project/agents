@@ -80,15 +80,28 @@ SKILL_READER_OUTPUT = "SkillInstructions"
 
 
 class CaptureError(ValueError):
-    """A source construct outside the supported authoring subset."""
+    """A source construct outside the supported authoring subset.
+
+    ``detail`` is the explanation without the code prefix. ``span`` is
+    ``(line, column, end_line, end_column)`` of the rejected node in the source
+    map's coordinates (1-based lines, 0-based columns) when the capture had it.
+    """
 
     def __init__(
         self, code: DiagnosticCode, message: str, node: Optional[ast.AST] = None
     ) -> None:
         self.code = code
+        self.detail = message
+        self.span: Optional[tuple[int, int, int, int]] = None
         location = ""
         if node is not None and hasattr(node, "lineno"):
             location = f" (line {node.lineno})"
+            self.span = (
+                node.lineno,
+                getattr(node, "col_offset", 0) or 0,
+                getattr(node, "end_lineno", None) or node.lineno,
+                getattr(node, "end_col_offset", None) or getattr(node, "col_offset", 0) or 0,
+            )
         super().__init__(f"{code}: {message}{location}")
 
 

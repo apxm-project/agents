@@ -521,6 +521,7 @@ dependencies = [
  "apxm-runtime-protocol",
  "apxm-source-port",
  "async-trait",
+ "base64",
  "serde",
  "serde_json",
  "sha2",

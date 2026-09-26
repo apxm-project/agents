@@ -5,10 +5,11 @@
 //! Program Instance, and Program Invocation.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use apxm_kernel::{
     CommittedContinuation, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
-    PrecommitEvidenceRef, ProgramInstanceRef, ProgramInvocationRef,
+    PrecommitEvidenceRef, ProgramInstanceRef, ProgramInvocationRef, canonical_json_bytes,
 };
 use apxm_program::grammar::is_identifier;
 use apxm_program::runtime_evidence::Fact;
@@ -308,7 +309,7 @@ pub struct CommitLocalRecord {
 /// Idempotent commit result retained for replay.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StoredCommit {
-    pub request_identity: CommitRequestIdentity,
+    pub request_identity: CommitReplayIdentity,
     pub result: StoredCommitResult,
 }
 
@@ -474,6 +475,51 @@ pub struct CommitRequestIdentity {
     pub evidence_batch: Vec<Fact>,
 }
 
+/// Complete replay identity retained by older stores, or its exact digest.
+/// The string variant makes older readers refuse the row at decode rather
+/// than silently accepting a request without checking every dimension.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CommitReplayIdentity {
+    Fingerprint(String),
+    LegacyFull(Box<CommitRequestIdentity>),
+}
+
+impl CommitReplayIdentity {
+    fn fingerprint(identity: &CommitRequestIdentity) -> Result<String, CommitLocalError> {
+        let value = serde_json::to_value(identity)
+            .map_err(|error| CommitLocalError::Codec(error.to_string()))?;
+        let mut digest = Sha256::new();
+        digest.update(b"apxm.commit-request-identity.v1\0");
+        digest.update(canonical_json_bytes(&value));
+        Ok(format!(
+            "apxm.commit-request-identity.v1.sha256:{:x}",
+            digest.finalize()
+        ))
+    }
+
+    fn matches(&self, identity: &CommitRequestIdentity, fingerprint: &str) -> bool {
+        match self {
+            Self::Fingerprint(prior) => prior == fingerprint,
+            Self::LegacyFull(prior) => prior.as_ref() == identity,
+        }
+    }
+
+    fn valid(&self) -> bool {
+        match self {
+            Self::LegacyFull(_) => true,
+            Self::Fingerprint(value) => value
+                .strip_prefix("apxm.commit-request-identity.v1.sha256:")
+                .is_some_and(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommitLocalTuple {
     pub context: Value,
@@ -615,7 +661,7 @@ pub struct CommitLocalStore {
     /// service. It is authenticated and atomically persisted with the
     /// execution record, but the commit adapter never interprets its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_metadata: Option<Value>,
+    runtime_metadata: Option<Arc<Value>>,
 }
 
 impl CommitLocalStore {
@@ -644,12 +690,21 @@ impl CommitLocalStore {
     /// authority to interpret it.
     #[must_use]
     pub fn runtime_metadata(&self) -> Option<Value> {
-        self.runtime_metadata.clone()
+        self.runtime_metadata.as_deref().cloned()
     }
 
     /// Replace opaque composition metadata in the staged store.
     pub fn set_runtime_metadata(&mut self, metadata: Option<Value>) {
-        self.runtime_metadata = metadata;
+        self.runtime_metadata = metadata.map(Arc::new);
+    }
+
+    /// Swap opaque metadata while the filesystem owner holds its exclusive
+    /// store lock. The previous value can be restored if persistence refuses.
+    pub(crate) fn replace_runtime_metadata(
+        &mut self,
+        metadata: Option<Arc<Value>>,
+    ) -> Option<Arc<Value>> {
+        std::mem::replace(&mut self.runtime_metadata, metadata)
     }
 
     pub fn validate_schema(&self) -> Result<(), CommitLocalError> {
@@ -665,6 +720,15 @@ impl CommitLocalStore {
         {
             return Err(CommitLocalError::Codec(
                 "invalid default access_scope_ref".to_owned(),
+            ));
+        }
+        if self
+            .by_commit_scope
+            .values()
+            .any(|record| !record.request_identity.valid())
+        {
+            return Err(CommitLocalError::Codec(
+                "invalid retained commit replay fingerprint".to_owned(),
             ));
         }
         for records in self.evidence_records.values() {
@@ -700,6 +764,23 @@ impl CommitLocalStore {
         invocation: &str,
     ) -> Option<apxm_runtime_protocol::ProgramInvocationStatus> {
         self.invocations.get(invocation).map(|record| record.status)
+    }
+
+    /// Internal recovery hint from the winning terminal evidence. Public
+    /// callers still use the authorized evidence read contract.
+    #[must_use]
+    pub fn terminal_failure_code(&self, invocation: &str) -> Option<String> {
+        (self.invocation_status(invocation)
+            == Some(apxm_runtime_protocol::ProgramInvocationStatus::Failed))
+        .then(|| self.evidence_records.get(invocation))
+        .flatten()?
+        .iter()
+        .rev()
+        .find(|record| {
+            record.fact_kind == apxm_runtime_protocol::EvidenceFactKind::InvocationFailed
+        })
+        .and_then(|record| record.typed_error.as_ref())
+        .map(|error| error.code_ref.clone())
     }
 
     pub fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
@@ -1233,14 +1314,20 @@ impl CommitLocalStore {
 
         let scope_key = commit_scope_key(request);
         let request_identity = CommitRequestIdentity::from(request);
+        let fingerprint = CommitReplayIdentity::fingerprint(&request_identity)?;
         if let Some(prior) = self.by_commit_scope.get(&scope_key) {
-            if prior.request_identity != request_identity {
+            if !prior
+                .request_identity
+                .matches(&request_identity, &fingerprint)
+            {
                 return Err(CommitLocalError::ConflictingReplay {
                     commit_id: request.commit_id.clone(),
                 });
             }
             return Ok(ExecutionCommitResult::from(&prior.result));
         }
+        drop(request_identity);
+        let replay_identity = CommitReplayIdentity::Fingerprint(fingerprint);
 
         if self
             .invocations
@@ -1275,13 +1362,20 @@ impl CommitLocalStore {
             let result = ExecutionCommitResult::OutcomeUnknown {
                 reconciliation_ref: format!("reconcile:{}", request.commit_id),
             };
-            self.retain_result(&scope_key, request_identity, &result)?;
+            self.retain_result(&scope_key, replay_identity, &result)?;
             return Ok(result);
         }
 
         let output_refs = self.validate_prepared_outputs(request)?;
 
         let current = self.current_version(&request.program_instance_ref);
+        if request.expected_program_state_version != current {
+            let result = ExecutionCommitResult::CompareConflict {
+                current_program_state_version: current,
+            };
+            self.retain_result(&scope_key, replay_identity, &result)?;
+            return Ok(result);
+        }
         let next_version = current
             .checked_add(1)
             .ok_or(CommitLocalError::VersionExhausted)?;
@@ -1303,14 +1397,6 @@ impl CommitLocalStore {
         )?;
         let invocation_key = request.program_invocation_ref.as_str().to_owned();
         let evidence_start = self.next_evidence_sequence(&invocation_key);
-
-        if request.expected_program_state_version != current {
-            let result = ExecutionCommitResult::CompareConflict {
-                current_program_state_version: current,
-            };
-            self.retain_result(&scope_key, request_identity, &result)?;
-            return Ok(result);
-        }
 
         let record = CommitLocalRecord {
             program_invocation_ref: request.program_invocation_ref.as_str().to_owned(),
@@ -1380,7 +1466,7 @@ impl CommitLocalStore {
             self.committed_outputs.insert(output_ref, output);
         }
         self.index_commit(request);
-        self.retain_result(&scope_key, request_identity, &result)?;
+        self.retain_result(&scope_key, replay_identity, &result)?;
         Ok(result)
     }
 
@@ -1969,7 +2055,7 @@ impl CommitLocalStore {
     fn retain_result(
         &mut self,
         scope_key: &str,
-        request_identity: CommitRequestIdentity,
+        request_identity: CommitReplayIdentity,
         result: &ExecutionCommitResult,
     ) -> Result<(), CommitLocalError> {
         self.ensure_retention_capacity(scope_key)?;
@@ -1981,6 +2067,70 @@ impl CommitLocalStore {
             },
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod runtime_metadata_sharing_tests {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Serialize};
+    use serde_json::{Value, json};
+
+    use super::CommitLocalStore;
+
+    #[test]
+    fn staged_clone_shares_opaque_metadata_but_mutations_are_independent() {
+        let mut original = CommitLocalStore::new();
+        original.set_runtime_metadata(Some(json!({"nested": {"value": "original"}})));
+        let mut staged = original.clone();
+        assert!(Arc::ptr_eq(
+            original.runtime_metadata.as_ref().unwrap(),
+            staged.runtime_metadata.as_ref().unwrap()
+        ));
+
+        staged.set_runtime_metadata(Some(json!({"nested": {"value": "staged"}})));
+        assert_eq!(
+            original.runtime_metadata(),
+            Some(json!({"nested": {"value": "original"}}))
+        );
+        assert_eq!(
+            staged.runtime_metadata(),
+            Some(json!({"nested": {"value": "staged"}}))
+        );
+
+        let mut returned = original.runtime_metadata().unwrap();
+        returned["nested"]["value"] = json!("caller mutation");
+        assert_eq!(
+            original.runtime_metadata(),
+            Some(json!({"nested": {"value": "original"}}))
+        );
+    }
+
+    #[test]
+    fn opaque_metadata_json_matches_owned_value_for_none_null_and_object() {
+        #[derive(Serialize, Deserialize)]
+        struct LegacyMetadata {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            runtime_metadata: Option<Value>,
+        }
+
+        for metadata in [None, Some(Value::Null), Some(json!({"value": [1, 2]}))] {
+            let mut store = CommitLocalStore::new();
+            store.set_runtime_metadata(metadata.clone());
+            let encoded = serde_json::to_value(&store).unwrap();
+            let legacy_encoded = serde_json::to_value(LegacyMetadata {
+                runtime_metadata: metadata,
+            })
+            .unwrap();
+            assert_eq!(
+                encoded.get("runtime_metadata"),
+                legacy_encoded.get("runtime_metadata")
+            );
+            let decoded: CommitLocalStore = serde_json::from_value(encoded).unwrap();
+            let legacy_decoded: LegacyMetadata = serde_json::from_value(legacy_encoded).unwrap();
+            assert_eq!(decoded.runtime_metadata(), legacy_decoded.runtime_metadata);
+        }
     }
 }
 
