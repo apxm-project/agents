@@ -1,0 +1,1509 @@
+[
+  {
+    "name": "valid-failed-report-located-items",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.append' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 9,
+              "start_column": 49,
+              "end_line": 9,
+              "end_column": 66
+            }
+          }
+        },
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.delete' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 10,
+              "start_column": 49,
+              "end_line": 10,
+              "end_column": 66
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 2,
+      "stopped_at": "type_check"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-lowering-report-with-node-field-related-and-type-facts",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "duplicate_node_id",
+          "phase": "lowering",
+          "message": "intent node_id is not unique",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 4,
+              "start_column": 2,
+              "end_line": 4,
+              "end_column": 9
+            }
+          },
+          "node_id": "node.model.1"
+        },
+        {
+          "severity": "error",
+          "code": "schema_violation",
+          "phase": "lowering",
+          "message": "a FrontendGraph declares at least one program",
+          "field_path": [
+            "program_definitions"
+          ],
+          "related": [
+            {
+              "message": "declared here",
+              "node_id": "node.cap.1"
+            }
+          ],
+          "expected": {
+            "type_ref": "Review"
+          },
+          "actual": {
+            "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "truncated": true,
+      "total_count": 3,
+      "stopped_at": "lowering"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-committed-report-with-warning",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-empty-report",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [],
+      "truncated": false,
+      "total_count": 0
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "wrong-schema-version-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v2",
+      "items": [],
+      "truncated": false,
+      "total_count": 0
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-report-field-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [],
+      "truncated": false,
+      "total_count": 0,
+      "errors": []
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "missing-total-count-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [],
+      "truncated": false
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-severity-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "fatal",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-phase-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "execution",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-stopped-at-phase-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [],
+      "truncated": false,
+      "total_count": 0,
+      "stopped_at": "runtime"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "zero-based-line-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.append' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 0,
+              "start_column": 49,
+              "end_line": 9,
+              "end_column": 66
+            }
+          }
+        },
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.delete' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 10,
+              "start_column": 49,
+              "end_line": 10,
+              "end_column": 66
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 2,
+      "stopped_at": "type_check"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "span-with-unknown-field-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.append' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 9,
+              "start_column": 49,
+              "end_line": 9,
+              "end_column": 66,
+              "line": 9
+            }
+          }
+        },
+        {
+          "severity": "error",
+          "code": "graph_rejected",
+          "phase": "type_check",
+          "message": "the Capability reference 'host:notes.delete' names the host-fulfilled namespace, and the package manifest declares no matching [[capabilities.host]] entry",
+          "location": {
+            "source_file": "submitted_source.ts",
+            "span": {
+              "start_line": 10,
+              "start_column": 49,
+              "end_line": 10,
+              "end_column": 66
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 2,
+      "stopped_at": "type_check"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "code-with-space-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "message-over-bound-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "field-path-over-bound-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "duplicate_node_id",
+          "phase": "lowering",
+          "message": "intent node_id is not unique",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 4,
+              "start_column": 2,
+              "end_line": 4,
+              "end_column": 9
+            }
+          },
+          "node_id": "node.model.1"
+        },
+        {
+          "severity": "error",
+          "code": "schema_violation",
+          "phase": "lowering",
+          "message": "a FrontendGraph declares at least one program",
+          "field_path": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16"
+          ],
+          "related": [
+            {
+              "message": "declared here",
+              "node_id": "node.cap.1"
+            }
+          ],
+          "expected": {
+            "type_ref": "Review"
+          },
+          "actual": {
+            "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "truncated": true,
+      "total_count": 3,
+      "stopped_at": "lowering"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "related-over-bound-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "error",
+          "code": "duplicate_node_id",
+          "phase": "lowering",
+          "message": "intent node_id is not unique",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 4,
+              "start_column": 2,
+              "end_line": 4,
+              "end_column": 9
+            }
+          },
+          "node_id": "node.model.1"
+        },
+        {
+          "severity": "error",
+          "code": "schema_violation",
+          "phase": "lowering",
+          "message": "a FrontendGraph declares at least one program",
+          "field_path": [
+            "program_definitions"
+          ],
+          "related": [
+            {
+              "message": "0"
+            },
+            {
+              "message": "1"
+            },
+            {
+              "message": "2"
+            },
+            {
+              "message": "3"
+            },
+            {
+              "message": "4"
+            },
+            {
+              "message": "5"
+            },
+            {
+              "message": "6"
+            },
+            {
+              "message": "7"
+            },
+            {
+              "message": "8"
+            }
+          ],
+          "expected": {
+            "type_ref": "Review"
+          },
+          "actual": {
+            "schema_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "truncated": true,
+      "total_count": 3,
+      "stopped_at": "lowering"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "items-over-bound-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        },
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          }
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-item-field-rejected",
+    "input": {
+      "schema_version": "apxm.compile-diagnostics.v1",
+      "items": [
+        {
+          "severity": "warning",
+          "code": "source_warning",
+          "phase": "type_check",
+          "message": "SyntaxWarning: \"is\" with a literal. Did you mean \"==\"?",
+          "location": {
+            "source_file": "submitted_source.py",
+            "span": {
+              "start_line": 3,
+              "start_column": 0,
+              "end_line": 3,
+              "end_column": 0
+            }
+          },
+          "hint": "x"
+        }
+      ],
+      "truncated": false,
+      "total_count": 1
+    },
+    "expected_valid": false
+  }
+]

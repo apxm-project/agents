@@ -55,6 +55,58 @@ pub struct CanonicalRuntimeDescriptor {
     pub confinement: AdmittedConfinement,
 }
 
+/// Closed local Capability implementation set selected by the composition root.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RuntimeCapabilityProfile {
+    #[default]
+    PortableLocal,
+    HostOnly,
+}
+
+impl RuntimeCapabilityProfile {
+    fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None | Some("portable_local") => Ok(Self::PortableLocal),
+            Some("host_only") => Ok(Self::HostOnly),
+            Some(_) => Err("unknown APXM_RUNTIME_CAPABILITY_PROFILE".to_owned()),
+        }
+    }
+
+    /// Parse the exact image-owned runtime setting.
+    pub fn from_env() -> Result<Self, String> {
+        match std::env::var("APXM_RUNTIME_CAPABILITY_PROFILE") {
+            Ok(value) => Self::parse(Some(&value)),
+            Err(std::env::VarError::NotPresent) => Self::parse(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err("invalid APXM_RUNTIME_CAPABILITY_PROFILE".to_owned())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod capability_profile_tests {
+    use super::RuntimeCapabilityProfile;
+
+    #[test]
+    fn closed_profile_setting_refuses_unknown_values() {
+        assert_eq!(
+            RuntimeCapabilityProfile::parse(None),
+            Ok(RuntimeCapabilityProfile::PortableLocal)
+        );
+        assert_eq!(
+            RuntimeCapabilityProfile::parse(Some("portable_local")),
+            Ok(RuntimeCapabilityProfile::PortableLocal)
+        );
+        assert_eq!(
+            RuntimeCapabilityProfile::parse(Some("host_only")),
+            Ok(RuntimeCapabilityProfile::HostOnly)
+        );
+        assert!(RuntimeCapabilityProfile::parse(Some("HostOnly")).is_err());
+        assert!(RuntimeCapabilityProfile::parse(Some("")).is_err());
+    }
+}
+
 /// Digest-bound artifact bytes the Runtime Service may instantiate.
 #[derive(Default)]
 pub struct ArtifactStore {
@@ -175,6 +227,29 @@ pub fn canonical_runtime_descriptor() -> CanonicalRuntimeDescriptor {
     }
 }
 
+/// Descriptor for one exact registered Capability implementation set.
+#[must_use]
+pub fn runtime_descriptor_for(profile: RuntimeCapabilityProfile) -> CanonicalRuntimeDescriptor {
+    let mut descriptor = canonical_runtime_descriptor();
+    if profile == RuntimeCapabilityProfile::HostOnly {
+        let capability = descriptor
+            .port_bindings
+            .iter_mut()
+            .find(|binding| binding.slot == PortSlot::Capability.as_str())
+            .expect("canonical Capability binding");
+        capability.binding_digest = digest_text("apxm.canonical.binding.capability.host-only.v1");
+        capability.proof_digest = digest_text("apxm.canonical.proof.capability.host-only.v1");
+    }
+    descriptor
+}
+
+/// Digest of the selected exact runtime Port bindings.
+#[must_use]
+pub fn port_bindings_digest_for(profile: RuntimeCapabilityProfile) -> String {
+    digest_serializable(&runtime_descriptor_for(profile).port_bindings)
+        .expect("runtime bindings are serializable")
+}
+
 #[must_use]
 pub fn canonical_port_bindings_digest() -> String {
     digest_serializable(&canonical_runtime_descriptor().port_bindings)
@@ -199,6 +274,7 @@ pub struct RuntimeAdmissionProfile {
     profile_ref: String,
     release_bytes: Vec<u8>,
     provenance_bytes: Vec<u8>,
+    capability_profile: RuntimeCapabilityProfile,
 }
 
 impl RuntimeAdmissionProfile {
@@ -214,12 +290,26 @@ impl RuntimeAdmissionProfile {
         release_bytes: Vec<u8>,
         provenance_bytes: Vec<u8>,
     ) -> Result<Self, String> {
+        Self::from_carriers_with_capability_profile(
+            release_bytes,
+            provenance_bytes,
+            RuntimeCapabilityProfile::PortableLocal,
+        )
+    }
+
+    /// Calculate the reviewed profile reference from exact image carriers
+    /// and the selected descriptor. No running service response is trusted.
+    pub fn from_carriers_with_capability_profile(
+        release_bytes: Vec<u8>,
+        provenance_bytes: Vec<u8>,
+        capability_profile: RuntimeCapabilityProfile,
+    ) -> Result<Self, String> {
         validate_carrier(&release_bytes)?;
         validate_carrier(&provenance_bytes)?;
         let profile_ref = digest_serializable(&(
             artifact_digest(&release_bytes),
             artifact_digest(&provenance_bytes),
-            canonical_port_bindings_digest(),
+            port_bindings_digest_for(capability_profile),
             canonical_resource_ceiling_digest(),
         ))
         .map(|digest| format!("apxm.admission-profile.{digest}"))
@@ -228,6 +318,7 @@ impl RuntimeAdmissionProfile {
             profile_ref,
             release_bytes,
             provenance_bytes,
+            capability_profile,
         })
     }
 
@@ -236,6 +327,13 @@ impl RuntimeAdmissionProfile {
     /// carrier exists, no profile is configured and invocation admission stays
     /// fail-closed.
     pub fn from_env() -> Result<Option<Self>, String> {
+        Self::from_env_for(RuntimeCapabilityProfile::PortableLocal)
+    }
+
+    /// Load carriers for the selected image-owned runtime profile.
+    pub fn from_env_for(
+        capability_profile: RuntimeCapabilityProfile,
+    ) -> Result<Option<Self>, String> {
         let release_path = std::env::var("APXM_RUNTIME_RELEASE_MANIFEST_PATH")
             .unwrap_or_else(|_| Self::DEFAULT_RELEASE_PATH.to_owned());
         let provenance_path = std::env::var("APXM_RUNTIME_PROVENANCE_PATH")
@@ -243,6 +341,9 @@ impl RuntimeAdmissionProfile {
         let release_exists = std::path::Path::new(&release_path).exists();
         let provenance_exists = std::path::Path::new(&provenance_path).exists();
         if !release_exists && !provenance_exists {
+            if capability_profile == RuntimeCapabilityProfile::HostOnly {
+                return Err("host_only requires both admission profile carriers".to_owned());
+            }
             return Ok(None);
         }
         if release_path.trim().is_empty() || provenance_path.trim().is_empty() {
@@ -250,7 +351,12 @@ impl RuntimeAdmissionProfile {
         }
         let release_bytes = read_carrier(&release_path)?;
         let provenance_bytes = read_carrier(&provenance_path)?;
-        Self::from_carriers(release_bytes, provenance_bytes).map(Some)
+        Self::from_carriers_with_capability_profile(
+            release_bytes,
+            provenance_bytes,
+            capability_profile,
+        )
+        .map(Some)
     }
 
     #[must_use]
@@ -258,15 +364,21 @@ impl RuntimeAdmissionProfile {
         &self.profile_ref
     }
 
+    #[must_use]
+    pub fn capability_profile(&self) -> RuntimeCapabilityProfile {
+        self.capability_profile
+    }
+
     /// Construct materials with a Runtime-owned template identity. The
     /// service replaces this template with its final minted invocation id
     /// during `prepare_invocation`.
     pub fn materials_for_artifact(&self, artifact_bytes: &[u8]) -> InvocationMaterials {
-        materials_for_artifact(
+        materials_for_artifact_with_profile(
             artifact_bytes,
             format!("template.{}", self.profile_ref),
             self.release_bytes.clone(),
             self.provenance_bytes.clone(),
+            self.capability_profile,
         )
     }
 }
@@ -465,11 +577,24 @@ pub fn verify_invocation_materials(
     artifact_bytes: &[u8],
     materials: &InvocationMaterials,
 ) -> Result<VerifiedInvocationAdmission, String> {
+    verify_invocation_materials_for_profile(
+        artifact_bytes,
+        materials,
+        RuntimeCapabilityProfile::PortableLocal,
+    )
+}
+
+/// Verify exact materials against the selected implementation set.
+pub fn verify_invocation_materials_for_profile(
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    capability_profile: RuntimeCapabilityProfile,
+) -> Result<VerifiedInvocationAdmission, String> {
     let artifact_digest = canonical_artifact_digest(artifact_bytes)?;
     let artifact = ExecutableArtifact::decode_for_execution(artifact_bytes, &artifact_digest)
         .map_err(|error| error.clone())?;
-    let descriptor = canonical_runtime_descriptor();
-    if materials.admission.port_bindings_digest != canonical_port_bindings_digest()
+    let descriptor = runtime_descriptor_for(capability_profile);
+    if materials.admission.port_bindings_digest != port_bindings_digest_for(capability_profile)
         || materials.admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
     {
         return Err("admission_profile_mismatch".to_owned());
@@ -820,8 +945,9 @@ pub(crate) async fn resume_admitted_artifact_with_events(
     let artifact =
         ExecutableArtifact::decode_for_execution(artifact_bytes, &admission.artifact_digest)?;
     let inline_skills = inline_skills_from_artifact(&artifact);
-    let descriptor = canonical_runtime_descriptor();
-    if admission.port_bindings_digest != canonical_port_bindings_digest()
+    let capability_profile = capability_profile_for_digest(&admission.port_bindings_digest)?;
+    let descriptor = runtime_descriptor_for(capability_profile);
+    if admission.port_bindings_digest != port_bindings_digest_for(capability_profile)
         || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
     {
         return Err("admission_profile_mismatch".to_owned());
@@ -840,7 +966,8 @@ pub(crate) async fn resume_admitted_artifact_with_events(
     )
     .map_err(|error| error.to_string())?;
     let capability = Arc::new(
-        LocalCapabilityPort::with_package_root_and_sandbox_and_inline_skills(
+        LocalCapabilityPort::with_profile(
+            capability_profile,
             handlers,
             package_root,
             sandbox_registry,
@@ -958,8 +1085,9 @@ async fn drive_admitted_artifact(
             );
         }
     };
-    let descriptor = canonical_runtime_descriptor();
-    if admission.port_bindings_digest != canonical_port_bindings_digest()
+    let capability_profile = capability_profile_for_digest(&admission.port_bindings_digest)?;
+    let descriptor = runtime_descriptor_for(capability_profile);
+    if admission.port_bindings_digest != port_bindings_digest_for(capability_profile)
         || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
     {
         return Err("admission_profile_mismatch".to_owned());
@@ -978,19 +1106,13 @@ async fn drive_admitted_artifact(
     )
     .map_err(|error| error.to_string())?;
     let capability = Arc::new(
-        match sandbox_registry {
-            Some(registry) => LocalCapabilityPort::with_package_root_and_sandbox_and_inline_skills(
-                handlers,
-                package_root,
-                Some(registry),
-                inline_skills,
-            ),
-            None => LocalCapabilityPort::with_package_root_and_inline_skills(
-                handlers,
-                package_root,
-                inline_skills,
-            ),
-        }
+        LocalCapabilityPort::with_profile(
+            capability_profile,
+            handlers,
+            package_root,
+            sandbox_registry,
+            inline_skills,
+        )
         .map_err(|error| error.to_string())?,
     );
     // A host-fulfilled reference has no implementation here and never will:
@@ -1124,12 +1246,29 @@ pub fn materials_for_artifact(
     release_bytes: Vec<u8>,
     provenance_bytes: Vec<u8>,
 ) -> InvocationMaterials {
+    materials_for_artifact_with_profile(
+        artifact_bytes,
+        invocation_id,
+        release_bytes,
+        provenance_bytes,
+        RuntimeCapabilityProfile::PortableLocal,
+    )
+}
+
+/// Build materials for the selected exact runtime descriptor.
+pub fn materials_for_artifact_with_profile(
+    artifact_bytes: &[u8],
+    invocation_id: impl Into<String>,
+    release_bytes: Vec<u8>,
+    provenance_bytes: Vec<u8>,
+    capability_profile: RuntimeCapabilityProfile,
+) -> InvocationMaterials {
     let admission = InvocationAdmission {
         schema_version: INVOCATION_ADMISSION_SCHEMA.to_owned(),
         invocation_id: invocation_id.into(),
         artifact_digest: canonical_artifact_digest(artifact_bytes).unwrap_or_default(),
         release_digest: artifact_digest(&release_bytes),
-        port_bindings_digest: canonical_port_bindings_digest(),
+        port_bindings_digest: port_bindings_digest_for(capability_profile),
         resource_ceiling_digest: canonical_resource_ceiling_digest(),
         provenance_digest: artifact_digest(&provenance_bytes),
     };
@@ -1137,6 +1276,16 @@ pub fn materials_for_artifact(
         admission,
         release_bytes,
         provenance_bytes,
+    }
+}
+
+fn capability_profile_for_digest(digest: &str) -> Result<RuntimeCapabilityProfile, String> {
+    if digest == canonical_port_bindings_digest() {
+        Ok(RuntimeCapabilityProfile::PortableLocal)
+    } else if digest == port_bindings_digest_for(RuntimeCapabilityProfile::HostOnly) {
+        Ok(RuntimeCapabilityProfile::HostOnly)
+    } else {
+        Err("admission_profile_mismatch".to_owned())
     }
 }
 

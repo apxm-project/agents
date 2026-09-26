@@ -14,13 +14,14 @@ workspace = true
 
 [dependencies]
 apxm-kernel.workspace = true
+apxm-core.workspace = true
 apxm-program.workspace = true
 apxm-runtime-protocol.workspace = true
 async-trait.workspace = true
 fs2.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
+serde = { workspace = true, features = ["rc"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+sha2 = { workspace = true, features = ["asm"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 uuid.workspace = true

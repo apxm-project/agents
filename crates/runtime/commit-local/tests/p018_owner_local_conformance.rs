@@ -4,9 +4,10 @@
 //! on hosted durable checkpoint/output. Does not introduce a hosted service.
 
 use apxm_commit_local::{
-    AllowReadAccess, CommitLocalStore, DenyReadAccess, FilesystemExecutionCommit,
-    InMemoryExecutionCommit, MAX_COMMIT_RESULTS, MAX_READ_RECORDS, MAX_STORE_BYTES, ReadAccessHook,
-    ReadAudit, ReadAuthorization, ReadTarget, SessionOutputPreparation,
+    AllowReadAccess, CommitLocalStore, CommitRequestIdentity, DenyReadAccess,
+    FilesystemExecutionCommit, InMemoryExecutionCommit, MAX_COMMIT_RESULTS, MAX_READ_RECORDS,
+    MAX_STORE_BYTES, ReadAccessHook, ReadAudit, ReadAuthorization, ReadTarget,
+    SessionOutputPreparation,
 };
 use apxm_kernel::{
     AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
@@ -226,6 +227,58 @@ async fn exact_replay_requires_the_complete_request_identity() {
     ));
     assert_eq!(
         port.current_version(&ProgramInstanceRef::new("instance.identity"))
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn compact_replay_identity_reopens_and_old_reader_refuses_new_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+    let first_request = request(
+        "commit.compact-replay",
+        "instance.compact-replay",
+        0,
+        Some(json!({"state": "x".repeat(32 * 1024)})),
+    );
+    let full_identity = CommitRequestIdentity::from(&first_request);
+    let first = port.commit(first_request.clone()).await;
+    assert!(matches!(first, ExecutionCommitResult::Committed { .. }));
+    drop(port);
+
+    let persisted = std::fs::read(dir.path().join("execution-commit-local.v2.json"))
+        .expect("read persisted compact store");
+    let store: Value = serde_json::from_slice(&persisted).expect("store JSON");
+    assert!(serde_json::from_slice::<CommitLocalStore>(&persisted).is_err());
+    let identity = store["body"]["by_commit_scope"]
+        .as_object()
+        .and_then(|scopes| scopes.values().next())
+        .and_then(|row| row.get("request_identity"))
+        .expect("retained replay identity");
+    let fingerprint = identity.as_str().expect("compact fingerprint");
+    assert!(fingerprint.starts_with("apxm.commit-request-identity.v1.sha256:"));
+    assert!(
+        serde_json::from_value::<CommitRequestIdentity>(identity.clone()).is_err(),
+        "older full-identity readers must refuse a fingerprint row"
+    );
+    assert!(
+        serde_json::to_vec(identity).unwrap().len()
+            < serde_json::to_vec(&full_identity).unwrap().len() / 100,
+        "retained replay identity should not duplicate the large continuation"
+    );
+
+    let reopened = FilesystemExecutionCommit::open(dir.path()).expect("reopen compact store");
+    assert_eq!(reopened.commit(first_request.clone()).await, first);
+    let mut changed_context = first_request;
+    changed_context.tuple.context = json!({"k": "different"});
+    assert!(matches!(
+        reopened.commit(changed_context).await,
+        ExecutionCommitResult::OutcomeUnknown { .. }
+    ));
+    assert_eq!(
+        reopened
+            .current_version(&ProgramInstanceRef::new("instance.compact-replay"))
             .await,
         1
     );
@@ -1053,7 +1106,7 @@ async fn filesystem_store_tampering_fails_authentication_before_resume() {
     let path = root.join("execution-commit-local.v2.json");
     let mut persisted: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("read store")).expect("store JSON");
-    persisted["instances"]["instance.tamper"]["continuation"]["pc"] = json!(99);
+    persisted["body"]["instances"]["instance.tamper"]["continuation"]["pc"] = json!(99);
     std::fs::write(
         &path,
         serde_json::to_vec_pretty(&persisted).expect("tampered JSON"),

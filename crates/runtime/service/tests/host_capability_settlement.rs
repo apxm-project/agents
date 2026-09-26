@@ -2312,7 +2312,11 @@ fn a_lost_ack_replays_the_authoritative_settlement_after_restart() {
         .with_runtime_state_dir(path)
         .with_embedded_read_access()
         .with_output_access_scope_ref("scope.host-capability".to_owned());
-    assert!(service.startup_error().is_none());
+    assert!(
+        service.startup_error().is_none(),
+        "{:?}",
+        service.startup_error()
+    );
     let mut reopened = Parked {
         service,
         instance,

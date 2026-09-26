@@ -3,11 +3,14 @@
 // The port embeds this harness and runs it as the program text of a Node
 // process. It reads `{"frontend_root", "entrypoint", "source",
 // "host_capabilities"}` on stdin and
-// writes `{"frontend_graph": ...}` on stdout. It emits typed source intent only:
-// AIR lowering belongs to Rust, so this harness never prints AIR. Every
-// rejection exits non-zero with one closed reason token on the first stderr line
-// and its detail below, and prints nothing at all on stdout — there is no
-// partial graph.
+// writes `{"frontend_graph": ..., "diagnostics": [...]}` on stdout, where the
+// diagnostics are the non-error ones raised producing the graph. It emits typed
+// source intent only: AIR lowering belongs to Rust, so this harness never prints
+// AIR. Every rejection exits non-zero with exactly one JSON record on stderr —
+// `{"code": <closed reason token>, "items": [<diagnostic>, ...]}` — and prints
+// nothing at all on stdout; there is no partial graph. A diagnostic is
+// `{severity, code, phase, message, location?}`, and a location uses the source
+// map's coordinates: 1-based lines, 0-based columns.
 //
 // Capturing typed intent from TypeScript source requires the TypeScript
 // authoring frontend to run, and the frontend binds an authored callback through
@@ -44,9 +47,19 @@ const REASON_FRONTEND = "frontend_unavailable";
 const REASON_SOURCE = "source_rejected";
 const REASON_ENTRYPOINT = "entrypoint_not_an_agent_program";
 
+/** Closed phases a diagnostic is raised in. */
+const PHASE_REQUEST = "request";
+const PHASE_FRONTEND = "frontend_capture";
+const PHASE_TYPE_CHECK = "type_check";
+const PHASE_CAPTURE = "capture";
+
+/** The closed slug of a non-error source diagnostic. */
+const CODE_SOURCE_WARNING = "source_warning";
+
 /** In-memory identities. Nothing on disk carries any of these names. */
 const ROOT = "/apxm-submitted";
-const ENTRY_FILE = `${ROOT}/submitted_source.ts`;
+const SOURCE_FILE_NAME = "submitted_source.ts";
+const ENTRY_FILE = `${ROOT}/${SOURCE_FILE_NAME}`;
 const ENTRY_URL = "apxm-submitted:///submitted_source.js";
 const FRONTEND_SPECIFIER = "@apxm/frontend";
 const FRONTEND_NODE_SPECIFIER = "@apxm/frontend/node";
@@ -108,9 +121,48 @@ for (const [name, intrinsic] of intrinsicGlobals) {
   });
 }
 
-function reject(reason, detail) {
-  writeStderr(`${reason}\n${detail}\n`);
+const PHASE_OF_REASON = {
+  [REASON_REQUEST]: PHASE_REQUEST,
+  [REASON_FRONTEND]: PHASE_FRONTEND,
+  [REASON_SOURCE]: PHASE_CAPTURE,
+  [REASON_ENTRYPOINT]: PHASE_CAPTURE,
+};
+
+/** Reject with every diagnostic raised; `items` holds at least one error. */
+function rejectWith(reason, items) {
+  writeStderr(`${serializeOutput({ code: reason, items })}\n`);
   exitProcess(1);
+}
+
+/** Reject with one error diagnostic whose code is the closed reason itself. */
+function reject(reason, detail, phase = PHASE_OF_REASON[reason], location = undefined) {
+  const item = { severity: "error", code: reason, phase, message: String(detail) };
+  if (location !== undefined) item.location = location;
+  rejectWith(reason, [item]);
+}
+
+/** A span the frontend recorded, when it is a forward span in the submission. */
+function submittedLocation(span) {
+  if (
+    span === null ||
+    typeof span !== "object" ||
+    span.source_file !== SOURCE_FILE_NAME ||
+    ![span.start_line, span.start_column, span.end_line, span.end_column].every(
+      (value) => Number.isInteger(value) && value >= 0,
+    ) ||
+    span.start_line < 1
+  ) {
+    return undefined;
+  }
+  return {
+    source_file: SOURCE_FILE_NAME,
+    span: {
+      start_line: span.start_line,
+      start_column: span.start_column,
+      end_line: span.end_line,
+      end_column: span.end_column,
+    },
+  };
 }
 
 function readRequest() {
@@ -230,32 +282,60 @@ const host = {
   writeFile: () => {},
 };
 
-let errors;
+/**
+ * Project one TypeScript diagnostic. Only a diagnostic in the submitted file
+ * carries a location; one in a frontend declaration file would name a path
+ * on this host, so it carries its message alone.
+ */
+function typeCheckItem(diagnostic, severity, code) {
+  const item = {
+    severity,
+    code,
+    phase: PHASE_TYPE_CHECK,
+    message: `TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`,
+  };
+  if (
+    diagnostic.file !== undefined &&
+    diagnostic.file.fileName === ENTRY_FILE &&
+    diagnostic.start !== undefined
+  ) {
+    const start = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    const end = diagnostic.file.getLineAndCharacterOfPosition(
+      diagnostic.start + (diagnostic.length ?? 0),
+    );
+    item.location = {
+      source_file: SOURCE_FILE_NAME,
+      span: {
+        start_line: start.line + 1,
+        start_column: start.character,
+        end_line: end.line + 1,
+        end_column: end.character,
+      },
+    };
+  }
+  return item;
+}
+
+let typeCheckItems;
 try {
   const program = ts.createProgram([ENTRY_FILE], options, host);
-  errors = ts
-    .getPreEmitDiagnostics(program)
-    .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+  typeCheckItems = ts.getPreEmitDiagnostics(program).flatMap((diagnostic) => {
+    if (diagnostic.category === ts.DiagnosticCategory.Error) {
+      return [typeCheckItem(diagnostic, "error", REASON_SOURCE)];
+    }
+    if (diagnostic.category === ts.DiagnosticCategory.Warning) {
+      return [typeCheckItem(diagnostic, "warning", CODE_SOURCE_WARNING)];
+    }
+    return [];
+  });
 } catch (error) {
-  reject(REASON_SOURCE, `${error.name}: ${error.message}`);
+  reject(REASON_SOURCE, `${error.name}: ${error.message}`, PHASE_TYPE_CHECK);
 }
-if (errors.length > 0) {
-  reject(
-    REASON_SOURCE,
-    errors
-      .map((diagnostic) => {
-        const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
-        if (diagnostic.file === undefined || diagnostic.start === undefined) {
-          return message;
-        }
-        const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(
-          diagnostic.start,
-        );
-        return `${line + 1}:${character + 1}: ${message}`;
-      })
-      .join("\n"),
-  );
+if (typeCheckItems.some((item) => item.severity === "error")) {
+  rejectWith(REASON_SOURCE, typeCheckItems);
 }
+/** Non-error diagnostics a successful capture still reports. */
+const warnings = typeCheckItems;
 
 let transpiled;
 try {
@@ -263,7 +343,7 @@ try {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
 } catch (error) {
-  reject(REASON_SOURCE, `${error.name}: ${error.message}`);
+  reject(REASON_SOURCE, `${error.name}: ${error.message}`, PHASE_TYPE_CHECK);
 }
 
 // The submitted module resolves through this closed table only. Any other
@@ -346,7 +426,23 @@ try {
   }
   captured = definition.frontendGraph();
 } catch (error) {
-  reject(REASON_SOURCE, `${error.name}: ${error.message}`);
+  // A frontend capture error carries its closed code, the bare explanation,
+  // and — where the frontend had the source node — the span it rejected.
+  const code =
+    error !== null && typeof error === "object" && typeof error.code === "string"
+      ? error.code
+      : REASON_SOURCE;
+  const detail =
+    error !== null && typeof error === "object" && typeof error.detail === "string"
+      ? error.detail
+      : `${error?.name}: ${error?.message}`;
+  const location =
+    error !== null && typeof error === "object" ? submittedLocation(error.span) : undefined;
+  const item = { severity: "error", code, phase: PHASE_CAPTURE, message: detail };
+  if (location !== undefined) item.location = location;
+  rejectWith(REASON_SOURCE, [...warnings, item]);
 }
 
-writeStdout(serializeOutput({ frontend_graph: captured }));
+const response = { frontend_graph: captured };
+if (warnings.length > 0) response.diagnostics = warnings;
+writeStdout(serializeOutput(response));

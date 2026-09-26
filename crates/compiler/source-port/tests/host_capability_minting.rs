@@ -9,7 +9,10 @@
 
 mod common;
 
-use apxm_source_port::{Frontend, SourceBundleRequest, compile_source_bundle};
+use apxm_source_port::{
+    Frontend, Phase, Severity, SourceBundleRequest, SourceDiagnosticCode, compile_source_bundle,
+    diagnostic_report,
+};
 
 use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 
@@ -89,8 +92,9 @@ fn a_declared_host_capability_compiles_and_keeps_its_namespace() {
     }
 }
 
-/// An undeclared `host:` reference rejects, and the diagnostic names the line
-/// and column of the reference in the submitted source.
+/// An undeclared `host:` reference rejects, and the diagnostic locates the
+/// reference in the submitted source in source-map coordinates: 1-based line,
+/// 0-based column, spanning the reference.
 #[test]
 fn an_undeclared_host_capability_rejects_with_a_source_position() {
     for frontend in FRONTENDS {
@@ -98,12 +102,16 @@ fn an_undeclared_host_capability_rejects_with_a_source_position() {
             continue;
         }
         let source = program_invoking(frontend, "host:notes.append");
-        let expected = source
+        let (line, column) = source
             .lines()
             .enumerate()
             .find_map(|(index, line)| {
-                line.find("host:notes.append")
-                    .map(|column| format!("{}:{}", index + 1, column + 1))
+                line.find("host:notes.append").map(|column| {
+                    (
+                        u32::try_from(index + 1).unwrap(),
+                        u32::try_from(column).unwrap(),
+                    )
+                })
             })
             .expect("the fixture writes the reference exactly once");
 
@@ -117,21 +125,96 @@ fn an_undeclared_host_capability_rejects_with_a_source_position() {
                     frontend.wire()
                 )
             });
-        let reported = diagnostics
+        assert_eq!(diagnostics.len(), 1, "{}: {diagnostics:?}", frontend.wire());
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic.code, SourceDiagnosticCode::GraphRejected);
+        assert_eq!(diagnostic.wire_code(), "graph_rejected");
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(
+            diagnostic.message.contains("host:notes.append"),
+            "{}: the diagnostic names the reference; got {diagnostic:?}",
+            frontend.wire()
+        );
+        let location = diagnostic
+            .location
+            .as_ref()
+            .unwrap_or_else(|| panic!("{}: the diagnostic is located", frontend.wire()));
+        assert_eq!(location.source_file, frontend.submitted_source_file());
+        assert_eq!(
+            (
+                location.span.start_line,
+                location.span.start_column,
+                location.span.end_line,
+                location.span.end_column
+            ),
+            (line, column, line, column + 17),
+            "{}: the span covers exactly the reference",
+            frontend.wire()
+        );
+    }
+}
+
+/// Every undeclared reference is its own diagnostic with its own location, in
+/// source order — a repeated reference included — and none is folded into
+/// another's text. The report stops before capture: nothing later ran.
+#[test]
+fn every_undeclared_host_reference_is_reported_at_its_own_location() {
+    for frontend in FRONTENDS {
+        let source = match frontend {
+            Frontend::Python => "from apxm_program import Capability\n\
+                 Append = Capability[dict, dict](\"host:notes.append\")\n\
+                 Delete = Capability[dict, dict](\"host:notes.delete\")\n\
+                 Again = Capability[dict, dict]('host:notes.append')\n"
+                .to_owned(),
+            Frontend::Typescript => "import { Capability } from \"@apxm/frontend\";\n\
+                 const Append = Capability<object, object>(\"host:notes.append\");\n\
+                 const Delete = Capability<object, object>(\"host:notes.delete\");\n\
+                 const Again = Capability<object, object>('host:notes.append');\n"
+                .to_owned(),
+        };
+        let request = SourceBundleRequest::new(frontend, ENTRYPOINT, source.clone())
+            .with_host_capabilities(["notes.search"]);
+        let diagnostics = compile_source_bundle(&request, &roots(), &drivers())
+            .expect_err("undeclared host references never compile");
+
+        let located = diagnostics
             .iter()
-            .map(|diagnostic| diagnostic.message.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            reported.contains("host:notes.append"),
-            "{}: the diagnostic names the reference; got {reported}",
-            frontend.wire()
-        );
-        assert!(
-            reported.contains(&expected),
-            "{}: the diagnostic names {expected}; got {reported}",
-            frontend.wire()
-        );
+            .map(|diagnostic| {
+                let location = diagnostic.location.as_ref().expect("every item is located");
+                (location.span.start_line, location.span.start_column)
+            })
+            .collect::<Vec<_>>();
+        let expected = source
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                line.find("host:").map(|column| {
+                    (
+                        u32::try_from(index + 1).unwrap(),
+                        u32::try_from(column).unwrap(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(located, expected, "{}: {diagnostics:?}", frontend.wire());
+        assert_eq!(diagnostics.len(), 3);
+        for (diagnostic, name) in diagnostics.iter().zip([
+            "host:notes.append",
+            "host:notes.delete",
+            "host:notes.append",
+        ]) {
+            assert!(diagnostic.message.contains(name), "{diagnostic:?}");
+            assert!(
+                !diagnostic.message.contains('\n'),
+                "one reference per item, never concatenated: {diagnostic:?}"
+            );
+        }
+
+        let report = diagnostic_report(&diagnostics);
+        assert_eq!(report.total_count, 3);
+        assert!(!report.truncated);
+        assert_eq!(report.first_error_code(), Some("graph_rejected"));
+        assert_eq!(report.stopped_at, Some(Phase::TypeCheck));
     }
 }
 
@@ -153,5 +236,30 @@ fn declaring_no_host_capability_mints_none() {
             "{}: an undeclared host namespace admits nothing",
             frontend.wire()
         );
+    }
+}
+
+/// A report carries at most 64 diagnostics in emission order and counts the
+/// rest, so a consumer knows the list is partial.
+#[test]
+fn a_report_of_many_undeclared_references_is_bounded_and_counted() {
+    let references = (0..70)
+        .map(|index| format!("const Reference{index} = \"host:notes.n{index}\";\n"))
+        .collect::<String>();
+    let request = SourceBundleRequest::new(Frontend::Typescript, ENTRYPOINT, references)
+        .with_host_capabilities(["notes.search"]);
+    let diagnostics = compile_source_bundle(&request, &roots(), &drivers())
+        .expect_err("undeclared host references never compile");
+    assert_eq!(diagnostics.len(), 70, "the port keeps every diagnostic");
+
+    let report = diagnostic_report(&diagnostics);
+    assert_eq!(report.items.len(), apxm_source_port::MAX_REPORT_ITEMS);
+    assert!(report.truncated);
+    assert_eq!(report.total_count, 70);
+    assert_eq!(report.stopped_at, Some(Phase::TypeCheck));
+    for (index, item) in report.items.iter().enumerate() {
+        let location = item.location.as_ref().expect("located");
+        assert_eq!(location.span.start_line, u32::try_from(index + 1).unwrap());
+        assert!(item.message.contains(&format!("host:notes.n{index}'")));
     }
 }

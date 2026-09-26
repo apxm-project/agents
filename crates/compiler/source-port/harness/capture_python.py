@@ -3,10 +3,14 @@
 The port embeds this harness and runs it as the program text of an isolated
 interpreter. It reads `{"frontend_root", "entrypoint", "source",
 "host_capabilities"}` on stdin and
-writes `{"frontend_graph": ...}` on stdout. It emits typed source intent only:
-AIR lowering belongs to Rust, so this harness never prints AIR. Every rejection
-exits non-zero with one closed reason token on the first stderr line and its
-detail below, and prints nothing at all on stdout — there is no partial graph.
+writes `{"frontend_graph": ..., "diagnostics": [...]}` on stdout, where the
+diagnostics are the non-error ones raised producing the graph. It emits typed
+source intent only: AIR lowering belongs to Rust, so this harness never prints
+AIR. Every rejection exits non-zero with exactly one JSON record on stderr —
+`{"code": <closed reason token>, "items": [<diagnostic>, ...]}` — and prints
+nothing at all on stdout; there is no partial graph. A diagnostic is
+`{severity, code, phase, message, location?}`, and a location uses the source
+map's coordinates: 1-based lines, 0-based columns.
 
 Capturing typed intent from Python source requires the Python authoring frontend
 to run, and the frontend resolves an authored callback through the import
@@ -48,12 +52,29 @@ import resource
 import sys
 import sysconfig
 import types
+import warnings
 
 #: Closed reason tokens. The Rust port maps each to one typed diagnostic code.
 REASON_REQUEST = "harness_request_invalid"
 REASON_FRONTEND = "frontend_unavailable"
 REASON_SOURCE = "source_rejected"
 REASON_ENTRYPOINT = "entrypoint_not_an_agent_program"
+
+#: Closed phases a diagnostic is raised in.
+PHASE_REQUEST = "request"
+PHASE_FRONTEND = "frontend_capture"
+PHASE_TYPE_CHECK = "type_check"
+PHASE_CAPTURE = "capture"
+
+#: The closed slug of a non-error source diagnostic.
+CODE_SOURCE_WARNING = "source_warning"
+
+_PHASE_OF_REASON = {
+    REASON_REQUEST: PHASE_REQUEST,
+    REASON_FRONTEND: PHASE_FRONTEND,
+    REASON_SOURCE: PHASE_CAPTURE,
+    REASON_ENTRYPOINT: PHASE_CAPTURE,
+}
 
 #: The name the submitted module is bound under and the synthetic file name its
 #: compiled code carries. Nothing on disk has either name.
@@ -134,12 +155,111 @@ _json_dump = json.dump
 
 
 class Rejected(Exception):
-    """One closed rejection reason and its detail."""
+    """One closed rejection reason and the diagnostics that explain it."""
 
-    def __init__(self, reason: str, detail: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        phase: str | None = None,
+        code: str | None = None,
+        location: dict | None = None,
+    ) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
+        item = {
+            "severity": "error",
+            "code": code or reason,
+            "phase": phase or _PHASE_OF_REASON[reason],
+            "message": detail,
+        }
+        if location is not None:
+            item["location"] = location
+        self.items = [item]
+
+
+def _location(
+    line: object, column: object, end_line: object = None, end_column: object = None
+) -> dict | None:
+    """A source-map location in the submitted file, or None when unknown.
+
+    ``line`` is 1-based and ``column`` 0-based, the source map's convention.
+    """
+    if not isinstance(line, int) or line < 1:
+        return None
+    column = column if isinstance(column, int) and column >= 0 else 0
+    end_line = end_line if isinstance(end_line, int) and end_line >= line else line
+    end_column = end_column if isinstance(end_column, int) and end_column >= 0 else column
+    if (end_line, end_column) < (line, column):
+        end_line, end_column = line, column
+    return {
+        "source_file": SOURCE_FILE_NAME,
+        "span": {
+            "start_line": line,
+            "start_column": column,
+            "end_line": end_line,
+            "end_column": end_column,
+        },
+    }
+
+
+def _syntax_error_location(error: SyntaxError) -> dict | None:
+    """Convert a SyntaxError's 1-based offsets to the source map's columns."""
+    if error.filename not in (None, SOURCE_FILE_NAME, "<unknown>"):
+        return None
+    offset = error.offset - 1 if isinstance(error.offset, int) and error.offset > 0 else 0
+    end_offset = (
+        error.end_offset - 1
+        if isinstance(getattr(error, "end_offset", None), int) and error.end_offset > 0
+        else None
+    )
+    return _location(error.lineno, offset, getattr(error, "end_lineno", None), end_offset)
+
+
+def _source_rejection(error: BaseException, phase: str = PHASE_CAPTURE) -> Rejected:
+    """A source rejection carrying whatever structure the error has.
+
+    A frontend capture error states a closed code and, when it had the source
+    node, the span; a syntax error states its line and offset.
+    """
+    code = getattr(error, "code", None)
+    detail = getattr(error, "detail", None)
+    location = None
+    if isinstance(error, SyntaxError):
+        location = _syntax_error_location(error)
+        phase = PHASE_TYPE_CHECK
+    else:
+        span = getattr(error, "span", None)
+        if isinstance(span, tuple) and len(span) == 4:
+            location = _location(*span)
+    return Rejected(
+        REASON_SOURCE,
+        detail if isinstance(detail, str) else f"{type(error).__name__}: {error}",
+        phase=phase,
+        code=code if isinstance(code, str) else None,
+        location=location,
+    )
+
+
+def _warning_items(caught: list) -> list[dict]:
+    """Project warnings raised compiling the submitted text."""
+    items = []
+    for warning in caught:
+        if warning.filename != SOURCE_FILE_NAME:
+            continue
+        item = {
+            "severity": "warning",
+            "code": CODE_SOURCE_WARNING,
+            "phase": PHASE_TYPE_CHECK,
+            "message": f"{warning.category.__name__}: {warning.message}",
+        }
+        location = _location(warning.lineno, 0)
+        if location is not None:
+            item["location"] = location
+        items.append(item)
+    return items
 
 
 def _read_request() -> tuple[str, str, str, list[str]]:
@@ -185,9 +305,9 @@ def _source_contract(
     by the original source callback.
     """
     try:
-        tree = ast.parse(source)
+        tree = ast.parse(source, SOURCE_FILE_NAME)
     except SyntaxError as error:
-        raise Rejected(REASON_SOURCE, f"SyntaxError: {error}") from None
+        raise _source_rejection(error, PHASE_TYPE_CHECK) from None
 
     string_names = {
         target.id: value.value
@@ -545,12 +665,19 @@ def _lock_down() -> None:
     sys.addaudithook(audit)
 
 
-def _bind(entrypoint: str, source: str) -> object:
-    """Compile and bind the submitted text from memory, never from disk."""
+def _bind(entrypoint: str, source: str, warning_items: list[dict]) -> object:
+    """Compile and bind the submitted text from memory, never from disk.
+
+    Warnings the compiler raises over the submitted text are appended to
+    ``warning_items``; they never reject.
+    """
     try:
-        code = compile(source, SOURCE_FILE_NAME, "exec", dont_inherit=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            code = compile(source, SOURCE_FILE_NAME, "exec", dont_inherit=True)
     except BaseException as error:  # noqa: BLE001 - a compile failure is a source rejection
-        raise Rejected(REASON_SOURCE, f"{type(error).__name__}: {error}") from None
+        raise _source_rejection(error, PHASE_TYPE_CHECK) from None
+    warning_items.extend(_warning_items(caught))
 
     class InMemoryLoader(importlib.abc.InspectLoader):
         """Binds the submitted text without giving it a path on the filesystem."""
@@ -586,7 +713,7 @@ def _bind(entrypoint: str, source: str) -> object:
     try:
         spec.loader.exec_module(module)
     except BaseException as error:  # noqa: BLE001 - any authoring failure rejects
-        raise Rejected(REASON_SOURCE, f"{type(error).__name__}: {error}") from None
+        raise _source_rejection(error) from None
 
     if not hasattr(module, entrypoint):
         raise Rejected(
@@ -617,7 +744,7 @@ def _capture(entrypoint: str, definition: object, trusted_graph=None) -> object:
             f"entrypoint '{entrypoint}' is not an authored Agent program",
         ) from None
     except BaseException as error:  # noqa: BLE001 - any capture failure rejects
-        raise Rejected(REASON_SOURCE, f"{type(error).__name__}: {error}") from None
+        raise _source_rejection(error) from None
 
 
 def main() -> int:
@@ -631,6 +758,8 @@ def main() -> int:
     trusted_json_dump = _json_dump
     trusted_stdout = sys.stdout
     trusted_stderr = sys.stderr
+    trusted_items = _json_dump
+    warning_items: list[dict] = []
     try:
         frontend_root, entrypoint, source, host_capabilities = _read_request()
         source_contract = _source_contract(source)
@@ -646,14 +775,23 @@ def main() -> int:
         # class attribute. The implementation itself reads only the immutable
         # snapshot registry, not a source-dispatched helper.
         trusted_graph = native_graph
-        captured = trusted_capture(entrypoint, _bind(entrypoint, source), trusted_graph)
+        captured = trusted_capture(
+            entrypoint, _bind(entrypoint, source, warning_items), trusted_graph
+        )
         if native_graph is not None:
             integrity_guard()
             trusted_validate_graph_provenance(captured, source_contract)
     except Rejected as rejection:
-        print(f"{rejection.reason}\n{rejection.detail}", file=trusted_stderr)
+        trusted_items(
+            {"code": rejection.reason, "items": [*warning_items, *rejection.items]},
+            trusted_stderr,
+            sort_keys=True,
+        )
         return 1
-    trusted_json_dump({"frontend_graph": captured}, trusted_stdout, sort_keys=True)
+    response = {"frontend_graph": captured}
+    if warning_items:
+        response["diagnostics"] = warning_items
+    trusted_json_dump(response, trusted_stdout, sort_keys=True)
     return 0
 
 

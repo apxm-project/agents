@@ -42,7 +42,7 @@ pub mod package_snapshot;
 
 use std::path::{Path, PathBuf};
 
-use apxm_core::types::host_capability;
+use apxm_core::{grammar, types::host_capability};
 use apxm_program::air::AirModule;
 use apxm_program::frontend_graph::FrontendGraph;
 use apxm_program::source_map::SourceMap;
@@ -51,7 +51,11 @@ pub use crate::confinement::{
     CAPTURE_SCRATCH_DIR_VARIABLE, CONFINEMENT_BOUNDARY, CONFINEMENT_MODE_VARIABLE, ConfinementMode,
     ConfinementReadiness, ConfinementStatus, capture_confinement_readiness,
 };
-pub use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
+pub use crate::diagnostic::{
+    COMPILE_DIAGNOSTICS_SCHEMA, CompileDiagnostic, DiagnosticReport, DiagnosticReportVersion,
+    Location, MAX_FIELD_PATH, MAX_MESSAGE_BYTES, MAX_RELATED, MAX_REPORT_ITEMS, Phase, Related,
+    Severity, SourceDiagnostic, SourceDiagnosticCode, TypeFact, bound_message,
+};
 pub use crate::frontend::Frontend;
 pub use crate::package_snapshot::{
     PACKAGE_SNAPSHOT_CONTRACT, PackageSnapshot, SnapshotContent, SnapshotError, content_digest,
@@ -190,9 +194,8 @@ impl FrontendDrivers {
             return Err(SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendUnavailable,
                 format!(
-                    "the declared {} authoring frontend driver '{}' is not a file",
+                    "the declared {} authoring frontend driver is not a file",
                     frontend.wire(),
-                    driver.display()
                 ),
             ));
         }
@@ -234,9 +237,8 @@ impl FrontendRoots {
             return Err(SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendUnavailable,
                 format!(
-                    "the declared {} authoring frontend root '{}' is not a directory",
+                    "the declared {} authoring frontend root is not a directory",
                     frontend.wire(),
-                    root.display()
                 ),
             ));
         }
@@ -258,6 +260,29 @@ pub struct CompiledSource {
     pub air_digest: String,
     /// Opaque lineage commitment for this source/AIR/compiler combination.
     pub execution_lineage_ref: String,
+    /// Non-error diagnostics raised while compiling, in emission order. A
+    /// compiled source never carries an error.
+    pub diagnostics: Vec<SourceDiagnostic>,
+}
+
+/// Bound a list of source-port diagnostics into one wire report.
+///
+/// `stopped_at` is the latest phase any error was raised in: the port stops at
+/// the first failing phase, so no check after it ran. A list without an error
+/// ran every phase the port owns, and the report says nothing stopped.
+#[must_use]
+pub fn diagnostic_report(diagnostics: &[SourceDiagnostic]) -> DiagnosticReport {
+    let stopped_at = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| diagnostic.phase)
+        .max();
+    DiagnosticReport::from_diagnostics(
+        diagnostics
+            .iter()
+            .map(SourceDiagnostic::to_compile_diagnostic),
+        stopped_at,
+    )
 }
 
 /// Compile one submitted source bundle into a typed FrontendGraph, canonical
@@ -291,11 +316,13 @@ pub fn compile_source_bundle(
         &request.entrypoint,
         &request.source,
         &request.host_capabilities,
-    )
-    .map_err(|diagnostic| vec![diagnostic])?;
+    )?;
 
     let source_digest = content_digest(request.source.as_bytes());
-    compile_captured_graph(request.frontend, captured, &source_digest)
+    let mut compiled =
+        compile_captured_graph(request.frontend, captured.frontend_graph, &source_digest)?;
+    compiled.diagnostics = captured.diagnostics;
+    Ok(compiled)
 }
 
 /// Refuse a `host:` reference the package's manifest does not declare, naming
@@ -304,10 +331,14 @@ pub fn compile_source_bundle(
 /// The frontends close the same set inside the interpreter and refuse the same
 /// reference, but an interpreter cannot say *where*: its markers run at module
 /// evaluation, with no source node to point at. This runs first and over the
-/// exact submitted text, so an author gets the line and column of the reference
-/// rather than only its spelling. A capability reference is always a literal —
-/// both frontends refuse a computed one — so scanning quoted occurrences of the
-/// reserved prefix finds every reference a program can make.
+/// exact submitted text, so an author gets the location of every undeclared
+/// reference rather than only its spelling. A capability reference is always a
+/// literal — both frontends refuse a computed one — so scanning quoted
+/// occurrences of the reserved prefix finds every reference a program can make.
+///
+/// Each occurrence is its own diagnostic with its own location, in source
+/// order. The scan is a static check of the submitted text before any
+/// evaluation, so it reports in the type-check phase: nothing later ran.
 fn reject_undeclared_host_references(
     request: &SourceBundleRequest,
 ) -> Result<(), Vec<SourceDiagnostic>> {
@@ -316,21 +347,32 @@ fn reject_undeclared_host_references(
         .iter()
         .map(|id| host_capability::host_capability_ref(id))
         .collect::<std::collections::BTreeSet<_>>();
-    let mut seen = std::collections::BTreeSet::new();
-    let mut diagnostics = Vec::new();
-    for (line, column, reference) in quoted_host_references(&request.source) {
-        if declared.contains(&reference) || !seen.insert(reference.clone()) {
-            continue;
-        }
-        diagnostics.push(SourceDiagnostic::new(
-            SourceDiagnosticCode::GraphRejected,
-            format!(
-                "{line}:{column}: the Capability reference '{reference}' names the \
-                 host-fulfilled namespace, and the package manifest declares no \
-                 matching [[capabilities.host]] entry"
-            ),
-        ));
-    }
+    let source_file = request.frontend.submitted_source_file();
+    let diagnostics = quoted_host_references(&request.source)
+        .into_iter()
+        .filter(|reference| !declared.contains(&reference.text))
+        .map(|reference| {
+            let span = apxm_program::source_map::Span {
+                start_line: reference.line,
+                start_column: reference.column,
+                end_line: reference.line,
+                end_column: reference.column + reference.width,
+            };
+            SourceDiagnostic::new(
+                SourceDiagnosticCode::GraphRejected,
+                format!(
+                    "the Capability reference '{}' names the host-fulfilled namespace, and \
+                     the package manifest declares no matching [[capabilities.host]] entry",
+                    reference.text
+                ),
+            )
+            .with_phase(Phase::TypeCheck)
+            .with_location(Location {
+                source_file: source_file.to_owned(),
+                span,
+            })
+        })
+        .collect::<Vec<_>>();
     if diagnostics.is_empty() {
         Ok(())
     } else {
@@ -338,13 +380,24 @@ fn reject_undeclared_host_references(
     }
 }
 
-/// Every quoted `host:` reference in `source`, with its 1-based line and column.
+/// One quoted `host:` reference in submitted source, in source-map
+/// coordinates: a 1-based line, a 0-based character column, and the width of
+/// the reference in characters.
+#[derive(Debug, PartialEq, Eq)]
+struct HostReference {
+    line: u32,
+    column: u32,
+    width: u32,
+    text: String,
+}
+
+/// Every quoted `host:` reference in `source`, in source order.
 ///
 /// Only an occurrence immediately behind a quote is a reference: the prefix in
 /// prose or in a comment is text about the namespace, not a use of it. Columns
 /// count characters rather than bytes, so a reference after a non-ASCII
 /// character lands where an editor puts it.
-fn quoted_host_references(source: &str) -> Vec<(usize, usize, String)> {
+fn quoted_host_references(source: &str) -> Vec<HostReference> {
     let mut found = Vec::new();
     for (index, line) in source.lines().enumerate() {
         let bytes = line.as_bytes();
@@ -359,11 +412,114 @@ fn quoted_host_references(source: &str) -> Vec<(usize, usize, String)> {
                         || matches!(character, '.' | '_' | '-' | ':'))
                 })
                 .unwrap_or(tail.len());
-            let column = line[..offset].chars().count() + 1;
-            found.push((index + 1, column, tail[..end].to_owned()));
+            let text = tail[..end].to_owned();
+            found.push(HostReference {
+                line: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                column: u32::try_from(line[..offset].chars().count()).unwrap_or(u32::MAX),
+                width: u32::try_from(text.chars().count()).unwrap_or(u32::MAX),
+                text,
+            });
         }
     }
     found
+}
+
+/// Project one verifier or lowering diagnostic, anchoring its location.
+///
+/// A verifier location is either the identity of a graph entity or a field
+/// path. A semantic or control node becomes `node_id`, with the span the
+/// frontend recorded for it; any other graph entity becomes a field path into
+/// the collection that holds it; anything else is a dotted field path.
+fn lowering_diagnostic(
+    graph: &FrontendGraph,
+    diagnostic: apxm_program::diagnostic::Diagnostic,
+) -> SourceDiagnostic {
+    let location = diagnostic.location.trim().to_owned();
+    let mut projected =
+        SourceDiagnostic::new(SourceDiagnosticCode::GraphRejected, diagnostic.message)
+            .with_detail_code(diagnostic.code.slug())
+            .with_phase(Phase::Lowering);
+    if location.is_empty() {
+        return projected;
+    }
+    let is_node = graph
+        .call_intents
+        .iter()
+        .any(|intent| intent.node_id == location)
+        || graph
+            .control_intents
+            .iter()
+            .any(|intent| intent.node_id == location);
+    if is_node {
+        if let Some(span) = graph
+            .source_map
+            .node_spans
+            .iter()
+            .find(|span| span.node_id == location)
+        {
+            projected = projected.with_location(Location {
+                source_file: span.source_file.clone(),
+                span: span.span,
+            });
+        }
+        // A rejected graph may contain an authored name that is not an
+        // identifier. Keep its source span, but never emit that name as a
+        // diagnostic node identity on the strict compile protocol.
+        return if grammar::is_identifier(&location) {
+            projected.with_node_id(location)
+        } else {
+            projected
+        };
+    }
+    if let Some(span) = graph
+        .source_map
+        .region_spans
+        .iter()
+        .find(|span| span.region_id == location)
+    {
+        projected = projected.with_location(Location {
+            source_file: span.source_file.clone(),
+            span: span.span,
+        });
+    }
+    let collection = if graph
+        .declarations
+        .iter()
+        .any(|declaration| declaration.decl_id == location)
+    {
+        Some("declarations")
+    } else if graph.values.iter().any(|value| value.value_id == location) {
+        Some("values")
+    } else if graph
+        .regions
+        .iter()
+        .any(|region| region.region_id == location)
+    {
+        Some("regions")
+    } else if graph
+        .hook_bindings
+        .iter()
+        .any(|binding| binding.hook_id == location)
+    {
+        Some("hook_bindings")
+    } else if graph
+        .program_definitions
+        .iter()
+        .any(|definition| definition.program_id == location)
+    {
+        Some("program_definitions")
+    } else {
+        None
+    };
+    let field_path = match collection {
+        Some(collection) => vec![collection.to_owned(), location],
+        None => location
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    projected.with_field_path(field_path)
 }
 
 fn compile_captured_graph(
@@ -400,17 +556,7 @@ fn compile_captured_graph(
         verdict
             .into_diagnostics()
             .into_iter()
-            .map(|diagnostic| {
-                SourceDiagnostic::new(
-                    SourceDiagnosticCode::GraphRejected,
-                    format!(
-                        "{}:{}: {}",
-                        diagnostic.code.slug(),
-                        diagnostic.location,
-                        diagnostic.message
-                    ),
-                )
-            })
+            .map(|diagnostic| lowering_diagnostic(&frontend_graph, diagnostic))
             .collect::<Vec<_>>()
     })?;
 
@@ -439,6 +585,7 @@ fn compile_captured_graph(
         source_map,
         air_digest,
         execution_lineage_ref,
+        diagnostics: Vec::new(),
     })
 }
 
@@ -450,7 +597,9 @@ mod tests {
     use serde::Deserialize;
     use serde_json::Value;
 
-    use super::{Frontend, SourceDiagnosticCode, compile_captured_graph};
+    use super::{
+        Frontend, Phase, SourceDiagnosticCode, compile_captured_graph, quoted_host_references,
+    };
 
     #[derive(Debug, Deserialize)]
     struct FrontendGraphVector {
@@ -578,6 +727,83 @@ mod tests {
                 .map(|diagnostic| diagnostic.code)
                 .collect::<Vec<_>>(),
             vec![SourceDiagnosticCode::FrontendOutputInvalid]
+        );
+    }
+
+    /// A verifier diagnostic anchored at a graph node keeps every item, names
+    /// the node, carries the span the frontend recorded for it, and keeps the
+    /// verifier's own closed code rather than flattening it into text.
+    #[test]
+    fn verifier_diagnostics_are_structured_and_all_kept() {
+        let vector = frontend_graph_vector("valid-frontend-graph-typed-intents");
+        let frontend = requested_frontend(&vector);
+        let mut graph = vector.input;
+        let first = graph["call_intents"][0].clone();
+        let second = graph["call_intents"][1].clone();
+        let node = first["node_id"].as_str().unwrap().to_owned();
+        let other = second["node_id"].as_str().unwrap().to_owned();
+        graph["call_intents"].as_array_mut().unwrap().push(first);
+        graph["call_intents"].as_array_mut().unwrap().push(second);
+        graph["source_map"]["node_spans"] = serde_json::json!([{
+            "node_id": node,
+            "source_file": "submitted_source.py",
+            "span": {"start_line": 4, "start_column": 2, "end_line": 4, "end_column": 9}
+        }]);
+
+        let diagnostics = compile_captured_graph(frontend, graph, "vector-source")
+            .expect_err("duplicate node ids do not verify");
+
+        let duplicates = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.wire_code() == "duplicate_node_id")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            duplicates.len(),
+            2,
+            "every diagnostic is kept: {diagnostics:?}"
+        );
+        for diagnostic in &diagnostics {
+            assert_eq!(diagnostic.code, SourceDiagnosticCode::GraphRejected);
+            assert_eq!(diagnostic.phase, Phase::Lowering);
+            assert!(!diagnostic.message.contains("duplicate_node_id:"));
+        }
+        let anchored = duplicates
+            .iter()
+            .find(|diagnostic| diagnostic.node_id.as_deref() == Some(node.as_str()))
+            .expect("the duplicate names its node");
+        let location = anchored
+            .location
+            .as_ref()
+            .expect("the node's span is carried");
+        assert_eq!(location.source_file, "submitted_source.py");
+        assert_eq!(location.span.start_line, 4);
+        assert!(anchored.field_path.is_none());
+        let unspanned = duplicates
+            .iter()
+            .find(|diagnostic| diagnostic.node_id.as_deref() == Some(other.as_str()))
+            .expect("the second duplicate names its node");
+        assert!(unspanned.location.is_none());
+    }
+
+    /// A reference behind a quote is found in source-map coordinates: a
+    /// 1-based line and a 0-based character column, past non-ASCII text.
+    #[test]
+    fn quoted_host_references_use_source_map_coordinates() {
+        let found = quoted_host_references("x = 1\n\u{e9}\u{e9} = \"host:a.b\" # host:c\n'host:d'");
+        let coordinates = found
+            .iter()
+            .map(|reference| {
+                (
+                    reference.line,
+                    reference.column,
+                    reference.width,
+                    reference.text.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            coordinates,
+            vec![(2, 6, 8, "host:a.b"), (3, 1, 6, "host:d")]
         );
     }
 }

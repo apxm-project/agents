@@ -88,7 +88,7 @@ def declared_release_package_dir(root: Path) -> Path:
 SOURCE_DESCRIPTOR_SCHEMA = "apxm.agents-source-revision.v1"
 OWNER_DESCRIPTOR_SCHEMA = "apxm.agents-owner-descriptor.v1"
 RELEASE_MANIFEST_SCHEMA = "apxm.agents-service-release-manifest.v1"
-COMPILATION_PROTOCOL_VERSION = "apxm.compilation.protocol/1"
+COMPILATION_PROTOCOL_VERSION = "apxm.compilation.protocol/2"
 RUNTIME_PROTOCOL_VERSION = "apxm.runtime.protocol/1"
 ARTIFACT_KIND = "compilation-runtime-services"
 

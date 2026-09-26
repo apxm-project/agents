@@ -13,7 +13,7 @@
     },
     "capabilities": {
       "type": "array",
-      "maxItems": 256,
+      "maxItems": 512,
       "items": {
         "$ref": "#/$defs/HostCapabilityDeclaration"
       }
@@ -83,13 +83,13 @@
       "description": "The declared id, without the `host:` prefix the authored reference carries. Lowercase dotted segments, so one id reads the same in a manifest, a reference, and a receipt.",
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
-      "maxLength": 200
+      "maxLength": 205
     },
     "HostCapabilityRef": {
       "description": "The authored reference form: the declared id under the reserved `host:` prefix. No builtin id and no shipped handler directory may occupy this namespace.",
       "type": "string",
       "pattern": "^host:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
-      "maxLength": 205
+      "maxLength": 210
     },
     "HostCapabilityEffect": {
       "description": "What one call does to the system behind the host. `read` observes; `write` changes. The host decides what the value obliges it to do; APXM carries it verbatim into the request.",
@@ -137,7 +137,7 @@
         },
         "capabilities": {
           "type": "array",
-          "maxItems": 256,
+          "maxItems": 512,
           "items": {
             "$ref": "#/$defs/HostCapabilityDeclaration"
           }

@@ -414,7 +414,7 @@
         "capability_ref": {
           "type": "string",
           "pattern": "^host:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$",
-          "maxLength": 205
+          "maxLength": 210
         },
         "input": {
           "type": "string",

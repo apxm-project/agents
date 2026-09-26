@@ -21,10 +21,10 @@ pub const HOST_CAPABILITY_SCHEMA: &str = "apxm.host-capability.v1";
 pub const HOST_CAPABILITY_REF_PREFIX: &str = "host:";
 
 /// The greatest number of host capabilities one package may declare.
-pub const MAX_HOST_CAPABILITIES: usize = 256;
+pub const MAX_HOST_CAPABILITIES: usize = 512;
 
 /// The greatest length of a declared id, matching the published schema.
-pub const MAX_HOST_CAPABILITY_ID_LENGTH: usize = 200;
+pub const MAX_HOST_CAPABILITY_ID_LENGTH: usize = 205;
 
 /// What one call does to the system behind the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -349,6 +349,37 @@ mod tests {
             error,
             HostCapabilityDeclarationError::DuplicateId {
                 id: "notes".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn declared_id_limit_accepts_205_and_refuses_206() {
+        let valid = format!("demo.{}", "a".repeat(200));
+        let invalid = format!("demo.{}", "a".repeat(201));
+        assert!(is_host_capability_id(&valid));
+        assert_eq!(host_capability_ref(&valid).len(), 210);
+        assert!(!is_host_capability_id(&invalid));
+    }
+
+    #[test]
+    fn declaration_ceiling_accepts_512_and_refuses_513() {
+        let declarations = (0..MAX_HOST_CAPABILITIES)
+            .map(|index| declaration(&format!("neutral.capability_{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            minted_host_capability_refs(&declarations)
+                .expect("512 distinct declarations remain admissible")
+                .len(),
+            MAX_HOST_CAPABILITIES
+        );
+        let mut over_limit = declarations;
+        over_limit.push(declaration("neutral.extra"));
+        assert_eq!(
+            minted_host_capability_refs(&over_limit)
+                .expect_err("513 declarations exceed the ceiling"),
+            HostCapabilityDeclarationError::TooMany {
+                actual: MAX_HOST_CAPABILITIES + 1
             }
         );
     }

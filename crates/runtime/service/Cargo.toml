@@ -27,6 +27,7 @@ apxm-kernel.workspace = true
 apxm-program.workspace = true
 apxm-runtime-protocol.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

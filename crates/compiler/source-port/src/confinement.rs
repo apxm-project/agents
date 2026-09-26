@@ -304,10 +304,10 @@ impl CaptureScratch {
             SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendUnavailable,
                 format!(
-                    "the capture scratch directory could not be created under {}: {error}; \
+                    "the capture scratch directory could not be created under the scratch root: {}; \
                      capture writes nowhere else, so this root must be a writable mount — \
                      set {CAPTURE_SCRATCH_DIR_VARIABLE} to name another one",
-                    root.display()
+                    error.kind()
                 ),
             )
         })?;
@@ -1043,9 +1043,11 @@ mod tests {
 
     /// A root that cannot hold a directory — the read-only container filesystem
     /// this boundary makes easy to hit — is refused in the port's own closed
-    /// vocabulary, naming the root and the flag that moves it.
+    /// vocabulary, naming the flag that moves it. The diagnostic crosses the
+    /// compile protocol, so it never names a host path; readiness reports the
+    /// root at deployment instead.
     #[test]
-    fn a_scratch_root_that_cannot_be_written_names_itself_and_the_flag() {
+    fn a_scratch_root_that_cannot_be_written_names_the_flag_but_no_host_path() {
         let occupied = std::env::temp_dir().join(format!(
             "apxm-scratch-root-{}-{}",
             std::process::id(),
@@ -1061,7 +1063,7 @@ mod tests {
 
         assert_eq!(refusal.code, SourceDiagnosticCode::FrontendUnavailable);
         assert!(refusal.message.contains(CAPTURE_SCRATCH_DIR_VARIABLE));
-        assert!(refusal.message.contains(&occupied.display().to_string()));
+        assert!(!refusal.message.contains(&occupied.display().to_string()));
     }
 
     /// Readiness answers the deployment question before the first request:

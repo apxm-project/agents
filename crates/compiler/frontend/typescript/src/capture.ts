@@ -189,14 +189,25 @@ function declarationIdFor(name: string, binding: Binding): string {
   }
 }
 
-/** Source diagnostic raised when an Agent construct is outside the closed subset. */
+/**
+ * Source diagnostic raised when an Agent construct is outside the closed subset.
+ *
+ * `detail` is the explanation without the code prefix. `span` is the source
+ * span of the construct rejected, in the source map's coordinates (1-based
+ * lines, 0-based columns), whenever the capture had the source node in hand;
+ * the innermost construct that was being captured supplies it.
+ */
 export class CaptureError extends Error {
   readonly code: DiagnosticCode;
+  readonly detail: string;
+  span: Span | undefined;
 
-  constructor(code: DiagnosticCode, message: string) {
+  constructor(code: DiagnosticCode, message: string, span?: Span) {
     super(`${code}: ${message}`);
     this.name = "CaptureError";
     this.code = code;
+    this.detail = message;
+    this.span = span;
   }
 }
 
@@ -865,6 +876,14 @@ class Capture {
     regionId: string,
     source: ts.SourceFile,
   ): void {
+    return this.located(stmt, source, () => this.visitStatementAt(stmt, regionId, source));
+  }
+
+  private visitStatementAt(
+    stmt: ts.Statement,
+    regionId: string,
+    source: ts.SourceFile,
+  ): void {
     if (ts.isExpressionStatement(stmt)) {
       this.visitExpression(stmt.expression, regionId, source);
     } else if (ts.isVariableStatement(stmt)) {
@@ -911,6 +930,14 @@ class Capture {
   }
 
   private visitExpression(
+    expr: ts.Expression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): { programRef?: string; valueId?: string } | undefined {
+    return this.located(expr, source, () => this.visitExpressionAt(expr, regionId, source));
+  }
+
+  private visitExpressionAt(
     expr: ts.Expression,
     regionId: string,
     source: ts.SourceFile,
@@ -979,6 +1006,14 @@ class Capture {
   }
 
   private visitAwait(
+    expr: ts.AwaitExpression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): string | undefined {
+    return this.located(expr, source, () => this.visitAwaitAt(expr, regionId, source));
+  }
+
+  private visitAwaitAt(
     expr: ts.AwaitExpression,
     regionId: string,
     source: ts.SourceFile,
@@ -1745,6 +1780,22 @@ class Capture {
     this.recordSpan(nodeId, "task_group", call, source);
   }
 
+  /**
+   * Run one capture step over `node`, attaching the node's span to a capture
+   * error raised inside it that does not already carry one. Nested steps run
+   * first, so the innermost construct being captured names the span.
+   */
+  private located<T>(node: ts.Node, source: ts.SourceFile, step: () => T): T {
+    try {
+      return step();
+    } catch (error) {
+      if (error instanceof CaptureError && error.span === undefined) {
+        error.span = this.spanOf(node, source);
+      }
+      throw error;
+    }
+  }
+
   private spanOf(node: ts.Node, source: ts.SourceFile): Span {
     const start = source.getLineAndCharacterOfPosition(node.getStart(source));
     const end = source.getLineAndCharacterOfPosition(node.getEnd());
@@ -2220,7 +2271,7 @@ class Capture {
       this.visitBlock(body.statements, bodyRegionId, source);
     } catch (error) {
       throw error instanceof CaptureError
-        ? new CaptureError(error.code, `in Hook '${hookId}' body: ${error.message}`)
+        ? new CaptureError(error.code, `in Hook '${hookId}' body: ${error.detail}`, error.span)
         : error;
     } finally {
       this.facadeSymbol = outerFacade;

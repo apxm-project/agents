@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::composition::RuntimeCapabilityProfile;
 use apxm_capability::CapabilitySystem;
 use apxm_capability::builtins::{
     BashConfig, HttpConfig, InlineSkill, ReadConfig, SkillRootConfig, SkillsConfig, ToolsConfig,
@@ -797,6 +798,7 @@ impl LocalCapabilityPort {
 
     /// Build the local capability surface with inline Skills carried by the
     /// admitted Agent Program artifact.
+    #[allow(dead_code)]
     pub fn with_package_root_and_inline_skills(
         handlers: Option<&crate::AdmittedPackageHandlers>,
         package_root: Option<&Path>,
@@ -835,15 +837,34 @@ impl LocalCapabilityPort {
         sandbox_registry: Option<Arc<SandboxRegistry>>,
         inline_skills: Vec<InlineSkill>,
     ) -> Result<Self, RuntimeError> {
+        Self::with_profile(
+            RuntimeCapabilityProfile::PortableLocal,
+            handlers,
+            package_root,
+            sandbox_registry,
+            inline_skills,
+        )
+    }
+
+    /// Build only the implementations selected by the immutable runtime profile.
+    pub fn with_profile(
+        profile: RuntimeCapabilityProfile,
+        handlers: Option<&crate::AdmittedPackageHandlers>,
+        package_root: Option<&Path>,
+        sandbox_registry: Option<Arc<SandboxRegistry>>,
+        inline_skills: Vec<InlineSkill>,
+    ) -> Result<Self, RuntimeError> {
         let system = CapabilitySystem::new();
-        let tools = local_tools_config(package_root);
-        if inline_skills.is_empty() {
-            register_standard_tools(&system, &tools)?;
-        } else {
-            register_standard_tools_with_inline_skills(&system, &tools, inline_skills)?;
-        }
-        if let Some(handlers) = handlers {
-            register_package_handlers(&system, handlers, package_root, sandbox_registry)?;
+        if profile == RuntimeCapabilityProfile::PortableLocal {
+            let tools = local_tools_config(package_root);
+            if inline_skills.is_empty() {
+                register_standard_tools(&system, &tools)?;
+            } else {
+                register_standard_tools_with_inline_skills(&system, &tools, inline_skills)?;
+            }
+            if let Some(handlers) = handlers {
+                register_package_handlers(&system, handlers, package_root, sandbox_registry)?;
+            }
         }
         // Install auth policy after the complete registry is assembled. A
         // requires_auth capability must never become callable merely because
@@ -998,6 +1019,39 @@ mod tests {
             !port.admitted_names().contains("write"),
             "write is not read-only, so local execution must not admit it"
         );
+    }
+
+    #[test]
+    fn host_only_registers_no_local_implementation() {
+        let port = LocalCapabilityPort::with_profile(
+            RuntimeCapabilityProfile::HostOnly,
+            None,
+            None,
+            None,
+            Vec::new(),
+        )
+        .expect("host-only capability port");
+        assert!(port.registered_names().is_empty());
+        assert!(port.admitted_names().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_only_refuses_a_portable_local_read() {
+        let port = LocalCapabilityPort::with_profile(
+            RuntimeCapabilityProfile::HostOnly,
+            None,
+            None,
+            None,
+            Vec::new(),
+        )
+        .expect("host-only capability port");
+        let outcome = port
+            .invoke(request(
+                "read",
+                serde_json::json!({"file_path":"/tmp/unread"}),
+            ))
+            .await;
+        assert!(matches!(outcome, CapabilityOutcome::Failed { .. }));
     }
 
     #[tokio::test]
