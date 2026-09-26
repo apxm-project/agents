@@ -10,6 +10,7 @@ use std::ffi::{CStr, CString};
 
 use apxm_compilation_protocol::{
     COMPILATION_PROTOCOL_VERSION, CompilationHandshake, CompilationRequest, CompilationResult,
+    DiagnosticReport, Severity,
 };
 use apxm_compilation_service::{
     CompilationService, MAX_FRAME_BYTES, StdioFrame, decode_jsonl, encode_jsonl,
@@ -110,14 +111,18 @@ impl CompilationClient {
         self.build(snapshot_package(package_root)?)
     }
 
-    /// Submit one exact snapshot. Failed or uncertain compiles return no digest.
+    /// Submit one exact snapshot. Failed or uncertain compiles return no
+    /// digest; a failure renders its primary code on the first line and every
+    /// carried diagnostic below it.
     pub fn build(&mut self, snapshot: PackageSnapshot) -> Result<String, String> {
         let result = self.build_result(snapshot)?;
         match result {
             CompilationResult::ArtifactCommitted {
                 artifact_digest, ..
             } => Ok(artifact_digest),
-            CompilationResult::Failed { code, .. } => Err(code),
+            CompilationResult::Failed {
+                code, diagnostics, ..
+            } => Err(render_failure(&code, &diagnostics)),
             CompilationResult::Cancelled { .. } => Err("cancelled".to_owned()),
         }
     }
@@ -188,6 +193,48 @@ impl CompilationClient {
             }
         }
     }
+}
+
+/// Render a failed compile for a terminal: the primary code, then one line per
+/// carried diagnostic as `file:line:column: severity code: message` (columns
+/// shown 1-based, as editors count them), then how many were not carried and
+/// where the compile stopped.
+#[must_use]
+pub fn render_failure(code: &str, diagnostics: &DiagnosticReport) -> String {
+    use std::fmt::Write as _;
+
+    let mut rendered = code.to_owned();
+    for item in &diagnostics.items {
+        rendered.push_str("\n  ");
+        if let Some(location) = &item.location {
+            let _ = write!(
+                rendered,
+                "{}:{}:{}: ",
+                location.source_file,
+                location.span.start_line,
+                location.span.start_column + 1
+            );
+        }
+        let severity = match item.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        };
+        let _ = write!(rendered, "{severity} {}: {}", item.code, item.message);
+    }
+    let omitted = u64::from(diagnostics.total_count)
+        .saturating_sub(u64::try_from(diagnostics.items.len()).unwrap_or(u64::MAX));
+    if diagnostics.truncated && omitted > 0 {
+        let _ = write!(rendered, "\n  ... {omitted} more not shown");
+    }
+    if let Some(phase) = diagnostics.stopped_at {
+        let phase = serde_json::to_value(phase)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let _ = write!(rendered, "\n  stopped after: {phase}");
+    }
+    rendered
 }
 
 fn read_limited_line(reader: &mut BufReader<ChildStdout>) -> Result<String, String> {
@@ -1217,5 +1264,48 @@ async def EchoAgent(agent, request):
             }
         }
         panic!("could not allocate a unique temporary package directory")
+    }
+
+    /// A failure renders its primary code first, then every carried item
+    /// with its location, the omitted count and where the compile stopped.
+    #[test]
+    fn a_failure_renders_every_carried_diagnostic() {
+        use apxm_compilation_protocol::{CompileDiagnostic, Location, Phase, Span};
+
+        let located = CompileDiagnostic {
+            location: Some(Location {
+                source_file: "submitted_source.ts".to_owned(),
+                span: Span {
+                    start_line: 9,
+                    start_column: 49,
+                    end_line: 9,
+                    end_column: 66,
+                },
+            }),
+            ..CompileDiagnostic::new(
+                Severity::Error,
+                "graph_rejected",
+                Phase::TypeCheck,
+                "undeclared host reference",
+            )
+        };
+        let mut report = DiagnosticReport::from_diagnostics(
+            [
+                located,
+                CompileDiagnostic::new(
+                    Severity::Warning,
+                    "source_warning",
+                    Phase::TypeCheck,
+                    "unused",
+                ),
+            ],
+            Some(Phase::TypeCheck),
+        );
+        report.truncated = true;
+        report.total_count = 5;
+        assert_eq!(
+            render_failure("graph_rejected", &report),
+            "graph_rejected\n  submitted_source.ts:9:50: error graph_rejected: undeclared host reference\n  warning source_warning: unused\n  ... 3 more not shown\n  stopped after: type_check"
+        );
     }
 }

@@ -56,7 +56,7 @@ def make_clean_owner_checkout(root: Path) -> tuple[str, dict[str, Path]]:
     for relative, contents in (
         (
             "crates/compiler/service-protocol/src/lib.rs",
-            b"pub const COMPILATION_PROTOCOL_VERSION: &str = \"apxm.compilation.protocol/1\";\n",
+            b"pub const COMPILATION_PROTOCOL_VERSION: &str = \"apxm.compilation.protocol/2\";\n",
         ),
         (
             "crates/runtime/service-protocol/src/lib.rs",

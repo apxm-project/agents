@@ -10,16 +10,17 @@ mod stdio;
 
 pub use composition::{
     AdmittedPackageHandlers, ArtifactStore, CanonicalRuntimeDescriptor, InvocationMaterials,
-    PackageHandlerWorkerCommand, RuntimeAdmissionProfile, artifact_digest,
-    canonical_artifact_digest, canonical_port_bindings_digest, canonical_resource_ceiling_digest,
-    canonical_runtime_descriptor, execute_admitted_artifact,
+    PackageHandlerWorkerCommand, RuntimeAdmissionProfile, RuntimeCapabilityProfile,
+    artifact_digest, canonical_artifact_digest, canonical_port_bindings_digest,
+    canonical_resource_ceiling_digest, canonical_runtime_descriptor, execute_admitted_artifact,
     execute_admitted_artifact_resumable_for_instance,
     execute_admitted_artifact_resumable_with_runtime_ports_and_cancellation,
     execute_admitted_artifact_with_runtime_ports,
     execute_admitted_artifact_with_runtime_ports_and_cancellation,
-    execute_admitted_artifact_with_sandbox, materials_for_artifact,
-    resume_admitted_artifact_with_runtime_ports, validate_package_permission_resolution,
-    verify_invocation_materials,
+    execute_admitted_artifact_with_sandbox, materials_for_artifact, port_bindings_digest_for,
+    resume_admitted_artifact_with_runtime_ports, runtime_descriptor_for,
+    validate_package_permission_resolution, verify_invocation_materials,
+    verify_invocation_materials_for_profile,
 };
 pub use stdio::{
     InvocationDispatcher, MAX_ACTIVE_UNIX_CONNECTIONS, MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION,
@@ -61,7 +62,10 @@ use apxm_runtime_protocol::{
     capability_fulfillment_is_well_formed,
 };
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use serde::de::{SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -430,7 +434,8 @@ impl RuntimeService {
         {
             service.artifact_dir = Some(PathBuf::from(dir));
         }
-        match RuntimeAdmissionProfile::from_env() {
+        let capability_profile = RuntimeCapabilityProfile::from_env();
+        match capability_profile.and_then(RuntimeAdmissionProfile::from_env_for) {
             Ok(profile) => service.admission_profile = profile,
             Err(error) => {
                 service.startup_error =
@@ -482,6 +487,47 @@ impl RuntimeService {
     pub fn with_admission_profile(mut self, profile: RuntimeAdmissionProfile) -> Self {
         self.admission_profile = Some(profile);
         self
+    }
+
+    fn selected_capability_profile(&self) -> RuntimeCapabilityProfile {
+        self.admission_profile.as_ref().map_or(
+            RuntimeCapabilityProfile::PortableLocal,
+            RuntimeAdmissionProfile::capability_profile,
+        )
+    }
+
+    fn verify_selected_materials(
+        &self,
+        artifact_bytes: &[u8],
+        materials: &InvocationMaterials,
+    ) -> Result<(), String> {
+        if let Some(profile) = self.admission_profile.as_ref() {
+            let expected = profile.materials_for_artifact(artifact_bytes);
+            if materials.release_bytes != expected.release_bytes
+                || materials.provenance_bytes != expected.provenance_bytes
+                || materials.admission.port_bindings_digest
+                    != expected.admission.port_bindings_digest
+                || materials.admission.resource_ceiling_digest
+                    != expected.admission.resource_ceiling_digest
+            {
+                return Err("admission_profile_mismatch".to_owned());
+            }
+        }
+        verify_invocation_materials_for_profile(
+            artifact_bytes,
+            materials,
+            self.selected_capability_profile(),
+        )?;
+        Ok(())
+    }
+
+    fn same_binding(left: &InvocationMaterials, right: &InvocationMaterials) -> bool {
+        let mut normalized = right.clone();
+        normalized
+            .admission
+            .invocation_id
+            .clone_from(&left.admission.invocation_id);
+        left == &normalized
     }
 
     /// Bind the service to one explicit runtime-owned state directory. This
@@ -675,6 +721,14 @@ impl RuntimeExecutionBackend {
         match self {
             Self::Memory(commit) => commit.invocation_status(invocation),
             Self::Filesystem(commit) => commit.invocation_status(invocation),
+            Self::Unavailable(_) => None,
+        }
+    }
+
+    fn terminal_failure_code(&self, invocation: &str) -> Option<String> {
+        match self {
+            Self::Memory(commit) => commit.terminal_failure_code(invocation),
+            Self::Filesystem(commit) => commit.terminal_failure_code(invocation),
             Self::Unavailable(_) => None,
         }
     }
@@ -912,6 +966,8 @@ pub(crate) struct PreparedResume {
     invocation_id: String,
     delivered: Value,
     continuation: Continuation,
+    committed_continuation: apxm_kernel::CommittedContinuation,
+    expected_program_state_version: u64,
     artifact_bytes: Vec<u8>,
     materials: InvocationMaterials,
     handlers: Option<AdmittedPackageHandlers>,
@@ -988,6 +1044,106 @@ struct HostCapabilitySettlementState {
 
 const RUNTIME_METADATA_SCHEMA: &str = "apxm.runtime-service.metadata.v1";
 
+/// Only the service-owned durable metadata uses this representation. Public
+/// invocation materials keep their existing wire encoding.
+const DURABLE_BYTES_PREFIX: &str = "base64:";
+const MAX_DURABLE_CARRIER_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug)]
+struct DurableBytes<const MAX: usize>(Vec<u8>);
+
+impl<const MAX: usize> Serialize for DurableBytes<MAX> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.len() > MAX {
+            return Err(serde::ser::Error::custom(
+                "durable bytes exceed their bound",
+            ));
+        }
+        serializer.serialize_str(&format!("{DURABLE_BYTES_PREFIX}{}", BASE64.encode(&self.0)))
+    }
+}
+
+impl<'de, const MAX: usize> Deserialize<'de> for DurableBytes<MAX> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BytesVisitor<const MAX: usize>;
+
+        impl<'de, const MAX: usize> Visitor<'de> for BytesVisitor<MAX> {
+            type Value = DurableBytes<MAX>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("bounded base64 durable bytes or a legacy byte array")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                let encoded = value
+                    .strip_prefix(DURABLE_BYTES_PREFIX)
+                    .ok_or_else(|| E::custom("unknown durable byte encoding"))?;
+                let max_encoded = MAX.div_ceil(3).saturating_mul(4);
+                if encoded.len() > max_encoded {
+                    return Err(E::custom("encoded durable bytes exceed their bound"));
+                }
+                let bytes = BASE64
+                    .decode(encoded)
+                    .map_err(|_| E::custom("invalid durable base64 bytes"))?;
+                if bytes.len() > MAX || BASE64.encode(&bytes) != encoded {
+                    return Err(E::custom("noncanonical or oversized durable bytes"));
+                }
+                Ok(DurableBytes(bytes))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+                self.visit_str(&value)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut bytes = Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(MAX));
+                while let Some(byte) = sequence.next_element::<u8>()? {
+                    if bytes.len() == MAX {
+                        return Err(serde::de::Error::custom(
+                            "legacy durable bytes exceed their bound",
+                        ));
+                    }
+                    bytes.push(byte);
+                }
+                Ok(DurableBytes(bytes))
+            }
+        }
+
+        deserializer.deserialize_any(BytesVisitor::<MAX>)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableInvocationMaterials {
+    admission: apxm_kernel::admission::InvocationAdmission,
+    release_bytes: DurableBytes<MAX_DURABLE_CARRIER_BYTES>,
+    provenance_bytes: DurableBytes<MAX_DURABLE_CARRIER_BYTES>,
+}
+
+impl From<&InvocationMaterials> for DurableInvocationMaterials {
+    fn from(materials: &InvocationMaterials) -> Self {
+        Self {
+            admission: materials.admission.clone(),
+            release_bytes: DurableBytes(materials.release_bytes.clone()),
+            provenance_bytes: DurableBytes(materials.provenance_bytes.clone()),
+        }
+    }
+}
+
+impl From<DurableInvocationMaterials> for InvocationMaterials {
+    fn from(materials: DurableInvocationMaterials) -> Self {
+        Self {
+            admission: materials.admission,
+            release_bytes: materials.release_bytes.0,
+            provenance_bytes: materials.provenance_bytes.0,
+        }
+    }
+}
+
 /// Durable service-owned metadata. The commit-local adapter stores this as
 /// opaque JSON and authenticates it together with execution records; this
 /// type is the only owner that interprets it.
@@ -995,8 +1151,8 @@ const RUNTIME_METADATA_SCHEMA: &str = "apxm.runtime-service.metadata.v1";
 #[serde(deny_unknown_fields)]
 struct DurableRuntimeMetadata {
     schema_version: String,
-    artifacts: BTreeMap<String, Vec<u8>>,
-    artifact_admissions: BTreeMap<String, InvocationMaterials>,
+    artifacts: BTreeMap<String, DurableBytes<{ MAX_ARTIFACT_BYTES as usize }>>,
+    artifact_admissions: BTreeMap<String, DurableInvocationMaterials>,
     instances: BTreeMap<String, DurableInstanceState>,
     reservations: Vec<DurableReservationState>,
     applications: BTreeMap<String, DurableApplicationState>,
@@ -1010,7 +1166,7 @@ struct DurableRuntimeMetadata {
 #[serde(deny_unknown_fields)]
 struct DurableInstanceState {
     artifact_digest: String,
-    materials: Option<InvocationMaterials>,
+    materials: Option<DurableInvocationMaterials>,
     owner_claim: RuntimeOwnerClaim,
     invocation: Option<DurableInvocationState>,
     #[serde(default)]
@@ -1203,10 +1359,14 @@ impl RuntimeService {
                 .filter_map(|digest| {
                     self.artifacts
                         .get(digest)
-                        .map(|bytes| (digest.clone(), bytes.to_vec()))
+                        .map(|bytes| (digest.clone(), DurableBytes(bytes.to_vec())))
                 })
                 .collect(),
-            artifact_admissions: self.artifact_admissions.clone(),
+            artifact_admissions: self
+                .artifact_admissions
+                .iter()
+                .map(|(digest, materials)| (digest.clone(), materials.into()))
+                .collect(),
             instances: self
                 .instances
                 .iter()
@@ -1215,7 +1375,10 @@ impl RuntimeService {
                         id.clone(),
                         DurableInstanceState {
                             artifact_digest: instance.artifact_digest.clone(),
-                            materials: instance.materials.clone(),
+                            materials: instance
+                                .materials
+                                .as_ref()
+                                .map(DurableInvocationMaterials::from),
                             owner_claim: instance.owner_claim.clone(),
                             invocation: instance.invocation.as_ref().map(durable_invocation),
                             invocation_history: instance
@@ -1315,7 +1478,7 @@ impl RuntimeService {
         let mut artifacts = ArtifactStore::default();
         let mut artifact_meta = BTreeMap::new();
         let mut artifact_bytes = 0_u64;
-        for (digest, bytes) in metadata.artifacts {
+        for (digest, DurableBytes(bytes)) in metadata.artifacts {
             if !apxm_core::grammar::is_digest(&digest)
                 || ExecutableArtifact::decode_for_execution(&bytes, &digest).is_err()
             {
@@ -1333,7 +1496,10 @@ impl RuntimeService {
                 return Err("runtime metadata contains an invalid admission join".to_owned());
             }
             admission_bytes = admission_bytes
-                .checked_add(Self::materials_size(materials).ok_or("admission size overflow")?)
+                .checked_add(
+                    Self::materials_size(&materials.clone().into())
+                        .ok_or("admission size overflow")?,
+                )
                 .ok_or("admission size overflow")?;
         }
 
@@ -1462,7 +1628,7 @@ impl RuntimeService {
                 instance_id,
                 InstanceState {
                     artifact_digest: durable.artifact_digest,
-                    materials: durable.materials,
+                    materials: durable.materials.map(Into::into),
                     owner_claim: durable.owner_claim,
                     invocation,
                     invocation_history,
@@ -1686,7 +1852,11 @@ impl RuntimeService {
         self.artifacts = artifacts;
         self.artifact_meta = artifact_meta;
         self.artifact_bytes = artifact_bytes;
-        self.artifact_admissions = metadata.artifact_admissions;
+        self.artifact_admissions = metadata
+            .artifact_admissions
+            .into_iter()
+            .map(|(digest, materials)| (digest, materials.into()))
+            .collect();
         self.admission_meta = self
             .artifact_admissions
             .iter()
@@ -1783,9 +1953,24 @@ impl RuntimeService {
             .collect::<Vec<_>>();
         for id in expired_instances {
             if let Some(instance) = self.instances.remove(&id) {
-                if let Some(invocation) = instance.invocation.as_ref() {
-                    self.invocation_index
-                        .remove(&invocation.program_invocation_id);
+                // Every invocation this instance ever indexed leaves with it,
+                // together with its cancellation marker. A marker outlives
+                // the instance by construction (its expiry is raised to the
+                // instance expiry), so leaving it behind would persist a
+                // cancellation for an invocation no instance explains, and
+                // the next reopen would refuse the whole state as orphaned.
+                let invocation_ids = instance
+                    .invocation
+                    .iter()
+                    .chain(instance.invocation_history.values())
+                    .map(|invocation| invocation.program_invocation_id.clone())
+                    .collect::<BTreeSet<_>>();
+                for invocation_id in invocation_ids {
+                    self.invocation_index.remove(&invocation_id);
+                    if let Some(marker) = self.cancelled.remove(&invocation_id) {
+                        self.cancellation_bytes =
+                            self.cancellation_bytes.saturating_sub(marker.bytes);
+                    }
                 }
                 self.instance_bytes = self
                     .instance_bytes
@@ -2011,7 +2196,18 @@ impl RuntimeService {
             .artifacts
             .get(&artifact_digest)
             .ok_or_else(|| "unknown_artifact".to_owned())?;
-        verify_invocation_materials(artifact_bytes, &materials)?;
+        self.verify_selected_materials(artifact_bytes, &materials)?;
+        if let Some(existing) = self
+            .instances
+            .get(program_instance_id)
+            .and_then(|instance| instance.materials.as_ref())
+        {
+            return if Self::same_binding(existing, &materials) {
+                Ok(())
+            } else {
+                Err("admission_conflict".to_owned())
+            };
+        }
         let invocation_bytes = self
             .instances
             .get(program_instance_id)
@@ -2060,7 +2256,14 @@ impl RuntimeService {
             .artifacts
             .get(artifact_digest)
             .ok_or_else(|| "unknown_artifact".to_owned())?;
-        verify_invocation_materials(artifact_bytes, &materials)?;
+        self.verify_selected_materials(artifact_bytes, &materials)?;
+        if let Some(existing) = self.artifact_admissions.get(artifact_digest) {
+            return if Self::same_binding(existing, &materials) {
+                Ok(())
+            } else {
+                Err("admission_conflict".to_owned())
+            };
+        }
         let size =
             Self::materials_size(&materials).ok_or_else(|| "admission_too_large".to_owned())?;
         if size > self.state_policy.admissions.max_bytes {
@@ -2155,8 +2358,10 @@ impl RuntimeService {
                     matches!(
                         inspection.status,
                         apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
+                            | apxm_runtime_protocol::ProgramInvocationStatus::CancellationUnconfirmed
+                            | apxm_runtime_protocol::ProgramInvocationStatus::Cancelling
                             | apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
-                    )
+                    ) || self.profile_mismatch_is_terminal(program_invocation_id.as_str())
                 }),
             _ => None,
         };
@@ -2174,7 +2379,7 @@ impl RuntimeService {
             &execution_read_request,
             apxm_runtime_protocol::ExecutionReadRequest::ObservationSubscribe { .. }
         ) {
-            self.observation_sink.snapshot()
+            self.readable_live_observations(self.observation_sink.snapshot())
         } else {
             Vec::new()
         };
@@ -2187,10 +2392,22 @@ impl RuntimeService {
             }
             Ok(apxm_runtime_protocol::ExecutionReadResult::ProgramInvocationInspection {
                 inspection,
-            }) if !node_requested => Ok(RuntimeResultV2::ProgramInvocationInspection {
-                request_id,
-                inspection: service_terminal_inspection.unwrap_or(inspection),
-            }),
+            }) if !node_requested => {
+                let service_inspection = service_terminal_inspection.filter(|service| {
+                    service.status != apxm_runtime_protocol::ProgramInvocationStatus::Cancelling
+                        || !matches!(
+                            inspection.status,
+                            apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn
+                                | apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield
+                                | apxm_runtime_protocol::ProgramInvocationStatus::Cancelled
+                                | apxm_runtime_protocol::ProgramInvocationStatus::Failed
+                        )
+                });
+                Ok(RuntimeResultV2::ProgramInvocationInspection {
+                    request_id,
+                    inspection: service_inspection.unwrap_or(inspection),
+                })
+            }
             Ok(apxm_runtime_protocol::ExecutionReadResult::ProgramInvocationInspection {
                 ..
             }) => Ok(RuntimeResultV2::Failed {
@@ -2293,6 +2510,20 @@ impl RuntimeService {
             }
             Some(_) => apxm_runtime_protocol::ProgramInvocationStatus::Failed,
         };
+        let status = if self.cancelled.contains_key(invocation_id) {
+            match status {
+                apxm_runtime_protocol::ProgramInvocationStatus::AdmissionPending
+                | apxm_runtime_protocol::ProgramInvocationStatus::Running => {
+                    apxm_runtime_protocol::ProgramInvocationStatus::Cancelling
+                }
+                apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown => {
+                    apxm_runtime_protocol::ProgramInvocationStatus::CancellationUnconfirmed
+                }
+                other => other,
+            }
+        } else {
+            status
+        };
         Some(apxm_runtime_protocol::ProgramInvocationInspection {
             program_invocation_id: apxm_runtime_protocol::ProgramInvocationId::new(invocation_id)
                 .ok()?,
@@ -2306,6 +2537,16 @@ impl RuntimeService {
             )
             .ok()?,
         })
+    }
+
+    fn profile_mismatch_is_terminal(&self, invocation_id: &str) -> bool {
+        self.invocation_index
+            .get(invocation_id)
+            .and_then(|instance_id| self.instances.get(instance_id))
+            .and_then(|instance| instance.invocation.as_ref())
+            .filter(|invocation| invocation.program_invocation_id == invocation_id)
+            .and_then(|invocation| invocation.result.as_ref())
+            .is_some_and(|result| matches!(result, RuntimeResult::Failed { code, .. } if code == "admission_profile_mismatch"))
     }
 
     /// Record a client disconnect. This does not fabricate `finish_reason: stop`.
@@ -2531,7 +2772,10 @@ impl RuntimeService {
             };
         };
         let local_materials = profile.materials_for_artifact(artifact_bytes);
-        if verify_invocation_materials(artifact_bytes, &local_materials).is_err() {
+        if self
+            .verify_selected_materials(artifact_bytes, &local_materials)
+            .is_err()
+        {
             return RuntimeResult::Failed {
                 request_id,
                 code: "invalid_invocation_admission".to_owned(),
@@ -2630,7 +2874,7 @@ impl RuntimeService {
             admission_profile: self.admission_profile.as_ref().map(|profile| {
                 RuntimeAdmissionProfileDescriptor {
                     profile_ref: profile.profile_ref().to_owned(),
-                    port_bindings_digest: canonical_port_bindings_digest(),
+                    port_bindings_digest: port_bindings_digest_for(profile.capability_profile()),
                     resource_ceiling_digest: canonical_resource_ceiling_digest(),
                 }
             }),
@@ -2722,6 +2966,22 @@ impl RuntimeService {
                     code: "invocation_idempotency_conflict".to_owned(),
                 });
             }
+            if let Some(result) = &prior.result
+                && (matches!(
+                    result,
+                    RuntimeResult::Failed { .. } | RuntimeResult::Cancelled { .. }
+                ) || matches!(result, RuntimeResult::ProgramInvocationStarted { .. })
+                    && matches!(
+                        self.execution_backend
+                            .invocation_status(&prior.program_invocation_id),
+                        Some(
+                            apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn
+                                | apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield
+                        )
+                    ))
+            {
+                return Err(result.clone());
+            }
             if self.cancelled.contains_key(&prior.program_invocation_id) {
                 return Err(RuntimeResult::Cancelled { request_id });
             }
@@ -2734,6 +2994,19 @@ impl RuntimeService {
         }
         if let Some(prior) = instance.invocation.as_ref() {
             if prior.request_id == request_id {
+                if let Some(result) = &prior.result
+                    && (matches!(result, RuntimeResult::Failed { .. } | RuntimeResult::Cancelled { .. })
+                        || matches!(result, RuntimeResult::ProgramInvocationStarted { .. })
+                            && matches!(
+                                self.execution_backend.invocation_status(&prior.program_invocation_id),
+                                Some(
+                                    apxm_runtime_protocol::ProgramInvocationStatus::CommittedReturn
+                                        | apxm_runtime_protocol::ProgramInvocationStatus::CommittedYield
+                                )
+                            ))
+                {
+                    return Err(result.clone());
+                }
                 if self.cancelled.contains_key(&prior.program_invocation_id) {
                     return Err(RuntimeResult::Cancelled { request_id });
                 }
@@ -2849,6 +3122,15 @@ impl RuntimeService {
                 code: "missing_invocation_admission".to_owned(),
             });
         };
+        if self
+            .verify_selected_materials(&bytes, bound_materials)
+            .is_err()
+        {
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "admission_profile_mismatch".to_owned(),
+            });
+        }
         let mut materials = InvocationMaterials {
             admission: bound_materials.admission.clone(),
             release_bytes: bound_materials.release_bytes.clone(),
@@ -2989,6 +3271,14 @@ impl RuntimeService {
                 code: "runtime_state_unavailable".to_owned(),
             };
         }
+        if suspended
+            && self.invocation_is_cancelled(&prepared.program_instance_id, &prepared.invocation_id)
+        {
+            // Cancellation can be acknowledged after the driver's last token
+            // check but before it commits a host wait. Withdraw that newly
+            // parked request under the same durable cancellation marker.
+            self.cancel_outstanding_host_capabilities(&prepared.invocation_id);
+        }
         result
     }
 
@@ -3060,12 +3350,31 @@ impl RuntimeService {
             .get(&artifact_digest)
             .ok_or_else(|| "unknown_artifact".to_owned())?
             .to_vec();
+        if let Err(error) = self.verify_selected_materials(&artifact_bytes, &bound_materials) {
+            if error != "admission_profile_mismatch" {
+                return Err(error);
+            }
+            let result = self.fail_pending_invocation(invocation_id, &error);
+            return match result {
+                RuntimeResult::Failed { code, .. } if code == "runtime_state_unavailable" => {
+                    Err(code)
+                }
+                _ => Ok(None),
+            };
+        }
         let artifact = ExecutableArtifact::decode_for_execution(&artifact_bytes, &artifact_digest)
             .map_err(|_| "invalid_artifact".to_owned())?;
         validate_package_permission_resolution(&artifact.air, self.package_root.as_deref())?;
         let mut materials = bound_materials;
         invocation_id.clone_into(&mut materials.admission.invocation_id);
         let cancellation = CancellationToken::new();
+        // A durable cancellation marker may precede this claim (a cancel that
+        // arrived while no worker held a token, or one persisted before a
+        // restart). The fresh token must carry it, or the driver would run an
+        // invocation its owner already cancelled.
+        if self.cancelled.contains_key(invocation_id) {
+            cancellation.cancel();
+        }
         self.active_cancellations
             .insert(invocation_id.to_owned(), cancellation.clone());
         Ok(Some(PreparedInvocation {
@@ -3097,6 +3406,27 @@ impl RuntimeService {
             .get(invocation_id)
             .cloned()
             .ok_or_else(|| "unknown_invocation".to_owned())?;
+        let instance_for_profile = self.instances.get(&instance_id).ok_or("unknown_instance")?;
+        let artifact_bytes = self
+            .artifacts
+            .get(&instance_for_profile.artifact_digest)
+            .ok_or("unknown_artifact")?;
+        let materials = instance_for_profile
+            .materials
+            .as_ref()
+            .ok_or("missing_invocation_admission")?;
+        if let Err(error) = self.verify_selected_materials(artifact_bytes, materials) {
+            if error != "admission_profile_mismatch" {
+                return Err(error);
+            }
+            let result = self.fail_pending_invocation(invocation_id, &error);
+            return match result {
+                RuntimeResult::Failed { code, .. } if code == "runtime_state_unavailable" => {
+                    Err(code)
+                }
+                _ => Ok(false),
+            };
+        }
         let instance = self
             .instances
             .get_mut(&instance_id)
@@ -3171,12 +3501,31 @@ impl RuntimeService {
         {
             return Ok(false);
         }
+        let Some(started) = self.resume_marker(prepared).map(|value| *value) else {
+            return Ok(false);
+        };
+        if started {
+            return Ok(false);
+        }
+        if let Err(error) =
+            self.verify_selected_materials(&prepared.artifact_bytes, &prepared.materials)
+        {
+            if error != "admission_profile_mismatch" {
+                return Err(error);
+            }
+            self.fail_unstarted_profile_resume(
+                &prepared.program_instance_id,
+                &prepared.invocation_id,
+                &prepared.event_ref,
+                prepared.expected_program_state_version,
+                &prepared.committed_continuation,
+            )?;
+            self.active_cancellations.remove(&prepared.invocation_id);
+            return Ok(false);
+        }
         let Some(started) = self.resume_marker(prepared) else {
             return Ok(false);
         };
-        if *started {
-            return Ok(false);
-        }
         *started = true;
         if let Err(error) = self.persist_runtime_state() {
             if let Some(started) = self.resume_marker(prepared) {
@@ -3542,7 +3891,10 @@ impl RuntimeService {
                 Some(apxm_runtime_protocol::ProgramInvocationStatus::Failed) => {
                     RuntimeResult::Failed {
                         request_id: request_id.clone(),
-                        code: "invocation_failed".to_owned(),
+                        code: self
+                            .execution_backend
+                            .terminal_failure_code(&invocation_id)
+                            .unwrap_or_else(|| "invocation_failed".to_owned()),
                     }
                 }
                 Some(apxm_runtime_protocol::ProgramInvocationStatus::Cancelled) => {
@@ -4310,6 +4662,47 @@ impl RuntimeService {
         Ok(())
     }
 
+    /// A host request is actionable only after its continuation is committed.
+    /// Keep its live suffix behind the same boundary so a read cursor cannot
+    /// advance past the request before the durable stream contains it.
+    fn readable_live_observations(
+        &self,
+        observations: Vec<ExecutionObservation>,
+    ) -> Vec<ExecutionObservation> {
+        let mut barriers = BTreeMap::<String, u64>::new();
+        for observation in &observations {
+            if observation.observation_kind
+                != apxm_runtime_protocol::ObservationKind::CapabilityRequested
+            {
+                continue;
+            }
+            let Some(request) = &observation.host_capability else {
+                continue;
+            };
+            if self
+                .host_capability_settlements
+                .contains_key(&request.capability_request_id)
+                || self
+                    .parked_host_capability_instance(&request.capability_request_id)
+                    .is_some()
+            {
+                continue;
+            }
+            barriers
+                .entry(observation.program_invocation_id.as_str().to_owned())
+                .and_modify(|sequence| *sequence = (*sequence).min(observation.sequence))
+                .or_insert(observation.sequence);
+        }
+        observations
+            .into_iter()
+            .filter(|observation| {
+                barriers
+                    .get(observation.program_invocation_id.as_str())
+                    .is_none_or(|sequence| observation.sequence < *sequence)
+            })
+            .collect()
+    }
+
     /// The instance whose parked continuation is waiting on this request.
     fn parked_host_capability_instance(&self, capability_request_id: &str) -> Option<String> {
         self.instances
@@ -4828,6 +5221,42 @@ mod tests {
             service.execution_backend.invocation_status(&invocation_id),
             Some(ProgramInvocationStatus::CommittedReturn)
         );
+        assert_eq!(
+            service
+                .service_invocation_inspection(&invocation_id)
+                .expect("completed invocation inspection")
+                .status,
+            ProgramInvocationStatus::CommittedReturn
+        );
+        let cancel = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "yield.after-return.cancel".into(),
+                    owner_claim: claim.clone(),
+                    program_invocation_id: invocation_id.clone(),
+                },
+            )
+            .expect("late cancellation acknowledgement");
+        assert!(matches!(cancel, RuntimeResult::Cancelled { .. }));
+        assert_eq!(
+            service
+                .service_invocation_inspection(&invocation_id)
+                .expect("completed invocation after late cancellation")
+                .status,
+            ProgramInvocationStatus::CommittedReturn
+        );
+        let replay = service.prepare_invocation(
+            "yield.next".into(),
+            instance_id.clone(),
+            claim.clone(),
+            serde_json::json!({"message": "next"}),
+        );
+        assert!(matches!(
+            replay,
+            Err(RuntimeResult::ProgramInvocationStarted { program_invocation_id, .. })
+                if program_invocation_id == invocation_id
+        ));
         assert!(
             matches!(service.handle(&handshake(), RuntimeRequest::ProgramInvocationStart {
             request_id:"yield.after-return".into(), program_instance_id:instance_id, owner_claim:claim, input:Value::Null,
@@ -4919,6 +5348,149 @@ mod tests {
             replay,
             Err(RuntimeResult::Failed { code, .. }) if code == "outcome_unknown"
         ));
+        assert_eq!(
+            reopened
+                .service_invocation_inspection(&invocation_id)
+                .expect("unmarked uncertain inspection")
+                .status,
+            ProgramInvocationStatus::OutcomeUnknown
+        );
+    }
+
+    #[test]
+    fn acknowledged_cancellation_keeps_its_marker_and_reports_uncertainty_after_running_crash() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let (instance_id, owner_claim, invocation_id) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, fixture_air_bytes());
+            let owner_claim = owner_claim(&service, &instance_id);
+            let prepared = service
+                .prepare_invocation(
+                    "cancel.crossed-start".to_owned(),
+                    instance_id.clone(),
+                    owner_claim.clone(),
+                    serde_json::json!({"prompt": "once"}),
+                )
+                .expect("durable pending invocation");
+            assert!(
+                service
+                    .begin_invocation(&prepared.invocation_id)
+                    .expect("running marker")
+            );
+            let status = service
+                .service_invocation_inspection(&prepared.invocation_id)
+                .expect("inspection")
+                .status;
+            assert_eq!(status, ProgramInvocationStatus::Running);
+            let result = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationCancel {
+                        request_id: "cancel.crossed-start.request".to_owned(),
+                        owner_claim: owner_claim.clone(),
+                        program_invocation_id: prepared.invocation_id.clone(),
+                    },
+                )
+                .expect("cancellation request");
+            assert!(matches!(result, RuntimeResult::Cancelled { .. }));
+            assert_eq!(
+                service
+                    .service_invocation_inspection(&prepared.invocation_id)
+                    .expect("marked inspection")
+                    .status,
+                ProgramInvocationStatus::Cancelling
+            );
+            (instance_id, owner_claim, prepared.invocation_id)
+        };
+
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(
+            reopened.cancelled.contains_key(&invocation_id),
+            "ACKed marker must survive restart"
+        );
+        assert!(
+            reopened
+                .recover_invocations()
+                .expect("reconcile running work")
+                .is_empty()
+        );
+        assert_eq!(
+            reopened
+                .service_invocation_inspection(&invocation_id)
+                .expect("recovered inspection")
+                .status,
+            ProgramInvocationStatus::CancellationUnconfirmed
+        );
+        let replay = reopened.prepare_invocation(
+            "cancel.crossed-start".to_owned(),
+            instance_id,
+            owner_claim,
+            serde_json::json!({"prompt": "once"}),
+        );
+        assert!(matches!(
+            replay,
+            Err(RuntimeResult::Failed { code, .. }) if code == "outcome_unknown"
+        ));
+    }
+
+    #[test]
+    fn cancellation_marker_closes_a_host_wait_committed_after_the_cancel_scan() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let mut service =
+            RuntimeService::default().with_runtime_state_dir(directory.path().to_path_buf());
+        let instance_id = create_started(&mut service, host_capability_air_bytes());
+        let claim = owner_claim(&service, &instance_id);
+        let prepared = service
+            .prepare_invocation(
+                "host.cancel.after-scan".to_owned(),
+                instance_id.clone(),
+                claim,
+                Value::Null,
+            )
+            .expect("durable invocation");
+        assert!(
+            service
+                .begin_invocation(&prepared.invocation_id)
+                .expect("running marker")
+        );
+        let execution = prepared.execute();
+        assert!(
+            execution
+                .as_ref()
+                .is_ok_and(|value| service.execution_is_waiting(&prepared.invocation_id, value))
+        );
+        let marker_bytes = u64::try_from(prepared.invocation_id.len()).unwrap_or(u64::MAX);
+        service.cancelled.insert(
+            prepared.invocation_id.clone(),
+            RuntimeService::entry(marker_bytes, service.state_policy.cancellations.ttl),
+        );
+        service.cancellation_bytes = service.cancellation_bytes.saturating_add(marker_bytes);
+        service
+            .persist_runtime_state()
+            .expect("durable cancellation marker");
+
+        service.finish_invocation(&prepared, execution);
+        assert_eq!(
+            service
+                .service_invocation_inspection(&prepared.invocation_id)
+                .expect("settled inspection")
+                .status,
+            ProgramInvocationStatus::Cancelled
+        );
+        let observations = service.observation_sink.snapshot();
+        assert_eq!(
+            observations
+                .iter()
+                .filter(|item| item.observation_kind
+                    == apxm_runtime_protocol::ObservationKind::CapabilitySettled)
+                .count(),
+            1,
+            "the newly parked host request is withdrawn once"
+        );
+        assert!(observations.iter().any(|item| {
+            item.observation_kind == apxm_runtime_protocol::ObservationKind::InvocationCancelled
+        }));
     }
 
     #[test]
@@ -4970,6 +5542,89 @@ mod tests {
             Err(other) => panic!("unexpected replay result: {other:?}"),
             Ok(_) => panic!("dispatcher refusal replay prepared new work"),
         }
+    }
+
+    #[test]
+    fn live_host_requests_wait_for_durable_settlement_boundary() {
+        let mut service = RuntimeService::default();
+        let instance_id = create_started(&mut service, host_capability_air_bytes());
+        let claim = owner_claim(&service, &instance_id);
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "host.visibility.start".to_owned(),
+                    program_instance_id: instance_id,
+                    owner_claim: claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .expect("host invocation parks");
+        assert!(matches!(
+            started,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
+        let observations = service.observation_sink.snapshot();
+        let request = observations
+            .iter()
+            .find(|observation| {
+                observation.observation_kind
+                    == apxm_runtime_protocol::ObservationKind::CapabilityRequested
+            })
+            .expect("host request observation")
+            .clone();
+        let request_id = request
+            .host_capability
+            .as_ref()
+            .unwrap()
+            .capability_request_id
+            .clone();
+        let mut later = request.clone();
+        later.observation_kind = apxm_runtime_protocol::ObservationKind::CapabilitySettled;
+        later.sequence += 1;
+        let mut unrelated = later.clone();
+        unrelated.program_invocation_id =
+            apxm_runtime_protocol::ProgramInvocationId::new("other.invocation")
+                .expect("valid invocation id");
+        let mut live = observations.clone();
+        live.extend([later, unrelated.clone()]);
+
+        // The same recorder snapshot can be published while its commit is
+        // still in flight. No request or later cursor is readable then.
+        let uncommitted = RuntimeService::default();
+        let readable = uncommitted.readable_live_observations(live);
+        assert!(
+            readable
+                .iter()
+                .all(|observation| observation.program_invocation_id
+                    != request.program_invocation_id
+                    || observation.sequence < request.sequence)
+        );
+        assert!(readable.iter().any(
+            |observation| observation.program_invocation_id == unrelated.program_invocation_id
+        ));
+
+        assert_eq!(
+            service.readable_live_observations(observations.clone()),
+            observations
+        );
+        assert!(matches!(
+            service.settle_host_capability(
+                "host.visibility.settle".to_owned(),
+                claim,
+                request_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{\"matches\":1}".to_owned()),
+                Some("receipt.host.visibility".to_owned()),
+                None,
+                true,
+            ),
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        assert_eq!(
+            service.readable_live_observations(observations.clone()),
+            observations
+        );
     }
 
     #[test]
@@ -5378,7 +6033,7 @@ mod tests {
             .expect("service inspection");
         assert_eq!(
             inspection.status,
-            apxm_runtime_protocol::ProgramInvocationStatus::OutcomeUnknown
+            apxm_runtime_protocol::ProgramInvocationStatus::CancellationUnconfirmed
         );
     }
 
@@ -6130,6 +6785,119 @@ mod tests {
     }
 
     #[test]
+    fn durable_bytes_accept_only_bounded_canonical_base64_or_legacy_arrays() {
+        let bytes = DurableBytes::<4>(vec![0, 1, 254, 255]);
+        let encoded = serde_json::to_value(&bytes).unwrap();
+        assert_eq!(encoded, serde_json::json!("base64:AAH+/w=="));
+        assert_eq!(
+            serde_json::from_value::<DurableBytes<4>>(encoded)
+                .unwrap()
+                .0,
+            bytes.0
+        );
+        assert_eq!(
+            serde_json::from_value::<DurableBytes<4>>(serde_json::json!([0, 1, 254, 255]))
+                .unwrap()
+                .0,
+            bytes.0
+        );
+        for malformed in [
+            serde_json::json!("AAH+/w=="),
+            serde_json::json!("base64:AAH+/w="),
+            serde_json::json!("base64:AAH+/w==AA=="),
+            serde_json::json!("base64:AAECAwQ="),
+            serde_json::json!([0, 1, 2, 3, 4]),
+            serde_json::json!({"base64":"AAH+/w=="}),
+        ] {
+            assert!(serde_json::from_value::<DurableBytes<4>>(malformed).is_err());
+        }
+    }
+
+    #[test]
+    fn authenticated_legacy_metadata_reopens_and_rewrites_exact_carriers() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().to_path_buf();
+        let bytes = fixture_air_bytes();
+        let release = br#"{"schema_version":"apxm.test.release"}"#.to_vec();
+        let provenance = br#"{"schema_version":"apxm.test.provenance"}"#.to_vec();
+        let profile =
+            RuntimeAdmissionProfile::from_carriers(release.clone(), provenance.clone()).unwrap();
+        let mut service = RuntimeService::default()
+            .with_runtime_state_dir(state_path.clone())
+            .with_admission_profile(profile.clone());
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "durable.bytes.create".into(),
+                    artifact_digest: digest.clone(),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            ..
+        } = created
+        else {
+            panic!("expected instance: {created:?}");
+        };
+        let materials = profile.materials_for_artifact(&bytes);
+        service
+            .bind_admission_for_artifact(&digest, materials.clone())
+            .unwrap();
+        service
+            .bind_admission(&program_instance_id, materials.clone())
+            .unwrap();
+        let mut metadata = service.execution_backend.runtime_metadata().unwrap();
+        assert!(metadata["artifacts"][&digest].is_string());
+        assert!(metadata["artifact_admissions"][&digest]["release_bytes"].is_string());
+        assert!(
+            metadata["instances"][&program_instance_id]["materials"]["provenance_bytes"]
+                .is_string()
+        );
+        // Store the original array representation through the authenticated
+        // commit-local path, then reopen it with the new private decoder.
+        metadata["artifacts"][&digest] = serde_json::json!(bytes);
+        metadata["artifact_admissions"][&digest]["release_bytes"] = serde_json::json!(release);
+        metadata["artifact_admissions"][&digest]["provenance_bytes"] =
+            serde_json::json!(provenance);
+        metadata["instances"][&program_instance_id]["materials"]["release_bytes"] =
+            serde_json::json!(release);
+        metadata["instances"][&program_instance_id]["materials"]["provenance_bytes"] =
+            serde_json::json!(provenance);
+        service
+            .execution_backend
+            .set_runtime_metadata(Some(metadata))
+            .unwrap();
+        drop(service);
+
+        let reopened = RuntimeService::default()
+            .with_runtime_state_dir(state_path)
+            .with_admission_profile(profile);
+        assert!(
+            reopened.startup_error().is_none(),
+            "{:?}",
+            reopened.startup_error()
+        );
+        assert_eq!(reopened.artifacts.get(&digest), Some(bytes.as_slice()));
+        assert_eq!(reopened.artifact_admissions.get(&digest), Some(&materials));
+        assert_eq!(
+            reopened.instances[&program_instance_id].materials.as_ref(),
+            Some(&materials)
+        );
+        reopened.persist_runtime_state().unwrap();
+        let rewritten = reopened.execution_backend.runtime_metadata().unwrap();
+        assert!(rewritten["artifacts"][&digest].is_string());
+        assert!(rewritten["artifact_admissions"][&digest]["release_bytes"].is_string());
+        assert!(
+            rewritten["instances"][&program_instance_id]["materials"]["release_bytes"].is_string()
+        );
+        // This private representation does not change the public materials wire.
+        assert!(serde_json::to_value(&materials).unwrap()["release_bytes"].is_array());
+    }
+
+    #[test]
     fn invocation_without_bound_admission_is_rejected() {
         let mut service = RuntimeService::default();
         let instance = {
@@ -6218,6 +6986,780 @@ mod tests {
             started,
             RuntimeResult::Failed { code, .. } if code == "missing_invocation_admission"
         ));
+    }
+
+    #[test]
+    fn host_only_profile_identity_and_materials_are_exact() {
+        let release = br#"{"schema_version":"apxm.test.release"}"#.to_vec();
+        let provenance = br#"{"schema_version":"apxm.test.provenance"}"#.to_vec();
+        let portable =
+            RuntimeAdmissionProfile::from_carriers(release.clone(), provenance.clone()).unwrap();
+        let host_only = RuntimeAdmissionProfile::from_carriers_with_capability_profile(
+            release,
+            provenance,
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .unwrap();
+        assert_ne!(portable.profile_ref(), host_only.profile_ref());
+        assert_ne!(
+            canonical_port_bindings_digest(),
+            port_bindings_digest_for(RuntimeCapabilityProfile::HostOnly),
+        );
+        let portable_descriptor = runtime_descriptor_for(RuntimeCapabilityProfile::PortableLocal);
+        let host_descriptor = runtime_descriptor_for(RuntimeCapabilityProfile::HostOnly);
+        assert_eq!(
+            portable_descriptor.port_bindings.len(),
+            host_descriptor.port_bindings.len()
+        );
+        for (portable, host) in portable_descriptor
+            .port_bindings
+            .iter()
+            .zip(&host_descriptor.port_bindings)
+        {
+            assert_eq!(portable.slot, host.slot);
+            assert_eq!(portable.port_contract_digest, host.port_contract_digest);
+            if portable.slot == apxm_kernel::PortSlot::Capability.as_str() {
+                assert_ne!(portable.binding_digest, host.binding_digest);
+                assert_ne!(portable.proof_digest, host.proof_digest);
+            } else {
+                assert_eq!(portable.binding_digest, host.binding_digest);
+                assert_eq!(portable.proof_digest, host.proof_digest);
+            }
+        }
+        let bytes = fixture_air_bytes();
+        let materials = host_only.materials_for_artifact(&bytes);
+        verify_invocation_materials_for_profile(
+            &bytes,
+            &materials,
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .expect("host-only materials verify against host-only descriptor");
+        assert!(verify_invocation_materials(&bytes, &materials).is_err());
+    }
+
+    #[test]
+    fn changed_profile_refuses_pending_start_without_rebinding_durable_materials() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let bytes = fixture_air_bytes();
+        let release = br#"{"schema_version":"apxm.test.release"}"#.to_vec();
+        let provenance = br#"{"schema_version":"apxm.test.provenance"}"#.to_vec();
+        let host_only = RuntimeAdmissionProfile::from_carriers_with_capability_profile(
+            release.clone(),
+            provenance.clone(),
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .unwrap();
+        let portable = RuntimeAdmissionProfile::from_carriers(release, provenance).unwrap();
+        let instance_id = {
+            let mut service = RuntimeService::default()
+                .with_runtime_state_dir(path.clone())
+                .with_admission_profile(host_only.clone());
+            let digest = service.admit_artifact(bytes.clone());
+            let created = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInstanceCreate {
+                        request_id: "profile.create".into(),
+                        artifact_digest: digest,
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                admission_profile: Some(descriptor),
+                ..
+            } = created
+            else {
+                panic!("expected profile descriptor");
+            };
+            assert_eq!(descriptor.profile_ref, host_only.profile_ref());
+            assert_eq!(
+                descriptor.port_bindings_digest,
+                port_bindings_digest_for(RuntimeCapabilityProfile::HostOnly)
+            );
+            let materials = host_only.materials_for_artifact(&bytes);
+            service
+                .bind_admission(&program_instance_id, materials.clone())
+                .unwrap();
+            service
+                .bind_admission(&program_instance_id, materials)
+                .expect("same binding is idempotent");
+            assert_eq!(
+                service.bind_admission(
+                    &program_instance_id,
+                    portable.materials_for_artifact(&bytes)
+                ),
+                Err("admission_profile_mismatch".into())
+            );
+            program_instance_id
+        };
+        let mut reopened = RuntimeService::default()
+            .with_runtime_state_dir(path)
+            .with_admission_profile(portable);
+        let claim = owner_claim(&reopened, &instance_id);
+        let start = reopened
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "profile.start".into(),
+                    program_instance_id: instance_id.clone(),
+                    owner_claim: claim,
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(start, RuntimeResult::Failed { code, .. } if code == "admission_profile_mismatch")
+        );
+        assert!(
+            reopened
+                .instances
+                .get(&instance_id)
+                .unwrap()
+                .invocation
+                .is_none()
+        );
+        assert!(reopened.active_cancellations.is_empty());
+    }
+
+    #[test]
+    fn host_only_still_parks_a_host_capability_request() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let state_path = directory.path().to_path_buf();
+        let bytes = host_capability_air_bytes();
+        let profile = RuntimeAdmissionProfile::from_carriers_with_capability_profile(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .unwrap();
+        let mut service = RuntimeService::default()
+            .with_runtime_state_dir(state_path.clone())
+            .with_admission_profile(profile.clone());
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "host.profile.create".into(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance");
+        };
+        service
+            .bind_admission(&program_instance_id, profile.materials_for_artifact(&bytes))
+            .unwrap();
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "host.profile.start".into(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = started
+        else {
+            panic!("host-only request did not park: {started:?}");
+        };
+        let committed = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(program_instance_id.clone()))
+            .expect("host request is parked durably");
+        let continuation: Continuation = serde_json::from_value(committed.payload).unwrap();
+        let capability_request_id = continuation
+            .event_ref
+            .expect("host request event")
+            .as_str()
+            .to_owned();
+        drop(service);
+        let portable = RuntimeAdmissionProfile::from_carriers(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+        )
+        .unwrap();
+        let mut reopened = RuntimeService::default()
+            .with_runtime_state_dir(state_path.clone())
+            .with_admission_profile(portable.clone())
+            .with_embedded_read_access();
+        let second_created = reopened
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "portable.profile.create".into(),
+                    artifact_digest: canonical_artifact_digest(&bytes).unwrap(),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id: second_instance_id,
+            owner_claim: second_claim,
+            ..
+        } = second_created
+        else {
+            panic!("expected second instance");
+        };
+        reopened
+            .bind_admission(&second_instance_id, portable.materials_for_artifact(&bytes))
+            .unwrap();
+        let second_start = reopened
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "portable.profile.start".into(),
+                    program_instance_id: second_instance_id.clone(),
+                    owner_claim: second_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(second_start, RuntimeResult::ProgramInvocationStarted { .. }),
+            "{second_start:?}"
+        );
+        let second_committed = reopened
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(second_instance_id.clone()))
+            .expect("second host wait");
+        let second_version = block_on(
+            reopened
+                .execution_backend
+                .commit_port()
+                .current_version(&ProgramInstanceRef::new(second_instance_id.clone())),
+        );
+        let second_continuation: Continuation =
+            serde_json::from_value(second_committed.payload.clone()).unwrap();
+        let second_request_id = second_continuation
+            .event_ref
+            .expect("second host request")
+            .as_str()
+            .to_owned();
+        let metadata_before_refusal = reopened
+            .execution_backend
+            .runtime_metadata()
+            .expect("parked service metadata");
+        for (request_id, claim, receipt) in [
+            (
+                capability_request_id.clone(),
+                owner_claim.clone(),
+                "receipt.profile.old",
+            ),
+            (second_request_id, second_claim, "receipt.profile.current"),
+        ] {
+            let settled = reopened.settle_host_capability(
+                format!("settle.{receipt}"),
+                claim,
+                request_id,
+                HostCapabilityOutcomeKind::Ok,
+                Some("{\"matches\":1}".into()),
+                Some(receipt.into()),
+                None,
+                false,
+            );
+            assert!(
+                matches!(settled, RuntimeResult::CapabilitySettled { .. }),
+                "{settled:?}"
+            );
+        }
+        assert!(
+            reopened
+                .claim_host_capability_resume(&capability_request_id)
+                .unwrap()
+                .is_none()
+        );
+        let inspection = reopened
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id.clone())
+                        .unwrap(),
+                    node_execution_id: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(&inspection, RuntimeResultV2::ProgramInvocationInspection { inspection, .. }
+            if inspection.status == ProgramInvocationStatus::Failed),
+            "{inspection:?}"
+        );
+        let evidence = reopened
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::EvidenceRead {
+                    context: read_context(ReadPurpose::Evidence),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id.clone())
+                        .unwrap(),
+                    after_cursor: None,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        let RuntimeResultV2::EvidencePage {
+            page: evidence_page,
+            ..
+        } = evidence
+        else {
+            panic!("expected committed failure evidence: {evidence:?}");
+        };
+        let refusal = evidence_page
+            .items
+            .iter()
+            .find(|record| {
+                record
+                    .typed_error
+                    .as_ref()
+                    .is_some_and(|error| error.code_ref == "admission_profile_mismatch")
+            })
+            .expect("typed profile refusal evidence");
+        assert_eq!(
+            refusal.typed_error.as_ref().unwrap().category,
+            apxm_runtime_protocol::EvidenceErrorCategory::Admission
+        );
+        assert!(refusal.node_execution_id.is_none());
+        let observations = reopened
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ObservationSubscribe {
+                    context: read_context(ReadPurpose::Observation),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id.clone())
+                        .unwrap(),
+                    after_cursor: None,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(observations, RuntimeResultV2::ObservationPage { page, .. }
+            if page.items.iter().any(|observation| observation.observation_kind == apxm_runtime_protocol::ObservationKind::InvocationFailed
+                && observation.evidence_ref.as_ref() == Some(&refusal.evidence_ref)
+                && observation.node_execution_id.is_none()))
+        );
+        let replay = reopened
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "host.profile.start".into(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(replay, RuntimeResult::Failed { code, .. } if code == "admission_profile_mismatch")
+        );
+        let second = reopened
+            .claim_next_continuation_resume()
+            .unwrap()
+            .expect("current profile resumes");
+        assert_eq!(second.program_instance_id, second_instance_id);
+        assert!(reopened.begin_continuation_resume(&second).unwrap());
+        let execution = second.execute();
+        assert!(execution.is_ok(), "{execution:?}");
+        reopened.finish_continuation_resume(&second, execution);
+        assert!(reopened.active_cancellations.is_empty());
+        let stale_refusal = block_on(apxm_execution::commit_parked_admission_failure(
+            reopened.execution_backend.commit_port().as_ref(),
+            second_version,
+            &second_committed,
+        ))
+        .unwrap();
+        assert!(
+            matches!(stale_refusal, ExecutionCommitResult::CompareConflict { .. }),
+            "{stale_refusal:?}"
+        );
+        assert_ne!(
+            reopened
+                .execution_backend
+                .invocation_status(&second.invocation_id),
+            Some(ProgramInvocationStatus::Failed)
+        );
+        // Simulate a crash after the authoritative refusal commit but before
+        // its separate service metadata update. Recovery must use the exact
+        // typed terminal evidence and must not redispatch the parked request.
+        reopened
+            .execution_backend
+            .set_runtime_metadata(Some(metadata_before_refusal))
+            .unwrap();
+        drop(second);
+        drop(reopened);
+        let mut reread = RuntimeService::default()
+            .with_runtime_state_dir(state_path)
+            .with_admission_profile(portable)
+            .with_embedded_read_access();
+        assert!(
+            reread.startup_error().is_none(),
+            "{:?}",
+            reread.startup_error()
+        );
+        let durable = reread
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::ProgramInvocationInspect {
+                    context: read_context(ReadPurpose::Inspection),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id.clone())
+                        .unwrap(),
+                    node_execution_id: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(durable, RuntimeResultV2::ProgramInvocationInspection { inspection, .. }
+            if inspection.status == ProgramInvocationStatus::Failed)
+        );
+        let durable_evidence = reread
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::EvidenceRead {
+                    context: read_context(ReadPurpose::Evidence),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id.clone())
+                        .unwrap(),
+                    after_cursor: None,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(durable_evidence, RuntimeResultV2::EvidencePage { page, .. }
+            if page.items.iter().filter(|record| record.typed_error.as_ref()
+                .is_some_and(|error| error.code_ref == "admission_profile_mismatch")).count() == 1)
+        );
+        reread.reconcile_recovery_state().unwrap();
+        let replay = reread
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "host.profile.start".into(),
+                    program_instance_id,
+                    owner_claim,
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(&replay, RuntimeResult::Failed { code, .. }
+            if code == "admission_profile_mismatch"),
+            "{replay:?}"
+        );
+    }
+
+    #[test]
+    fn uncertain_profile_refusal_keeps_recovery_uncertain_without_failure_fact() {
+        use sha2::Digest;
+
+        let bytes = host_capability_air_bytes();
+        let host = RuntimeAdmissionProfile::from_carriers_with_capability_profile(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .unwrap();
+        let portable = RuntimeAdmissionProfile::from_carriers(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+        )
+        .unwrap();
+        let mut service = RuntimeService::default()
+            .with_admission_profile(host.clone())
+            .with_embedded_read_access();
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "unknown.profile.create".into(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance: {created:?}");
+        };
+        service
+            .bind_admission(&program_instance_id, host.materials_for_artifact(&bytes))
+            .unwrap();
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "unknown.profile.start".into(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInvocationStarted {
+            program_invocation_id,
+            ..
+        } = started
+        else {
+            panic!("expected parked invocation: {started:?}");
+        };
+        let committed = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(program_instance_id.clone()))
+            .unwrap();
+        let continuation: Continuation = serde_json::from_value(committed.payload.clone()).unwrap();
+        let capability_request_id = continuation.event_ref.unwrap().as_str().to_owned();
+        let version = block_on(
+            service
+                .execution_backend
+                .commit_port()
+                .current_version(&ProgramInstanceRef::new(program_instance_id.clone())),
+        );
+        let identity = format!(
+            "{}:{}:{}",
+            continuation.commit_id, committed.digest, version
+        );
+        let commit_id = format!(
+            "commit.profile-refusal.{:x}",
+            sha2::Sha256::digest(identity.as_bytes())
+        );
+        let RuntimeExecutionBackend::Memory(commit) = &service.execution_backend else {
+            panic!("expected memory commit adapter");
+        };
+        commit.inject_outcome_unknown(commit_id);
+        service.admission_profile = Some(portable.clone());
+        let other_created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "unknown.profile.other.create".into(),
+                    artifact_digest: canonical_artifact_digest(&bytes).unwrap(),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id: other_instance_id,
+            owner_claim: other_claim,
+            ..
+        } = other_created
+        else {
+            panic!("expected independent instance: {other_created:?}");
+        };
+        service
+            .bind_admission(&other_instance_id, portable.materials_for_artifact(&bytes))
+            .unwrap();
+        let other_started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "unknown.profile.other.start".into(),
+                    program_instance_id: other_instance_id.clone(),
+                    owner_claim: other_claim.clone(),
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            other_started,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
+        let other_committed = service
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(other_instance_id.clone()))
+            .unwrap();
+        let other_wait: Continuation = serde_json::from_value(other_committed.payload).unwrap();
+        let other_request_id = other_wait.event_ref.unwrap().as_str().to_owned();
+        let settled = service.settle_host_capability(
+            "unknown.profile.settle".into(),
+            owner_claim.clone(),
+            capability_request_id.clone(),
+            HostCapabilityOutcomeKind::Failed,
+            None,
+            None,
+            Some("neutral failure".into()),
+            false,
+        );
+        assert!(
+            matches!(settled, RuntimeResult::CapabilitySettled { .. }),
+            "{settled:?}"
+        );
+        assert!(
+            service
+                .claim_host_capability_resume(&capability_request_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(service.active_cancellations.is_empty());
+        let other_settled = service.settle_host_capability(
+            "unknown.profile.other.settle".into(),
+            other_claim,
+            other_request_id,
+            HostCapabilityOutcomeKind::Ok,
+            Some("{\"matches\":1}".into()),
+            Some("receipt.profile.other".into()),
+            None,
+            false,
+        );
+        assert!(matches!(
+            other_settled,
+            RuntimeResult::CapabilitySettled { .. }
+        ));
+        let other = service
+            .claim_next_continuation_resume()
+            .unwrap()
+            .expect("independent parked invocation remains eligible");
+        assert_eq!(other.program_instance_id, other_instance_id);
+        assert!(service.begin_continuation_resume(&other).unwrap());
+        let execution = other.execute();
+        assert!(execution.is_ok(), "{execution:?}");
+        service.finish_continuation_resume(&other, execution);
+        let replay = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "unknown.profile.start".into(),
+                    program_instance_id,
+                    owner_claim,
+                    input: Value::Null,
+                },
+            )
+            .unwrap();
+        assert!(matches!(replay, RuntimeResult::Failed { code, .. } if code == "outcome_unknown"));
+        assert_eq!(
+            service
+                .execution_backend
+                .invocation_status(&program_invocation_id),
+            Some(ProgramInvocationStatus::OutcomeUnknown)
+        );
+        let evidence = service
+            .handle_v2(
+                &RuntimeHandshakeV2::server(),
+                RuntimeRequestV2::EvidenceRead {
+                    context: read_context(ReadPurpose::Evidence),
+                    program_invocation_id: ProgramInvocationId::new(program_invocation_id).unwrap(),
+                    after_cursor: None,
+                    limit: 100,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(evidence, RuntimeResultV2::EvidencePage { page, .. }
+            if page.items.iter().all(|record| record.typed_error.as_ref()
+                .is_none_or(|error| error.code_ref != "admission_profile_mismatch")))
+        );
+    }
+
+    #[test]
+    fn terminal_invocation_replays_after_profile_change_without_new_execution() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let state_path = directory.path().to_path_buf();
+        let air: AirModule = serde_json::from_value(serde_json::json!({
+            "schema_version":"apxm.air", "semantic_operations":[],
+            "structural_ir":[
+                {"region_id":"root","kind":"function","execution_order":0},
+                {"region_id":"return","kind":"return","parent_region_id":"root","execution_order":1,
+                 "operands":[{"slot":"output","value_id":"reply","type_ref":"Output"}]}
+            ],
+            "value_assemblies":[{"value_id":"reply","expression":{"kind":"string","value":"ready"}}],
+            "context_flow":[],
+            "source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}
+        })).unwrap();
+        let bytes = ExecutableArtifact::from_air(&air)
+            .unwrap()
+            .encode()
+            .unwrap();
+        let release = br#"{"schema_version":"apxm.test.release"}"#.to_vec();
+        let provenance = br#"{"schema_version":"apxm.test.provenance"}"#.to_vec();
+        let host_only = RuntimeAdmissionProfile::from_carriers_with_capability_profile(
+            release.clone(),
+            provenance.clone(),
+            RuntimeCapabilityProfile::HostOnly,
+        )
+        .unwrap();
+        let (instance_id, claim, first) = {
+            let mut service = RuntimeService::default()
+                .with_runtime_state_dir(state_path.clone())
+                .with_admission_profile(host_only.clone());
+            let digest = service.admit_artifact(bytes.clone());
+            let created = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInstanceCreate {
+                        request_id: "terminal.profile.create".into(),
+                        artifact_digest: digest,
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                owner_claim,
+                ..
+            } = created
+            else {
+                panic!("expected instance");
+            };
+            service
+                .bind_admission(
+                    &program_instance_id,
+                    host_only.materials_for_artifact(&bytes),
+                )
+                .unwrap();
+            let first = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "terminal.profile.start".into(),
+                        program_instance_id: program_instance_id.clone(),
+                        owner_claim: owner_claim.clone(),
+                        input: serde_json::json!({"value":"once"}),
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInvocationStarted {
+                ref program_invocation_id,
+                ..
+            } = first
+            else {
+                panic!("pure invocation did not commit: {first:?}");
+            };
+            assert_eq!(
+                service
+                    .execution_backend
+                    .invocation_status(program_invocation_id),
+                Some(ProgramInvocationStatus::CommittedReturn)
+            );
+            (program_instance_id, owner_claim, first)
+        };
+        let portable = RuntimeAdmissionProfile::from_carriers(release, provenance).unwrap();
+        let mut reopened = RuntimeService::default()
+            .with_runtime_state_dir(state_path)
+            .with_admission_profile(portable);
+        let replay = reopened
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "terminal.profile.start".into(),
+                    program_instance_id: instance_id,
+                    owner_claim: claim,
+                    input: serde_json::json!({"value":"once"}),
+                },
+            )
+            .unwrap();
+        assert_eq!(replay, first);
+        assert!(reopened.active_cancellations.is_empty());
     }
 
     #[test]
@@ -6799,6 +8341,163 @@ mod tests {
             matches!(expired_owner, RuntimeResult::Failed { ref code, .. } if code == "unknown_instance")
         );
         assert!(service.instances.is_empty());
+    }
+
+    #[test]
+    fn an_expired_cancelled_instance_takes_its_marker_and_the_state_reopens() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let invocation_id = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let instance_id = create_started(&mut service, fixture_air_bytes());
+            let claim = owner_claim(&service, &instance_id);
+            let started = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: "expire.cancelled".to_owned(),
+                        program_instance_id: instance_id.clone(),
+                        owner_claim: claim.clone(),
+                        input: serde_json::json!({}),
+                    },
+                )
+                .expect("invocation starts");
+            assert!(
+                !matches!(started, RuntimeResult::Failed { .. }),
+                "{started:?}"
+            );
+            let invocation_id = service.instances[&instance_id]
+                .invocation
+                .as_ref()
+                .expect("admitted invocation")
+                .program_invocation_id
+                .clone();
+            let cancelled = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationCancel {
+                        request_id: "expire.cancel".to_owned(),
+                        owner_claim: claim,
+                        program_invocation_id: invocation_id.clone(),
+                    },
+                )
+                .expect("cancel");
+            assert!(
+                matches!(cancelled, RuntimeResult::Cancelled { .. }),
+                "{cancelled:?}"
+            );
+            assert!(service.cancelled.contains_key(&invocation_id));
+
+            // Expire the instance only. The marker was raised to at least the
+            // instance expiry when it was written, so it is still live here.
+            let instance = service.instances.get_mut(&instance_id).expect("instance");
+            if let Some(invocation) = instance.invocation.as_mut()
+                && invocation.result.is_none()
+            {
+                invocation.result = Some(RuntimeResult::Cancelled {
+                    request_id: "expire.cancelled".to_owned(),
+                });
+            }
+            instance.state_entry.expires_at = Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now);
+            service.cleanup_expired().expect("expiry persists");
+            assert!(service.instances.is_empty());
+            assert!(!service.invocation_index.contains_key(&invocation_id));
+            assert!(
+                !service.cancelled.contains_key(&invocation_id),
+                "an expired instance takes its cancellation marker with it"
+            );
+            assert_eq!(service.cancellation_bytes, 0);
+            invocation_id
+        };
+
+        let reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(
+            reopened.startup_error().is_none(),
+            "{:?}",
+            reopened.startup_error()
+        );
+        assert!(!reopened.cancelled.contains_key(&invocation_id));
+        assert!(reopened.instances.is_empty());
+    }
+
+    #[test]
+    fn a_pending_invocation_cancelled_without_a_worker_token_never_runs() {
+        let mut service = RuntimeService::default();
+        let instance_id = create_started(&mut service, fixture_air_bytes());
+        let claim = owner_claim(&service, &instance_id);
+        let prepared = service
+            .prepare_invocation(
+                "pending.cancel".to_owned(),
+                instance_id,
+                claim.clone(),
+                serde_json::json!({}),
+            )
+            .expect("durable pending invocation");
+        let invocation_id = prepared.invocation_id.clone();
+        // No worker holds a token now, exactly as after a restart before
+        // recovery claims the pending invocation.
+        service.release_invocation_claim(&invocation_id);
+        drop(prepared);
+        let cancelled = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "pending.cancel.request".to_owned(),
+                    owner_claim: claim,
+                    program_invocation_id: invocation_id.clone(),
+                },
+            )
+            .expect("cancel");
+        assert!(
+            matches!(cancelled, RuntimeResult::Cancelled { .. }),
+            "{cancelled:?}"
+        );
+
+        let reclaimed = service
+            .claim_pending_invocation(&invocation_id)
+            .expect("claim")
+            .expect("the pending invocation is still claimable");
+        assert!(
+            reclaimed.cancellation.is_cancelled(),
+            "a claim over a durable cancellation marker carries the cancellation"
+        );
+        assert!(service.begin_invocation(&invocation_id).expect("begin"));
+        let execution = reclaimed.execute();
+        let result = service.finish_invocation(&reclaimed, execution);
+        assert!(
+            matches!(result, RuntimeResult::Cancelled { .. }),
+            "a cancelled pending invocation settles as cancelled: {result:?}"
+        );
+    }
+
+    #[test]
+    fn an_unexplained_cancellation_marker_still_refuses_reopen() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let _instance = create_started(&mut service, fixture_air_bytes());
+            let orphan = "pi-unexplained:inv-orphan".to_owned();
+            let marker_bytes = u64::try_from(orphan.len()).unwrap_or(u64::MAX);
+            service.cancelled.insert(
+                orphan,
+                RuntimeService::entry(marker_bytes, service.state_policy.cancellations.ttl),
+            );
+            service.cancellation_bytes = service.cancellation_bytes.saturating_add(marker_bytes);
+            service
+                .persist_runtime_state()
+                .expect("persist the unexplained marker");
+        }
+
+        let reopened = RuntimeService::default().with_runtime_state_dir(path);
+        match reopened.startup_error() {
+            Some(RuntimeServiceStartupError::OpenRuntimeStateDir(message)) => {
+                assert!(message.contains("orphan cancellation"), "{message}");
+            }
+            other => panic!("an orphan cancellation must refuse reopen: {other:?}"),
+        }
     }
 
     #[test]

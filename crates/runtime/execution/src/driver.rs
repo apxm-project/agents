@@ -4567,6 +4567,142 @@ fn bind_tuple_digests(write_set: &mut AtomicWriteSet, tuple: &ExecutionCommitTup
         runtime_evidence_and_observation_digest(&tuple.evidence, &tuple.observations);
 }
 
+/// Commit a refusal for an unstarted, integrity-checked parked continuation.
+/// The caller captures `expected_version` before loading `committed` and owns
+/// the durable resume-start fence. A conflict must never be retried with a new
+/// version: another worker may have begun the continuation meanwhile.
+pub async fn commit_parked_admission_failure(
+    port: &dyn ExecutionCommitPort,
+    expected_version: u64,
+    committed: &CommittedContinuation,
+) -> Result<ExecutionCommitResult, ExecutionError> {
+    verify_continuation_integrity(committed)?;
+    let continuation: Continuation =
+        serde_json::from_value(committed.payload.clone()).map_err(|error| {
+            ExecutionError::InvalidCommitRequest {
+                message: format!("invalid parked continuation: {error}"),
+            }
+        })?;
+    if continuation.event_ref.is_none()
+        || facts_have_terminal_non_success(&continuation.evidence_batch)
+    {
+        return Err(ExecutionError::InvalidCommitRequest {
+            message: "admission refusal requires a nonterminal parked event".into(),
+        });
+    }
+    let identity = format!(
+        "{}:{}:{}",
+        continuation.commit_id, committed.digest, expected_version
+    );
+    let identity_digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    let commit_id = format!("commit.profile-refusal.{identity_digest}");
+    let seq = continuation.event_sequence.checked_add(1).ok_or_else(|| {
+        ExecutionError::InvalidCommitRequest {
+            message: "parked sequence exhausted".into(),
+        }
+    })?;
+    let next_version =
+        expected_version
+            .checked_add(1)
+            .ok_or_else(|| ExecutionError::InvalidCommitRequest {
+                message: "program state version exhausted".into(),
+            })?;
+    let mut failure = fact(
+        continuation.program_invocation_ref.as_str(),
+        seq,
+        FactKind::InvocationFailed,
+        None,
+        Some(InvocationState::Failed),
+        None,
+        None,
+    );
+    runtime_fact_mut(&mut failure).typed_error = Some(TypedErrorEnvelope {
+        error_id: format!("error.profile-refusal.{identity_digest}"),
+        category: EvidenceErrorCategory::Admission,
+        code_ref: "admission_profile_mismatch".into(),
+        message: "the selected runtime admission profile changed before continuation".into(),
+        details_digest: None,
+    });
+    let evidence_ref =
+        PrecommitEvidenceRef::new(&commit_id, continuation.program_invocation_ref.as_str(), 0)
+            .map_err(|error| ExecutionError::InvalidCommitRequest {
+                message: error.into(),
+            })?;
+    let observation = make_observation(
+        continuation.program_invocation_ref.as_str(),
+        seq,
+        apxm_runtime_protocol::ObservationTiming {
+            // The refusal may be replayed after a crash. The continuation
+            // contains no wall clock; zero records unavailable time while
+            // keeping the exact commit request replay-stable.
+            observed_at_unix_ms: 0,
+            duration_ms: None,
+        },
+        apxm_runtime_protocol::ObservationKind::InvocationFailed,
+        apxm_runtime_protocol::Commitment::Committed,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(evidence_ref.as_str()),
+        None,
+        None,
+    )
+    .map_err(ExecutionError::Observation)?;
+    let observations =
+        vec![serde_json::to_value(observation).expect("typed observation serializes")];
+    let tuple = ExecutionCommitTuple {
+        context: continuation.context.clone(),
+        continuation: None,
+        event_wait: None,
+        effect_outcomes: Vec::new(),
+        evidence: vec![failure.clone()],
+        usage: serde_json::json!({
+            "input_tokens": continuation.native_usage.input_tokens,
+            "output_tokens": continuation.native_usage.output_tokens,
+        }),
+        output_refs: Vec::new(),
+        observations,
+    };
+    let mut write_set = continuation.write_set.clone();
+    write_set.continuation_digest = continuation_digest(None);
+    write_set.next_program_state_digest = format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&serde_json::json!({
+            "context": tuple.context, "terminal": "admission_profile_mismatch", "version": next_version,
+        })))
+    );
+    write_set.checkpoint_effect_outcomes_digest = format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&serde_json::json!(
+            tuple.effect_outcomes
+        )))
+    );
+    write_set.usage_facts_digest = format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&tuple.usage))
+    );
+    bind_tuple_digests(&mut write_set, &tuple);
+    let request = ExecutionCommitRequest {
+        commit_id: commit_id.clone(),
+        program_instance_ref: continuation.program_instance_ref,
+        program_invocation_ref: continuation.program_invocation_ref,
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version: expected_version,
+        write_set,
+        tuple,
+        evidence_batch: vec![failure],
+    };
+    request
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_string(),
+        })?;
+    Ok(port.commit(request).await)
+}
+
 fn node_outcome_value(outcome: &NodeOutcome) -> Value {
     match outcome {
         NodeOutcome::Model { node_id, .. }

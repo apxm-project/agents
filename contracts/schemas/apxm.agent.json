@@ -159,7 +159,7 @@
       "properties": {
         "host": {
           "type": "array",
-          "maxItems": 256,
+          "maxItems": 512,
           "items": {
             "$ref": "apxm.host-capability.v1#/$defs/HostCapabilityDeclaration"
           }

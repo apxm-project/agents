@@ -197,6 +197,21 @@ Public compilation accepts complete in-memory values/bytes/readers plus
 explicit compiler options, target/toolchain identity, cancellation, limits,
 and source maps. It returns an admitted artifact or closed diagnostics.
 
+The Compilation Service protocol (`apxm.compilation.protocol/2`) carries those
+diagnostics as one `apxm.compile-diagnostics.v1` report on every compile
+result. A failed compile reports every diagnostic it emitted — at most 64
+items in emission order, with `truncated` and `total_count` saying how many
+were not carried — and `stopped_at`, the phase after which no check ran
+(`request`, `package`, `frontend_capture`, `type_check`, `capture`, `lowering`,
+`admission`). Its `code` is the first error's code. A committed artifact's
+report carries only warnings and notes. Each item has a severity, a closed
+code, its phase and a bounded message, and may carry a location in the source
+map's span convention (1-based lines, 0-based columns, naming the portable
+submitted file), a node id, a field path, related notes and expected/actual
+type facts. Messages never name a host path. Every semantic operation of a
+committed artifact carries its frontend span in the artifact's source map, so
+a diagnostic's `node_id` and a runtime node id resolve to the same source.
+
 It never reads cwd, `PATH`, credentials, ambient service registries, endpoints,
 a running external service, or provider configuration. CLI, PyO3, Node-API, and
 remote compile bridges are explicit transports to the same compiler contract;
@@ -462,6 +477,17 @@ The port itself performs no external effect and cannot claim exactly-once
 transport. Stable effect ids, prepared-before-send commits, owner-specific
 idempotency, and reconciliation prevent blind duplication across crash and
 recovery.
+
+The local filesystem implementation authenticates its stored representation
+before restoring Runtime metadata. New writes use canonical request-identity
+fingerprints and bounded base64 encoding for private artifact and admission
+carrier bytes; public Invocation Materials retain their byte-array wire
+representation. The reader accepts authenticated legacy full identities and
+byte arrays, preserving the original bytes and admission checks. Older
+binaries cannot read the new private representation. After a new write,
+rollback requires a compatible reader or a coordinated pre-upgrade snapshot;
+restoring Runtime storage alone does not undo external effects. The existing
+serialized-store limit remains in force.
 
 ### 8.5 Durable event port
 

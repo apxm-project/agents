@@ -65,6 +65,11 @@ const SCHEMAS_UNDER_TEST: &[SchemaUnderTest] = &[
         siblings: &[],
     },
     SchemaUnderTest {
+        id: "apxm.compile-diagnostics.v1",
+        snapshots: &[],
+        siblings: &["schemas/apxm.source-map.json"],
+    },
+    SchemaUnderTest {
         id: "apxm.committed-native-model-usage",
         snapshots: &[CONTRACT_COMMON],
         siblings: &["schemas/apxm.runtime-evidence.json"],

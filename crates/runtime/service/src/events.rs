@@ -270,13 +270,18 @@ impl RuntimeService {
         event_ref: EventRef,
         delivered: Value,
     ) -> Result<Option<PreparedResume>, String> {
+        let expected_version = block_on(
+            self.execution_backend
+                .commit_port()
+                .current_version(&ProgramInstanceRef::new(instance_id.clone())),
+        );
         let Some(committed) = self
             .execution_backend
             .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
         else {
             return Ok(None);
         };
-        let continuation: Continuation = serde_json::from_value(committed.payload)
+        let continuation: Continuation = serde_json::from_value(committed.payload.clone())
             .map_err(|error| format!("invalid committed continuation: {error}"))?;
         if continuation.event_ref.as_ref() != Some(&event_ref) {
             return Ok(None);
@@ -307,6 +312,19 @@ impl RuntimeService {
             .materials
             .clone()
             .ok_or("parked invocation admission is unavailable")?;
+        if let Err(error) = self.verify_selected_materials(&artifact_bytes, &materials) {
+            if error != "admission_profile_mismatch" {
+                return Err(error);
+            }
+            self.fail_unstarted_profile_resume(
+                &instance_id,
+                &invocation_id,
+                &event_ref,
+                expected_version,
+                &committed,
+            )?;
+            return Ok(None);
+        }
         materials.admission.invocation_id.clone_from(&invocation_id);
         let cancellation = CancellationToken::new();
         if self.invocation_is_cancelled(&instance_id, &invocation_id) {
@@ -322,6 +340,8 @@ impl RuntimeService {
             invocation_id,
             delivered,
             continuation,
+            committed_continuation: committed,
+            expected_program_state_version: expected_version,
             artifact_bytes,
             materials,
             handlers: self.handlers.clone(),
@@ -333,6 +353,73 @@ impl RuntimeService {
             #[cfg(test)]
             test_gate: self.resume_test_gate.clone(),
         }))
+    }
+
+    pub(super) fn fail_unstarted_profile_resume(
+        &mut self,
+        instance_id: &str,
+        invocation_id: &str,
+        event_ref: &EventRef,
+        expected_version: u64,
+        committed: &apxm_kernel::CommittedContinuation,
+    ) -> Result<(), String> {
+        let resume_started = match event_ref {
+            EventRef::HostCapability { request_id } => self
+                .host_capability_settlements
+                .get(request_id)
+                .is_some_and(|state| state.resume_started),
+            EventRef::Reserved { reference } => self
+                .reservations
+                .get(&(reference.event_id.clone(), reference.generation))
+                .is_some_and(|state| state.resume_started),
+        };
+        if resume_started {
+            return Err("outcome_unknown".to_owned());
+        }
+        let instance = self
+            .instances
+            .get_mut(instance_id)
+            .ok_or("unknown_instance")?;
+        let invocation = instance.invocation.as_mut().ok_or("unknown_invocation")?;
+        if invocation.program_invocation_id != invocation_id {
+            return Err("parked continuation identity mismatch".to_owned());
+        }
+        if invocation.result.is_some() {
+            return Ok(());
+        }
+        let committed_result = block_on(apxm_execution::commit_parked_admission_failure(
+            self.execution_backend.commit_port().as_ref(),
+            expected_version,
+            committed,
+        ))
+        .map_err(|error| error.to_string())?;
+        let result_code = match committed_result {
+            ExecutionCommitResult::Committed { .. } => "admission_profile_mismatch",
+            ExecutionCommitResult::CompareConflict { .. } => return Ok(()),
+            ExecutionCommitResult::OutcomeUnknown { .. } => "outcome_unknown",
+        };
+        let request_id = invocation.request_id.clone();
+        let result = RuntimeResult::Failed {
+            request_id: request_id.clone(),
+            code: result_code.to_owned(),
+        };
+        invocation.result = Some(result.clone());
+        if let Some(history) = instance.invocation_history.get_mut(&request_id) {
+            history.result = Some(result);
+        }
+        if let Err(error) = self.persist_runtime_state() {
+            if let Some(instance) = self.instances.get_mut(instance_id) {
+                if let Some(invocation) = instance.invocation.as_mut() {
+                    invocation.result = None;
+                }
+                if let Some(history) = instance.invocation_history.get_mut(&request_id) {
+                    history.result = None;
+                }
+            }
+            return Err(error);
+        }
+        self.observation_signal.notify();
+        Ok(())
     }
 
     pub(super) fn resume_marker(&mut self, prepared: &PreparedResume) -> Option<&mut bool> {

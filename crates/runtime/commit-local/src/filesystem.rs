@@ -107,6 +107,14 @@ impl FilesystemExecutionCommit {
             .invocation_status(invocation)
     }
 
+    #[must_use]
+    pub fn terminal_failure_code(&self, invocation: &str) -> Option<String> {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .terminal_failure_code(invocation)
+    }
+
     /// Atomically replace opaque composition metadata in the authenticated
     /// store. The adapter does not inspect or interpret the JSON value.
     pub fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), CommitLocalError> {
@@ -409,13 +417,17 @@ fn persist(
         std::process::id(),
         Uuid::new_v4()
     ));
-    let mut authenticated = store.clone();
-    authenticated.integrity_tag.clear();
-    let body =
-        serde_json::to_value(&authenticated).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
-    authenticated.integrity_tag = keyed_digest(auth_key, &canonical_json_bytes(&body));
-    let bytes = serde_json::to_vec_pretty(&authenticated)
-        .map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    let mut body =
+        serde_json::to_value(store).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    let fields = body
+        .as_object_mut()
+        .ok_or_else(|| CommitLocalError::Codec("local store is not an object".to_owned()))?;
+    fields.insert("integrity_tag".to_owned(), Value::String(String::new()));
+    let integrity_tag = keyed_digest(auth_key, &canonical_json_bytes(&body));
+    body.as_object_mut()
+        .expect("validated local store object")
+        .insert("integrity_tag".to_owned(), Value::String(integrity_tag));
+    let bytes = serde_json::to_vec(&body).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
     if bytes.len() > MAX_STORE_BYTES {
         return Err(CommitLocalError::StoreTooLarge {
             bytes: bytes.len() as u64,
@@ -490,12 +502,14 @@ fn verify_store_auth(
             "local store has no integrity tag".into(),
         ));
     }
-    let mut unauthenticated = store.clone();
-    let actual = std::mem::take(&mut unauthenticated.integrity_tag);
-    let body = serde_json::to_value(&unauthenticated)
-        .map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    let actual = &store.integrity_tag;
+    let mut body =
+        serde_json::to_value(store).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    body.as_object_mut()
+        .ok_or_else(|| CommitLocalError::Codec("local store is not an object".to_owned()))?
+        .insert("integrity_tag".to_owned(), Value::String(String::new()));
     let expected = keyed_digest(auth_key, &canonical_json_bytes(&body));
-    if actual != expected {
+    if actual != &expected {
         return Err(CommitLocalError::AuthenticationFailed(
             "local store integrity tag mismatch".into(),
         ));
@@ -522,4 +536,106 @@ fn keyed_digest(key: &[u8; 32], bytes: &[u8]) -> String {
     outer_hash.update(outer);
     outer_hash.update(inner_digest);
     format!("hmac-sha256:{:x}", outer_hash.finalize())
+}
+
+#[cfg(test)]
+mod compact_store_tests {
+    use super::*;
+    use crate::store::{CommitReplayIdentity, CommitRequestIdentity};
+    use apxm_kernel::{
+        AtomicWriteSet, ExecutionCommitTuple, ProgramInvocationRef, continuation_digest,
+        runtime_evidence_and_observation_digest, session_output_refs_digest,
+    };
+    use serde_json::json;
+
+    fn digest(byte: char) -> String {
+        format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
+    fn request() -> ExecutionCommitRequest {
+        let continuation = Some(json!({"pc": 1}));
+        ExecutionCommitRequest {
+            commit_id: "commit.legacy-identity".to_owned(),
+            program_instance_ref: ProgramInstanceRef::new("instance.legacy-identity"),
+            program_invocation_ref: ProgramInvocationRef::new("invoke.legacy-identity"),
+            idempotency_key: "idem.legacy-identity".to_owned(),
+            expected_program_state_version: 0,
+            write_set: AtomicWriteSet {
+                next_program_state_digest: digest('1'),
+                continuation_digest: continuation_digest(continuation.as_ref()),
+                checkpoint_effect_outcomes_digest: digest('3'),
+                runtime_evidence_batch_digest: runtime_evidence_and_observation_digest(&[], &[]),
+                usage_facts_digest: digest('5'),
+                session_output_refs_digest: session_output_refs_digest(&[]),
+            },
+            tuple: ExecutionCommitTuple {
+                context: json!({"scope": "legacy"}),
+                continuation,
+                event_wait: None,
+                effect_outcomes: vec![],
+                evidence: vec![],
+                usage: Value::Null,
+                output_refs: vec![],
+                observations: vec![],
+            },
+            evidence_batch: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_legacy_full_identity_reopens_and_replays() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+        let request = request();
+        let first = port.commit(request.clone()).await;
+        assert!(matches!(first, ExecutionCommitResult::Committed { .. }));
+        {
+            let mut store = port.store.lock().expect("commit-local store lock");
+            let retained = store
+                .by_commit_scope
+                .values_mut()
+                .next()
+                .expect("commit row");
+            retained.request_identity =
+                CommitReplayIdentity::LegacyFull(Box::new(CommitRequestIdentity::from(&request)));
+            persist(&port.root, &store, &port.auth_key).expect("persist legacy row");
+        }
+        drop(port);
+        let path = store_path(dir.path());
+        let old_pretty_bytes: Value =
+            serde_json::from_slice(&fs::read(&path).expect("read authenticated legacy row"))
+                .expect("legacy JSON");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&old_pretty_bytes).expect("old pretty representation"),
+        )
+        .expect("write old pretty representation");
+        let reopened = FilesystemExecutionCommit::open(dir.path()).expect("authenticate legacy");
+        assert_eq!(reopened.commit(request.clone()).await, first);
+        let mut changed = request;
+        changed.tuple.context = json!({"scope": "foreign"});
+        assert!(matches!(
+            reopened.commit(changed).await,
+            ExecutionCommitResult::OutcomeUnknown { .. }
+        ));
+    }
+
+    #[test]
+    fn oversized_metadata_persist_preserves_prior_authority() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+        port.set_runtime_metadata(Some(json!({"state": "before"})))
+            .expect("persist initial metadata");
+        assert!(matches!(
+            port.set_runtime_metadata(Some(json!({"padding": "x".repeat(MAX_STORE_BYTES)}))),
+            Err(CommitLocalError::StoreTooLarge { .. })
+        ));
+        assert_eq!(port.runtime_metadata(), Some(json!({"state": "before"})));
+        drop(port);
+        let reopened = FilesystemExecutionCommit::open(dir.path()).expect("reopen prior authority");
+        assert_eq!(
+            reopened.runtime_metadata(),
+            Some(json!({"state": "before"}))
+        );
+    }
 }

@@ -7,10 +7,11 @@
 
 mod common;
 
+use apxm_core::grammar;
 use apxm_program::{ExecutableArtifact, frontend_graph::IntentKind};
 use apxm_source_port::{
-    CompiledSource, Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest,
-    SourceDiagnostic, SourceDiagnosticCode, compile_source_bundle,
+    CompiledSource, Frontend, FrontendDrivers, FrontendRoots, Phase, Severity, SourceBundleRequest,
+    SourceDiagnostic, SourceDiagnosticCode, compile_source_bundle, diagnostic_report,
 };
 
 use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
@@ -247,6 +248,39 @@ fn accepted_body(frontend: Frontend) -> &'static str {
 /// The accepted program for a selector.
 fn accepted(frontend: Frontend) -> SourceBundleRequest {
     request(frontend, "review.model", accepted_body(frontend))
+}
+
+/// An authored display name outside the identifier grammar is an ordinary
+/// source rejection, even when the rejected graph used it in a node ID.
+#[test]
+fn invalid_authored_name_reports_source_error_without_invalid_node_identity() {
+    if !frontend_present(Frontend::Typescript) {
+        return;
+    }
+    let valid = accepted(Frontend::Typescript);
+    compile(&valid);
+    let mut invalid = valid;
+    invalid.source = invalid
+        .source
+        .replace("name: \"Reviewer\"", "name: \"Model boundary\"");
+    let diagnostics = reject(&invalid);
+    assert!(
+        diagnostics.iter().any(|item| {
+            item.wire_code() == "invalid_identifier"
+                && item.phase == Phase::Lowering
+                && item.location.is_some()
+                && item.node_id.is_none()
+        }),
+        "the malformed authored name needs a located source diagnostic: {diagnostics:?}"
+    );
+    let report = diagnostic_report(&diagnostics);
+    assert!(
+        report
+            .items
+            .iter()
+            .all(|item| { item.node_id.as_deref().is_none_or(grammar::is_identifier) }),
+        "a rejected node ID escaped onto the compile protocol: {report:?}"
+    );
 }
 
 #[test]
@@ -985,6 +1019,203 @@ fn invalid_syntax_rejects_with_no_graph() {
             SourceDiagnosticCode::SourceRejected,
         );
     }
+}
+
+/// A parse failure stops the compile before capture, and the report says so:
+/// `stopped_at` names the static-check phase, so no consumer reads capture or
+/// lowering as verified. The syntax error is located in the submitted source.
+#[test]
+fn an_early_parse_failure_stops_the_report_at_type_check() {
+    for frontend in FRONTENDS {
+        if !frontend_present(frontend) {
+            continue;
+        }
+        let body = match frontend {
+            Frontend::Python => "    evidence = await SearchWeb(request\n    return evidence",
+            Frontend::Typescript => {
+                "    const evidence = await SearchWeb(request;\n    return evidence;"
+            }
+        };
+        let submitted = request(frontend, "review.model", body);
+        let body_line = submitted
+            .source
+            .lines()
+            .position(|line| line.contains("SearchWeb(request"))
+            .map(|index| u32::try_from(index + 1).unwrap())
+            .expect("the body is in the source");
+        let diagnostics = reject(&submitted);
+        let report = diagnostic_report(&diagnostics);
+        assert_eq!(
+            report.stopped_at,
+            Some(Phase::TypeCheck),
+            "{}: {diagnostics:?}",
+            frontend.wire()
+        );
+        let located = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .find_map(|diagnostic| diagnostic.location.as_ref())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: the syntax error is located: {diagnostics:?}",
+                    frontend.wire()
+                )
+            });
+        assert_eq!(located.source_file, frontend.submitted_source_file());
+        assert!(
+            (body_line..=body_line + 1).contains(&located.span.start_line),
+            "{}: located at the unclosed call, got {located:?}",
+            frontend.wire()
+        );
+        assert!(
+            report
+                .items
+                .iter()
+                .all(|item| item.phase == Phase::TypeCheck)
+        );
+    }
+}
+
+/// A compiler warning does not reject: it travels with the compiled source as
+/// a located warning, and the report of a successful compile has no error and
+/// names no stopping phase.
+#[test]
+fn a_compile_warning_travels_with_the_compiled_source() {
+    if !frontend_present(Frontend::Python) {
+        return;
+    }
+    let mut submitted = accepted(Frontend::Python);
+    submitted.source = submitted.source.replacen(
+        "\n\n\nclass ReviewRequest:",
+        "\n\nIDENTITY = 1 is 1\n\nclass ReviewRequest:",
+        1,
+    );
+    let warning_line = submitted
+        .source
+        .lines()
+        .position(|line| line.starts_with("IDENTITY"))
+        .map(|index| u32::try_from(index + 1).unwrap())
+        .expect("the warning fixture is in the source");
+    let compiled = compile(&submitted);
+
+    assert_eq!(compiled.diagnostics.len(), 1, "{:?}", compiled.diagnostics);
+    let warning = &compiled.diagnostics[0];
+    assert_eq!(warning.severity, Severity::Warning);
+    assert_eq!(warning.wire_code(), "source_warning");
+    assert_eq!(warning.phase, Phase::TypeCheck);
+    let location = warning.location.as_ref().expect("the warning is located");
+    assert_eq!(location.source_file, "submitted_source.py");
+    assert_eq!(location.span.start_line, warning_line);
+
+    let report = diagnostic_report(&compiled.diagnostics);
+    assert!(!report.has_errors());
+    assert_eq!(report.stopped_at, None);
+    assert_eq!(report.total_count, 1);
+}
+
+/// Every semantic operation the TypeScript frontend captured keeps its own
+/// source span through lowering: a host capability call, and one Tool invoked
+/// from both arms of a branch, which is two operations with two spans.
+#[test]
+fn every_lowered_operation_keeps_its_own_frontend_span() {
+    if !frontend_present(Frontend::Typescript) {
+        return;
+    }
+    let source = BRANCHED_TYPESCRIPT_PROGRAM;
+    let submitted = SourceBundleRequest::new(Frontend::Typescript, ENTRYPOINT, source)
+        .with_host_capabilities(["notes.search"]);
+    let compiled = compile(&submitted);
+    assert_branched_spans(&compiled.air, &compiled.source_map, source);
+}
+
+/// A TypeScript program with a host capability call and the same Tool invoked
+/// in both arms of a branch.
+pub const BRANCHED_TYPESCRIPT_PROGRAM: &str = r#"import { Workflow, Capability, Tool } from "@apxm/frontend";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
+
+type ReviewRequest = { urgent: boolean };
+type Review = object;
+
+const Notes = Capability<ReviewRequest, Review>("host:notes.search");
+const SearchWeb = Tool<ReviewRequest, Review>("search_web");
+
+export const Reviewer = Workflow<ReviewRequest, Review>({
+  name: "Reviewer",
+  async run(agent, request) {
+    const noted = await Notes(request);
+    if (request.urgent) {
+      return await SearchWeb(request);
+    } else {
+      return await SearchWeb(request);
+    }
+  },
+});
+"#;
+
+/// Every semantic operation has exactly one node span, and the three
+/// capability invocations each point at their own call in the source.
+pub fn assert_branched_spans(
+    air: &apxm_program::air::AirModule,
+    source_map: &apxm_program::source_map::SourceMap,
+    source: &str,
+) {
+    use std::collections::BTreeMap;
+
+    let spans: BTreeMap<&str, &apxm_program::source_map::NodeSpan> = source_map
+        .node_spans
+        .iter()
+        .map(|span| (span.node_id.as_str(), span))
+        .collect();
+    assert!(!air.semantic_operations.is_empty());
+    for operation in &air.semantic_operations {
+        assert!(
+            spans.contains_key(operation.node_id.as_str()),
+            "semantic operation {} has no node span; spans: {:?}",
+            operation.node_id,
+            source_map.node_spans
+        );
+    }
+    let lines = source.lines().collect::<Vec<_>>();
+    let text_at = |span: &apxm_program::source_map::Span| {
+        assert_eq!(
+            span.start_line, span.end_line,
+            "a call span sits on one line"
+        );
+        let line = lines[usize::try_from(span.start_line).unwrap() - 1];
+        line.chars()
+            .skip(usize::try_from(span.start_column).unwrap())
+            .take(usize::try_from(span.end_column - span.start_column).unwrap())
+            .collect::<String>()
+    };
+    let invoked = air
+        .semantic_operations
+        .iter()
+        .filter(|operation| {
+            serde_json::to_value(operation.op).expect("op serializes") == "capability.invoke"
+        })
+        .map(|operation| {
+            let span = spans[operation.node_id.as_str()];
+            (operation.node_id.clone(), span.span, text_at(&span.span))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(invoked.len(), 3, "{invoked:?}");
+    let host = invoked
+        .iter()
+        .filter(|(_, _, text)| text.contains("Notes(request)"))
+        .count();
+    assert_eq!(host, 1, "{invoked:?}");
+    let searches = invoked
+        .iter()
+        .filter(|(_, _, text)| text.contains("SearchWeb(request)"))
+        .collect::<Vec<_>>();
+    assert_eq!(searches.len(), 2, "{invoked:?}");
+    assert_ne!(searches[0].0, searches[1].0, "two operations, two node ids");
+    assert_ne!(
+        searches[0].1.start_line, searches[1].1.start_line,
+        "each branch's call keeps its own line"
+    );
 }
 
 /// A raw AIS spelling: source naming an AIS operation directly instead of

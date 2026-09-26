@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.compile-diagnostics.v1",
+  "title": "CompileDiagnosticReport",
+  "description": "Bounded, ordered report of every diagnostic one compile emitted, carried by the Compilation Service protocol on both a failed compile and a committed artifact. A committed artifact's report holds no error-severity item and no stopped_at. Locations use the executable artifact source map's span convention (1-based lines, 0-based columns) and name the portable submitted source file, never a host path. Messages are human-readable and never used for control flow.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "items",
+    "truncated",
+    "total_count"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.compile-diagnostics.v1"
+    },
+    "items": {
+      "description": "At most 64 diagnostics in stable emission order.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/CompileDiagnostic"
+      }
+    },
+    "truncated": {
+      "description": "Whether diagnostics beyond items were emitted and not carried.",
+      "type": "boolean"
+    },
+    "total_count": {
+      "description": "How many diagnostics the compile emitted in total.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "stopped_at": {
+      "description": "The phase after which no further checks ran. Absent when every phase ran; a consumer never treats a later phase as verified when present.",
+      "$ref": "#/$defs/Phase"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ]
+    },
+    "Phase": {
+      "type": "string",
+      "enum": [
+        "request",
+        "package",
+        "frontend_capture",
+        "type_check",
+        "capture",
+        "lowering",
+        "admission"
+      ]
+    },
+    "Code": {
+      "description": "A closed machine-readable slug: a source-port reason, a verifier code, a frontend capture code, or a package/admission code.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "Message": {
+      "description": "Human-readable explanation, at most 1024 UTF-8 bytes.",
+      "type": "string",
+      "maxLength": 1024
+    },
+    "Location": {
+      "type": "object",
+      "required": [
+        "source_file",
+        "span"
+      ],
+      "properties": {
+        "source_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "span": {
+          "$ref": "apxm.source-map#/$defs/Span"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Related": {
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/Message"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "TypeFact": {
+      "type": "object",
+      "properties": {
+        "type_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompileDiagnostic": {
+      "type": "object",
+      "required": [
+        "severity",
+        "code",
+        "phase",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "code": {
+          "$ref": "#/$defs/Code"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "message": {
+          "$ref": "#/$defs/Message"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field_path": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string"
+          }
+        },
+        "related": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/Related"
+          }
+        },
+        "expected": {
+          "$ref": "#/$defs/TypeFact"
+        },
+        "actual": {
+          "$ref": "#/$defs/TypeFact"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -159,6 +159,7 @@ CANONICAL_VERSIONED_IDS = frozenset(
         "apxm.agents.owner-phase-result.v1",
         "apxm.agents.owner-qualification-failure.v1",
         "apxm.agents.owner-qualification.v1",
+        "apxm.compile-diagnostics.v1",
         "apxm.owner-command-output.v1",
         "apxm.agents.release-consumer-verification.v1",
         "apxm.agents.release-qualification.v1",
