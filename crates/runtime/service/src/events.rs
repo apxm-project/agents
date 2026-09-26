@@ -137,76 +137,92 @@ impl RuntimeService {
         })
     }
 
-    /// Reconcile the two durable stores after any execution commit or restart.
-    /// The commit adapter's continuation owns the exact wait; metadata records
-    /// its immutable binding and terminal wake before any worker can claim it.
-    pub(super) fn reconcile_event_waits(&mut self) -> Result<(), String> {
+    /// The commit adapter's continuation owns the exact Event wait. Validate
+    /// one changed instance before recording its immutable metadata binding.
+    fn event_wait_binding_for(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<EventWaitBinding>, String> {
+        let Some(instance) = self.instances.get(instance_id) else {
+            return Ok(None);
+        };
+        let Some(invocation) = instance.invocation.as_ref() else {
+            return Ok(None);
+        };
+        if invocation.result.is_some() {
+            return Ok(None);
+        }
+        let Some(committed) = self
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(instance_id.to_owned()))
+        else {
+            return Ok(None);
+        };
+        let continuation: Continuation = serde_json::from_value(committed.payload)
+            .map_err(|error| format!("invalid committed continuation: {error}"))?;
+        let Some(reference) = continuation
+            .event_ref
+            .as_ref()
+            .and_then(EventRef::reservation)
+        else {
+            return Ok(None);
+        };
+        if continuation.program_instance_ref.as_str() != instance_id
+            || continuation.program_invocation_ref.as_str() != invocation.program_invocation_id
+        {
+            return Err("Event continuation instance or invocation mismatch".into());
+        }
+        let reservation = self
+            .reservations
+            .get(&(reference.event_id.clone(), reference.generation))
+            .ok_or("committed Event wait has no reservation")?;
+        let requirement = continuation
+            .air
+            .event_requirements
+            .iter()
+            .find(|requirement| requirement.node_id == continuation.continuation_id)
+            .ok_or("committed Event wait has no declaration")?;
+        if reservation.program_instance_id != instance_id
+            || reservation.type_id != requirement.type_id
+            || reservation.schema_digest != requirement.schema_digest
+            || reservation.payload_schema != requirement.payload_schema
+        {
+            return Err("committed Event wait violates reservation contract".into());
+        }
+        let binding = EventWaitBinding {
+            program_instance_id: instance_id.to_owned(),
+            program_invocation_id: invocation.program_invocation_id.clone(),
+            node_id: continuation.continuation_id,
+            node_execution_id: continuation
+                .parked_node_execution_id
+                .ok_or("Event wait lacks node execution")?,
+            event_ref: reference.clone(),
+        };
+        if reservation
+            .binding
+            .as_ref()
+            .is_some_and(|prior| prior != &binding)
+        {
+            return Err("Event reservation was already consumed by a different wait".into());
+        }
+        Ok(reservation.binding.is_none().then_some(binding))
+    }
+
+    fn reconcile_event_waits_for(&mut self, instance_ids: &[String]) -> Result<(), String> {
         let mut bindings = Vec::new();
-        for (instance_id, instance) in &self.instances {
-            let Some(invocation) = instance.invocation.as_ref() else {
-                continue;
-            };
-            if invocation.result.is_some() {
-                continue;
-            }
-            let Some(committed) = self
-                .execution_backend
-                .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
-            else {
-                continue;
-            };
-            let continuation: Continuation = serde_json::from_value(committed.payload)
-                .map_err(|error| format!("invalid committed continuation: {error}"))?;
-            let Some(reference) = continuation
-                .event_ref
-                .as_ref()
-                .and_then(EventRef::reservation)
-            else {
-                continue;
-            };
-            if continuation.program_instance_ref.as_str() != instance_id
-                || continuation.program_invocation_ref.as_str() != invocation.program_invocation_id
+        for instance_id in instance_ids {
+            #[cfg(test)]
             {
-                return Err("Event continuation instance or invocation mismatch".into());
+                self.event_wait_scanned_instances += 1;
             }
-            let reservation = self
-                .reservations
-                .get(&(reference.event_id.clone(), reference.generation))
-                .ok_or("committed Event wait has no reservation")?;
-            let requirement = continuation
-                .air
-                .event_requirements
-                .iter()
-                .find(|requirement| requirement.node_id == continuation.continuation_id)
-                .ok_or("committed Event wait has no declaration")?;
-            if reservation.program_instance_id != *instance_id
-                || reservation.type_id != requirement.type_id
-                || reservation.schema_digest != requirement.schema_digest
-                || reservation.payload_schema != requirement.payload_schema
-            {
-                return Err("committed Event wait violates reservation contract".into());
-            }
-            let binding = EventWaitBinding {
-                program_instance_id: instance_id.clone(),
-                program_invocation_id: invocation.program_invocation_id.clone(),
-                node_id: continuation.continuation_id,
-                node_execution_id: continuation
-                    .parked_node_execution_id
-                    .ok_or("Event wait lacks node execution")?,
-                event_ref: reference.clone(),
-            };
-            if reservation
-                .binding
-                .as_ref()
-                .is_some_and(|prior| prior != &binding)
-            {
-                return Err("Event reservation was already consumed by a different wait".into());
-            }
-            if reservation.binding.is_none() {
+            if let Some(binding) = self.event_wait_binding_for(instance_id)? {
                 bindings.push(binding);
             }
         }
         if bindings.is_empty() {
+            for instance_id in instance_ids {
+                self.event_wait_dirty.remove(instance_id);
+            }
             return Ok(());
         }
         for binding in &bindings {
@@ -227,7 +243,28 @@ impl RuntimeService {
             }
             return Err(error);
         }
+        for instance_id in instance_ids {
+            self.event_wait_dirty.remove(instance_id);
+        }
         Ok(())
+    }
+
+    /// Full startup/recovery validation collects all bindings before writing
+    /// any of them, so a malformed durable wait cannot partially install one.
+    pub(super) fn reconcile_event_waits(&mut self) -> Result<(), String> {
+        let instance_ids = self.instances.keys().cloned().collect::<Vec<_>>();
+        self.reconcile_event_waits_for(&instance_ids)?;
+        self.event_wait_dirty.clear();
+        self.event_wait_recovery_pending = false;
+        Ok(())
+    }
+
+    pub(super) fn reconcile_changed_event_waits(&mut self) -> Result<(), String> {
+        if self.event_wait_recovery_pending {
+            return self.reconcile_event_waits();
+        }
+        let instance_ids = self.event_wait_dirty.iter().cloned().collect::<Vec<_>>();
+        self.reconcile_event_waits_for(&instance_ids)
     }
 
     pub(super) fn claim_reserved_event_resume(
@@ -445,7 +482,7 @@ impl RuntimeService {
 
     pub(super) fn reconcile_reserved_event_resumes(&mut self) -> Result<(), String> {
         self.expire_pending_events()?;
-        self.reconcile_event_waits()?;
+        self.reconcile_changed_event_waits()?;
         let mut changed = false;
         for reservation in self.reservations.values_mut() {
             let Some(binding) = reservation.binding.as_ref() else {
@@ -584,6 +621,102 @@ mod tests {
             self.service
                 .finish_continuation_resume(&prepared, execution)
         }
+    }
+
+    #[test]
+    fn idle_recovery_claims_do_not_rescan_an_unchanged_wait() {
+        let mut fixture = reserved(RuntimeService::in_memory());
+        fixture.start();
+        assert!(!fixture.service.event_wait_recovery_pending);
+        assert!(fixture.service.event_wait_dirty.is_empty());
+        let scanned = fixture.service.event_wait_scanned_instances;
+        assert!(scanned > 0);
+        for _ in 0..20 {
+            assert!(
+                fixture
+                    .service
+                    .claim_next_continuation_resume()
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert_eq!(fixture.service.event_wait_scanned_instances, scanned);
+    }
+
+    #[test]
+    fn invalid_changed_wait_keeps_its_dirty_recovery_marker() {
+        let mut fixture = reserved(RuntimeService::in_memory());
+        fixture.start();
+        let key = (
+            fixture.reference.event_id.clone(),
+            fixture.reference.generation,
+        );
+        let reservation = fixture.service.reservations.remove(&key).unwrap();
+        fixture
+            .service
+            .event_wait_dirty
+            .insert(fixture.instance.clone());
+        assert_eq!(
+            fixture.service.reconcile_changed_event_waits(),
+            Err("committed Event wait has no reservation".into())
+        );
+        assert!(fixture.service.event_wait_dirty.contains(&fixture.instance));
+        fixture.service.reservations.insert(key, reservation);
+        fixture.service.reconcile_changed_event_waits().unwrap();
+        assert!(fixture.service.event_wait_dirty.is_empty());
+    }
+
+    #[test]
+    fn restored_state_requires_one_full_wait_reconciliation() {
+        let mut fixture = reserved(RuntimeService::in_memory());
+        fixture.start();
+        let scanned = fixture.service.event_wait_scanned_instances;
+        fixture.service.rehydrate_runtime_state().unwrap();
+        assert!(fixture.service.event_wait_recovery_pending);
+        assert!(
+            fixture
+                .service
+                .claim_next_continuation_resume()
+                .unwrap()
+                .is_none()
+        );
+        assert!(!fixture.service.event_wait_recovery_pending);
+        assert!(fixture.service.event_wait_scanned_instances > scanned);
+    }
+
+    #[test]
+    fn failed_event_binding_persist_keeps_dirty_wait_for_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let mut fixture = reserved(
+            RuntimeService::in_memory()
+                .with_runtime_state_dir(state.clone())
+                .with_embedded_read_access(),
+        );
+        fixture.start();
+        let key = (
+            fixture.reference.event_id.clone(),
+            fixture.reference.generation,
+        );
+        fixture.service.reservations.get_mut(&key).unwrap().binding = None;
+        fixture
+            .service
+            .event_wait_dirty
+            .insert(fixture.instance.clone());
+
+        let moved = directory.path().join("moved-state");
+        std::fs::rename(&state, &moved).unwrap();
+        std::fs::write(&state, b"blocked").unwrap();
+        assert!(fixture.service.reconcile_changed_event_waits().is_err());
+        assert!(fixture.service.event_wait_dirty.contains(&fixture.instance));
+        assert!(fixture.service.reservations[&key].binding.is_none());
+
+        std::fs::remove_file(&state).unwrap();
+        std::fs::rename(&moved, &state).unwrap();
+        fixture.service.reconcile_changed_event_waits().unwrap();
+        assert!(fixture.service.event_wait_dirty.is_empty());
+        assert!(fixture.service.reservations[&key].binding.is_some());
     }
 
     #[test]

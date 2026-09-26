@@ -159,6 +159,12 @@ pub struct RuntimeService {
     reservations: BTreeMap<(String, u64), ReservationState>,
     event_index: events::EventIndex,
     reservation_bytes: u64,
+    /// Continuations changed since their Event bindings were last checked.
+    /// Recovery always performs a full scan before steady-state claims.
+    event_wait_dirty: BTreeSet<String>,
+    event_wait_recovery_pending: bool,
+    #[cfg(test)]
+    event_wait_scanned_instances: usize,
     next_generation: u64,
     handlers: Option<AdmittedPackageHandlers>,
     package_root: Option<PathBuf>,
@@ -376,6 +382,10 @@ impl RuntimeService {
             host_capability_settlement_bytes: 0,
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
+            event_wait_dirty: BTreeSet::new(),
+            event_wait_recovery_pending: true,
+            #[cfg(test)]
+            event_wait_scanned_instances: 0,
             next_generation: 0,
             handlers: None,
             package_root: None,
@@ -1611,6 +1621,8 @@ impl RuntimeService {
     }
 
     fn rehydrate_runtime_state(&mut self) -> Result<(), String> {
+        self.event_wait_dirty.clear();
+        self.event_wait_recovery_pending = true;
         let Some(value) = self.execution_backend.runtime_metadata() else {
             return Ok(());
         };
@@ -2150,6 +2162,7 @@ impl RuntimeService {
             .collect::<Vec<_>>();
         for id in expired_instances {
             if let Some(instance) = self.instances.remove(&id) {
+                self.event_wait_dirty.remove(&id);
                 // Every invocation this instance ever indexed leaves with it,
                 // together with its cancellation marker. A marker outlives
                 // the instance by construction (its expiry is raised to the
@@ -3458,9 +3471,11 @@ impl RuntimeService {
         {
             invocation.result = Some(result.clone());
         }
+        self.event_wait_dirty
+            .insert(prepared.program_instance_id.clone());
         if self
             .persist_runtime_state()
-            .and_then(|()| self.reconcile_event_waits())
+            .and_then(|()| self.reconcile_changed_event_waits())
             .is_err()
         {
             return RuntimeResult::Failed {
@@ -3789,9 +3804,11 @@ impl RuntimeService {
             }
         }
         self.observation_signal.notify();
+        self.event_wait_dirty
+            .insert(prepared.program_instance_id.clone());
         if self
             .persist_runtime_state()
-            .and_then(|()| self.reconcile_event_waits())
+            .and_then(|()| self.reconcile_changed_event_waits())
             .is_err()
         {
             return RuntimeResult::Failed {
@@ -4126,6 +4143,7 @@ impl RuntimeService {
         self.reconcile_started_invocations()?;
         self.reconcile_cancelled_parked_invocations()?;
         self.reconcile_started_continuation_resumes()?;
+        self.reconcile_event_waits()?;
         self.reconcile_reserved_event_resumes()
     }
 
