@@ -160,6 +160,7 @@ pub struct RuntimeService {
     reservations: BTreeMap<(String, u64), ReservationState>,
     event_index: events::EventIndex,
     reservation_bytes: u64,
+    cleanup_persist_pending: bool,
     /// Continuations changed since their Event bindings were last checked.
     /// Recovery always performs a full scan before steady-state claims.
     event_wait_dirty: BTreeSet<String>,
@@ -383,6 +384,7 @@ impl RuntimeService {
             host_capability_settlement_bytes: 0,
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
+            cleanup_persist_pending: false,
             event_wait_dirty: BTreeSet::new(),
             event_wait_recovery_pending: true,
             #[cfg(test)]
@@ -2150,6 +2152,7 @@ impl RuntimeService {
     pub fn cleanup_expired(&mut self) -> Result<(), String> {
         self.expire_pending_events()?;
         let now = Self::now();
+        let mut changed = false;
 
         let expired_instances = self
             .instances
@@ -2167,6 +2170,7 @@ impl RuntimeService {
             .collect::<Vec<_>>();
         for id in expired_instances {
             if let Some(instance) = self.instances.remove(&id) {
+                changed = true;
                 self.event_wait_dirty.remove(&id);
                 // Every invocation this instance ever indexed leaves with it,
                 // together with its cancellation marker. A marker outlives
@@ -2199,7 +2203,7 @@ impl RuntimeService {
             .filter_map(|(digest, entry)| entry.expired(now).then_some(digest.clone()))
             .collect::<Vec<_>>();
         for digest in expired_admissions {
-            self.admission_meta.remove(&digest);
+            changed |= self.admission_meta.remove(&digest).is_some();
             if let Some(materials) = self.artifact_admissions.remove(&digest) {
                 self.admission_bytes = self
                     .admission_bytes
@@ -2227,6 +2231,7 @@ impl RuntimeService {
             })
             .collect::<Vec<_>>();
         if !expired_artifacts.is_empty() {
+            changed = true;
             for digest in &expired_artifacts {
                 if let Some(entry) = self.artifact_meta.remove(digest) {
                     self.artifact_bytes = self.artifact_bytes.saturating_sub(entry.bytes);
@@ -2251,10 +2256,12 @@ impl RuntimeService {
             {
                 if reservation.status == EventStatus::Pending {
                     reservation.status = EventStatus::Expired;
+                    changed = true;
                 }
                 return true;
             }
             if reservation.state_entry.expired(now) {
+                changed = true;
                 self.reservation_bytes = self
                     .reservation_bytes
                     .saturating_sub(reservation.state_entry.bytes);
@@ -2272,6 +2279,7 @@ impl RuntimeService {
                     application.event_ref.generation,
                 ))
             {
+                changed = true;
                 expired_application_bytes =
                     expired_application_bytes.saturating_add(application.state_entry.bytes);
                 false
@@ -2289,6 +2297,7 @@ impl RuntimeService {
             if settlement.state_entry.expired(now)
                 && !live_instances.contains(&settlement.program_instance_id)
             {
+                changed = true;
                 expired_settlement_bytes =
                     expired_settlement_bytes.saturating_add(settlement.state_entry.bytes);
                 false
@@ -2302,15 +2311,21 @@ impl RuntimeService {
 
         self.cancelled.retain(|_, entry| {
             if entry.expired(now) {
+                changed = true;
                 self.cancellation_bytes = self.cancellation_bytes.saturating_sub(entry.bytes);
                 false
             } else {
                 true
             }
         });
-        // Expiry is a durable lifecycle transition too. Persist the cleaned
-        // projection before another operation can observe it.
-        self.persist_runtime_state()
+        self.cleanup_persist_pending |= changed;
+        if self.cleanup_persist_pending {
+            // An earlier failed write must be retried even when this pass
+            // finds no newly expired entry.
+            self.persist_runtime_state()?;
+            self.cleanup_persist_pending = false;
+        }
+        Ok(())
     }
 
     /// Bind package-local Capability handlers for subsequent invocations.
@@ -8872,6 +8887,48 @@ mod tests {
             reopened.startup_error()
         );
         assert!(!reopened.cancelled.contains_key(&invocation_id));
+        assert!(reopened.instances.is_empty());
+    }
+
+    #[test]
+    fn cleanup_skips_noop_write_and_retries_failed_zero_byte_expiry() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+        let instance_id = create_started(&mut service, fixture_air_bytes());
+        let backend = std::mem::replace(
+            &mut service.execution_backend,
+            RuntimeExecutionBackend::Unavailable("injected write failure".to_owned()),
+        );
+
+        service
+            .cleanup_expired()
+            .expect("no-op cleanup needs no write");
+        let instance = service.instances.get_mut(&instance_id).expect("instance");
+        service.instance_bytes = service
+            .instance_bytes
+            .saturating_sub(instance.state_entry.bytes);
+        instance.state_entry.bytes = 0;
+        instance.state_entry.expires_at = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        assert!(service.cleanup_expired().is_err(), "expiry must be durable");
+        assert!(service.cleanup_persist_pending);
+        assert!(service.instances.is_empty());
+
+        service.execution_backend = backend;
+        service
+            .cleanup_expired()
+            .expect("retry earlier failed expiry");
+        assert!(!service.cleanup_persist_pending);
+        drop(service);
+
+        let reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(
+            reopened.startup_error().is_none(),
+            "{:?}",
+            reopened.startup_error()
+        );
         assert!(reopened.instances.is_empty());
     }
 
