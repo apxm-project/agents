@@ -25,6 +25,7 @@ use serde_json::{Value, value::RawValue};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::diagnostics::{PersistencePhase, time_persistence};
 use crate::store::ReadAccessHook;
 use crate::store::{
     CommitLocalError, CommitLocalStore, MAX_STORE_BYTES, PreparedOutputRef,
@@ -236,7 +237,7 @@ impl FilesystemExecutionCommit {
         preparation: SessionOutputPreparation,
     ) -> Result<PreparedOutputRef, CommitLocalError> {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
-        let mut staged = guard.clone();
+        let mut staged = time_persistence(PersistencePhase::StagedClone, || guard.clone());
         let prepared = staged.prepare_output(preparation)?;
         persist(&self.root, &staged, &self.auth_key)?;
         *guard = staged;
@@ -305,7 +306,7 @@ impl FilesystemExecutionCommit {
 
     pub fn reclaim_prepared_output(&self, output_ref: &str) -> Result<bool, CommitLocalError> {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
-        let mut staged = guard.clone();
+        let mut staged = time_persistence(PersistencePhase::StagedClone, || guard.clone());
         let reclaimed = staged.reclaim_prepared_output(output_ref)?;
         if reclaimed {
             persist(&self.root, &staged, &self.auth_key)?;
@@ -340,15 +341,16 @@ impl ExecutionCommitPort for FilesystemExecutionCommit {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         // Mutate a staged copy so a failed persist cannot leave a partial
         // authoritative in-memory write set.
-        let mut staged = guard.clone();
-        let result = match staged.commit(&request) {
-            Ok(result) => result,
-            Err(err) => {
-                return ExecutionCommitResult::OutcomeUnknown {
-                    reconciliation_ref: format!("reconcile:error:{err}"),
-                };
-            }
-        };
+        let mut staged = time_persistence(PersistencePhase::StagedClone, || guard.clone());
+        let result =
+            match time_persistence(PersistencePhase::StagedCommit, || staged.commit(&request)) {
+                Ok(result) => result,
+                Err(err) => {
+                    return ExecutionCommitResult::OutcomeUnknown {
+                        reconciliation_ref: format!("reconcile:error:{err}"),
+                    };
+                }
+            };
         if let Err(err) = persist(&self.root, &staged, &self.auth_key) {
             return ExecutionCommitResult::OutcomeUnknown {
                 reconciliation_ref: format!("reconcile:persist:{err}"),
@@ -550,7 +552,7 @@ fn persist(
     store: &CommitLocalStore,
     auth_key: &[u8; 32],
 ) -> Result<(), CommitLocalError> {
-    store.validate_schema()?;
+    time_persistence(PersistencePhase::StoreValidate, || store.validate_schema())?;
     let path = store_path(root);
     // The temporary path is deliberately unpredictable and created with
     // `create_new`. A predictable `File::create` would follow an attacker-
@@ -573,7 +575,9 @@ fn persist(
         envelope_overhead,
         first_rejected_total: None,
     };
-    if let Err(error) = serde_json::to_writer(&mut bounded_body, store) {
+    if let Err(error) = time_persistence(PersistencePhase::StoreSerialize, || {
+        serde_json::to_writer(&mut bounded_body, store)
+    }) {
         if let Some(bytes) = bounded_body.first_rejected_total {
             return Err(CommitLocalError::StoreTooLarge {
                 bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
@@ -582,31 +586,39 @@ fn persist(
         return Err(CommitLocalError::Codec(error.to_string()));
     }
     let body = bounded_body.bytes;
-    let integrity_tag = keyed_digest_parts(auth_key, &[STORE_ENVELOPE_AUTH_DOMAIN, &body]);
+    let integrity_tag = time_persistence(PersistencePhase::StoreAuthenticate, || {
+        keyed_digest_parts(auth_key, &[STORE_ENVELOPE_AUTH_DOMAIN, &body])
+    });
     debug_assert_eq!(integrity_tag.len(), STORE_ENVELOPE_TAG_LEN);
     bounded_envelope_size(body.len(), integrity_tag.len())?;
     {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(&tmp)
-            .map_err(|e| CommitLocalError::Io(e.to_string()))?;
-        restrict_permissions(&file)?;
-        file.write_all(STORE_ENVELOPE_PREFIX)
-            .and_then(|()| file.write_all(&body))
-            .and_then(|()| file.write_all(STORE_ENVELOPE_TAG_PREFIX))
-            .and_then(|()| file.write_all(integrity_tag.as_bytes()))
-            .and_then(|()| file.write_all(STORE_ENVELOPE_END))
-            .map_err(|e| CommitLocalError::Io(e.to_string()))?;
-        file.sync_all()
+        let file = time_persistence(PersistencePhase::StoreWrite, || {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(&tmp)
+                .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+            restrict_permissions(&file)?;
+            file.write_all(STORE_ENVELOPE_PREFIX)
+                .and_then(|()| file.write_all(&body))
+                .and_then(|()| file.write_all(STORE_ENVELOPE_TAG_PREFIX))
+                .and_then(|()| file.write_all(integrity_tag.as_bytes()))
+                .and_then(|()| file.write_all(STORE_ENVELOPE_END))
+                .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+            Ok::<_, CommitLocalError>(file)
+        })?;
+        time_persistence(PersistencePhase::StoreFileSync, || file.sync_all())
             .map_err(|e| CommitLocalError::Io(e.to_string()))?;
     }
-    fs::rename(&tmp, &path).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    time_persistence(PersistencePhase::StoreReplace, || fs::rename(&tmp, &path))
+        .map_err(|e| CommitLocalError::Io(e.to_string()))?;
     // Best-effort directory sync for crash durability on POSIX.
-    if let Ok(dir) = File::open(root) {
-        let _ = dir.sync_all();
-    }
+    time_persistence(PersistencePhase::StoreDirectorySync, || {
+        if let Ok(dir) = File::open(root) {
+            let _ = dir.sync_all();
+        }
+    });
     Ok(())
 }
 

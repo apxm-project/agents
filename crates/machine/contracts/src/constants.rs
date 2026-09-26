@@ -127,6 +127,8 @@ pub mod env {
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
     /// Maximum parallel tool calls admitted within one LLM tool-call batch.
     pub const APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
+    /// Enable bounded owner-local persistence phase timings when set to `1`.
+    pub const APXM_PERSISTENCE_DIAGNOSTICS: &str = "APXM_PERSISTENCE_DIAGNOSTICS";
     /// Maximum tokens requested for MCP workflow emission.
     pub const APXM_MCP_WORKFLOW_MAX_TOKENS: &str = "APXM_MCP_WORKFLOW_MAX_TOKENS";
     /// Temperature used for MCP workflow emission.

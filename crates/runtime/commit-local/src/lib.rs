@@ -11,10 +11,12 @@
 //! - durability beyond one process or one directory is supplied by a
 //!   downstream-injected Port binding, not by an APXM hosted product.
 
+mod diagnostics;
 mod filesystem;
 mod memory;
 mod store;
 
+pub use diagnostics::{PersistencePhase, time_persistence};
 pub use filesystem::FilesystemExecutionCommit;
 pub use memory::InMemoryExecutionCommit;
 pub use store::{

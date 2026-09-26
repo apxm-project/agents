@@ -258,6 +258,7 @@ dependencies = [
 name = "apxm-commit-local"
 version = "0.1.0"
 dependencies = [
+ "apxm-core",
  "apxm-kernel",
  "apxm-program",
  "apxm-runtime-protocol",

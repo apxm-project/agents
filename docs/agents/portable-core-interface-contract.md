@@ -497,6 +497,12 @@ rollback requires a compatible reader or a coordinated pre-upgrade snapshot;
 restoring Runtime storage alone does not undo external effects. The existing
 serialized-store limit remains in force.
 
+Owner qualification may set `APXM_PERSISTENCE_DIAGNOSTICS=1` to emit bounded,
+numeric-only cumulative timings for local Runtime metadata and commit-store
+persistence phases. It is disabled by default and reports no payloads or
+identities. Diagnostic timing adds overhead, so its measurements locate costs;
+normal capacity acceptance runs without it.
+
 ### 8.5 Durable event port
 
 Agents owns portable `Event<T>`, generation-scoped `EventRef<T>`,

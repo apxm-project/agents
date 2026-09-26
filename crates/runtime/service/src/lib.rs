@@ -38,7 +38,8 @@ use std::time::{Duration, Instant};
 use apxm_ais::permissions::PermissionDecision;
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_commit_local::{
-    CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, ReadAccessHook,
+    CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, PersistencePhase,
+    ReadAccessHook, time_persistence,
 };
 use apxm_core::types::host_capability::{
     HostCapabilityOutcomeKind, HostCapabilitySettlement, is_host_capability_ref,
@@ -1613,8 +1614,12 @@ impl RuntimeService {
     }
 
     fn persist_runtime_state(&self) -> Result<(), String> {
-        let metadata = serde_json::to_value(self.runtime_metadata()?)
-            .map_err(|error| format!("runtime metadata encode failed: {error}"))?;
+        let durable =
+            time_persistence(PersistencePhase::MetadataBuild, || self.runtime_metadata())?;
+        let metadata = time_persistence(PersistencePhase::MetadataEncode, || {
+            serde_json::to_value(durable)
+        })
+        .map_err(|error| format!("runtime metadata encode failed: {error}"))?;
         self.execution_backend
             .set_runtime_metadata(Some(metadata))?;
         self.refresh_event_index()
