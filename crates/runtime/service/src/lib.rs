@@ -67,6 +67,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Maximum persisted executable artifact accepted by the Runtime Service.
@@ -1120,27 +1121,160 @@ impl<'de, const MAX: usize> Deserialize<'de> for DurableBytes<MAX> {
 #[serde(deny_unknown_fields)]
 struct DurableInvocationMaterials {
     admission: apxm_kernel::admission::InvocationAdmission,
-    release_bytes: DurableBytes<MAX_DURABLE_CARRIER_BYTES>,
-    provenance_bytes: DurableBytes<MAX_DURABLE_CARRIER_BYTES>,
+    release_bytes: DurableCarrier,
+    provenance_bytes: DurableCarrier,
 }
 
-impl From<&InvocationMaterials> for DurableInvocationMaterials {
-    fn from(materials: &InvocationMaterials) -> Self {
-        Self {
-            admission: materials.admission.clone(),
-            release_bytes: DurableBytes(materials.release_bytes.clone()),
-            provenance_bytes: DurableBytes(materials.provenance_bytes.clone()),
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum DurableCarrier {
+    Inline(DurableBytes<MAX_DURABLE_CARRIER_BYTES>),
+    Ref(DurableCarrierRef),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableCarrierRef {
+    digest: String,
+}
+
+fn durable_carrier_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn pool_durable_carrier(
+    bytes: &[u8],
+    pool: &mut BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+) -> Result<DurableCarrier, String> {
+    if bytes.len() > MAX_DURABLE_CARRIER_BYTES {
+        return Err("runtime metadata carrier exceeds its bound".to_owned());
+    }
+    let digest = durable_carrier_digest(bytes);
+    match pool.get(&digest) {
+        Some(existing) if existing.0 != bytes => {
+            return Err("runtime metadata carrier digest collision".to_owned());
         }
+        Some(_) => {}
+        None => {
+            pool.insert(digest.clone(), DurableBytes(bytes.to_vec()));
+        }
+    }
+    Ok(DurableCarrier::Ref(DurableCarrierRef { digest }))
+}
+
+impl DurableCarrier {
+    fn logical_len(
+        &self,
+        expected_digest: &str,
+        pool: &BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+    ) -> Result<usize, String> {
+        match self {
+            Self::Inline(bytes) => Ok(bytes.0.len()),
+            Self::Ref(reference) => {
+                if reference.digest != expected_digest
+                    || !apxm_core::grammar::is_digest(&reference.digest)
+                {
+                    return Err(
+                        "runtime metadata carrier reference differs from admission".to_owned()
+                    );
+                }
+                Ok(pool
+                    .get(&reference.digest)
+                    .ok_or("runtime metadata carrier reference is missing")?
+                    .0
+                    .len())
+            }
+        }
+    }
+
+    fn resolve(
+        self,
+        expected_digest: &str,
+        pool: &BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+        used: &mut BTreeSet<String>,
+    ) -> Result<Vec<u8>, String> {
+        let bytes = match self {
+            Self::Inline(bytes) => bytes.0,
+            Self::Ref(reference) => {
+                if reference.digest != expected_digest
+                    || !apxm_core::grammar::is_digest(&reference.digest)
+                {
+                    return Err(
+                        "runtime metadata carrier reference differs from admission".to_owned()
+                    );
+                }
+                let bytes = pool
+                    .get(&reference.digest)
+                    .ok_or("runtime metadata carrier reference is missing")?
+                    .0
+                    .clone();
+                used.insert(reference.digest);
+                bytes
+            }
+        };
+        if durable_carrier_digest(&bytes) != expected_digest {
+            return Err("runtime metadata carrier bytes differ from admission".to_owned());
+        }
+        Ok(bytes)
     }
 }
 
-impl From<DurableInvocationMaterials> for InvocationMaterials {
-    fn from(materials: DurableInvocationMaterials) -> Self {
-        Self {
-            admission: materials.admission,
-            release_bytes: materials.release_bytes.0,
-            provenance_bytes: materials.provenance_bytes.0,
+impl DurableInvocationMaterials {
+    fn logical_size(
+        &self,
+        pool: &BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+    ) -> Result<u64, String> {
+        let admission_bytes = serde_json::to_vec(&self.admission)
+            .map_err(|error| format!("runtime metadata admission encode failed: {error}"))?
+            .len();
+        let release_bytes = self
+            .release_bytes
+            .logical_len(&self.admission.release_digest, pool)?;
+        let provenance_bytes = self
+            .provenance_bytes
+            .logical_len(&self.admission.provenance_digest, pool)?;
+        let total = admission_bytes
+            .checked_add(release_bytes)
+            .and_then(|bytes| bytes.checked_add(provenance_bytes))
+            .ok_or("runtime metadata admission size overflow")?;
+        u64::try_from(total).map_err(|_| "runtime metadata admission size overflow".to_owned())
+    }
+
+    fn pooled(
+        materials: &InvocationMaterials,
+        pool: &mut BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+    ) -> Result<Self, String> {
+        if durable_carrier_digest(&materials.release_bytes) != materials.admission.release_digest
+            || durable_carrier_digest(&materials.provenance_bytes)
+                != materials.admission.provenance_digest
+        {
+            return Err("runtime metadata materials differ from bound carriers".to_owned());
         }
+        Ok(Self {
+            admission: materials.admission.clone(),
+            release_bytes: pool_durable_carrier(&materials.release_bytes, pool)?,
+            provenance_bytes: pool_durable_carrier(&materials.provenance_bytes, pool)?,
+        })
+    }
+
+    fn resolve(
+        self,
+        pool: &BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
+        used: &mut BTreeSet<String>,
+    ) -> Result<InvocationMaterials, String> {
+        Ok(InvocationMaterials {
+            release_bytes: self.release_bytes.resolve(
+                &self.admission.release_digest,
+                pool,
+                used,
+            )?,
+            provenance_bytes: self.provenance_bytes.resolve(
+                &self.admission.provenance_digest,
+                pool,
+                used,
+            )?,
+            admission: self.admission,
+        })
     }
 }
 
@@ -1152,6 +1286,8 @@ impl From<DurableInvocationMaterials> for InvocationMaterials {
 struct DurableRuntimeMetadata {
     schema_version: String,
     artifacts: BTreeMap<String, DurableBytes<{ MAX_ARTIFACT_BYTES as usize }>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    carrier_pool: BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
     artifact_admissions: BTreeMap<String, DurableInvocationMaterials>,
     instances: BTreeMap<String, DurableInstanceState>,
     reservations: Vec<DurableReservationState>,
@@ -1350,8 +1486,49 @@ impl RuntimeService {
         }
     }
 
-    fn runtime_metadata(&self) -> DurableRuntimeMetadata {
-        DurableRuntimeMetadata {
+    fn runtime_metadata(&self) -> Result<DurableRuntimeMetadata, String> {
+        let mut carrier_pool = BTreeMap::new();
+        let artifact_admissions = self
+            .artifact_admissions
+            .iter()
+            .map(|(digest, materials)| {
+                Ok((
+                    digest.clone(),
+                    DurableInvocationMaterials::pooled(materials, &mut carrier_pool)?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let instances = self
+            .instances
+            .iter()
+            .map(|(id, instance)| {
+                Ok((
+                    id.clone(),
+                    DurableInstanceState {
+                        artifact_digest: instance.artifact_digest.clone(),
+                        materials: instance
+                            .materials
+                            .as_ref()
+                            .map(|materials| {
+                                DurableInvocationMaterials::pooled(materials, &mut carrier_pool)
+                            })
+                            .transpose()?,
+                        owner_claim: instance.owner_claim.clone(),
+                        invocation: instance.invocation.as_ref().map(durable_invocation),
+                        invocation_history: instance
+                            .invocation_history
+                            .iter()
+                            .map(|(request_id, invocation)| {
+                                (request_id.clone(), durable_invocation(invocation))
+                            })
+                            .collect(),
+                        invocation_bytes: instance.invocation_bytes,
+                        state_entry: Self::durable_entry(instance.state_entry),
+                    },
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        Ok(DurableRuntimeMetadata {
             schema_version: RUNTIME_METADATA_SCHEMA.to_owned(),
             artifacts: self
                 .artifact_meta
@@ -1362,38 +1539,9 @@ impl RuntimeService {
                         .map(|bytes| (digest.clone(), DurableBytes(bytes.to_vec())))
                 })
                 .collect(),
-            artifact_admissions: self
-                .artifact_admissions
-                .iter()
-                .map(|(digest, materials)| (digest.clone(), materials.into()))
-                .collect(),
-            instances: self
-                .instances
-                .iter()
-                .map(|(id, instance)| {
-                    (
-                        id.clone(),
-                        DurableInstanceState {
-                            artifact_digest: instance.artifact_digest.clone(),
-                            materials: instance
-                                .materials
-                                .as_ref()
-                                .map(DurableInvocationMaterials::from),
-                            owner_claim: instance.owner_claim.clone(),
-                            invocation: instance.invocation.as_ref().map(durable_invocation),
-                            invocation_history: instance
-                                .invocation_history
-                                .iter()
-                                .map(|(request_id, invocation)| {
-                                    (request_id.clone(), durable_invocation(invocation))
-                                })
-                                .collect(),
-                            invocation_bytes: instance.invocation_bytes,
-                            state_entry: Self::durable_entry(instance.state_entry),
-                        },
-                    )
-                })
-                .collect(),
+            carrier_pool,
+            artifact_admissions,
+            instances,
             reservations: self
                 .reservations
                 .iter()
@@ -1451,11 +1599,11 @@ impl RuntimeService {
                 .collect(),
             cancelled: self.cancelled.keys().cloned().collect(),
             next_generation: self.next_generation,
-        }
+        })
     }
 
     fn persist_runtime_state(&self) -> Result<(), String> {
-        let metadata = serde_json::to_value(self.runtime_metadata())
+        let metadata = serde_json::to_value(self.runtime_metadata()?)
             .map_err(|error| format!("runtime metadata encode failed: {error}"))?;
         self.execution_backend
             .set_runtime_metadata(Some(metadata))?;
@@ -1475,6 +1623,52 @@ impl RuntimeService {
             ));
         }
 
+        let mut pooled_bytes = 0_u64;
+        for (digest, bytes) in &metadata.carrier_pool {
+            if !apxm_core::grammar::is_digest(digest) || durable_carrier_digest(&bytes.0) != *digest
+            {
+                return Err("runtime metadata contains an invalid carrier pool join".to_owned());
+            }
+            pooled_bytes = pooled_bytes
+                .checked_add(u64::try_from(bytes.0.len()).map_err(|_| "carrier size overflow")?)
+                .ok_or("carrier pool size overflow")?;
+        }
+        if pooled_bytes > MAX_ARTIFACT_BYTES {
+            return Err("runtime metadata carrier pool exceeds its bound".to_owned());
+        }
+        // References make the JSON record smaller than the decoded logical
+        // state. Check the original admission/instance quotas using borrowed
+        // pool lengths before cloning any per-instance carrier bytes.
+        if metadata.artifact_admissions.len() > self.state_policy.admissions.max_entries
+            || metadata.instances.len() > self.state_policy.instances.max_entries
+        {
+            return Err("runtime metadata exceeds the configured state policy".to_owned());
+        }
+        let mut preflight_admission_bytes = 0_u64;
+        for materials in metadata.artifact_admissions.values() {
+            preflight_admission_bytes = preflight_admission_bytes
+                .checked_add(materials.logical_size(&metadata.carrier_pool)?)
+                .ok_or("runtime metadata admission size overflow")?;
+        }
+        let mut preflight_instance_material_bytes = 0_u64;
+        for instance in metadata.instances.values() {
+            if let Some(materials) = &instance.materials {
+                let size = materials.logical_size(&metadata.carrier_pool)?;
+                if size > instance.state_entry.bytes {
+                    return Err("runtime metadata instance understates bound materials".to_owned());
+                }
+                preflight_instance_material_bytes = preflight_instance_material_bytes
+                    .checked_add(size)
+                    .ok_or("runtime metadata instance material size overflow")?;
+            }
+        }
+        if preflight_admission_bytes > self.state_policy.admissions.max_bytes
+            || preflight_instance_material_bytes > self.state_policy.instances.max_bytes
+        {
+            return Err("runtime metadata exceeds the configured state policy".to_owned());
+        }
+        let mut used_carriers = BTreeSet::new();
+
         let mut artifacts = ArtifactStore::default();
         let mut artifact_meta = BTreeMap::new();
         let mut artifact_bytes = 0_u64;
@@ -1491,29 +1685,33 @@ impl RuntimeService {
             artifact_bytes = artifact_bytes.saturating_add(size);
         }
         let mut admission_bytes = 0_u64;
-        for (digest, materials) in &metadata.artifact_admissions {
-            if artifacts.get(digest).is_none() || materials.admission.artifact_digest != *digest {
+        let mut artifact_admissions = BTreeMap::new();
+        for (digest, durable) in metadata.artifact_admissions {
+            let materials = durable.resolve(&metadata.carrier_pool, &mut used_carriers)?;
+            if artifacts.get(&digest).is_none() || materials.admission.artifact_digest != digest {
                 return Err("runtime metadata contains an invalid admission join".to_owned());
             }
             admission_bytes = admission_bytes
-                .checked_add(
-                    Self::materials_size(&materials.clone().into())
-                        .ok_or("admission size overflow")?,
-                )
+                .checked_add(Self::materials_size(&materials).ok_or("admission size overflow")?)
                 .ok_or("admission size overflow")?;
+            artifact_admissions.insert(digest, materials);
         }
 
         let mut instances = BTreeMap::new();
         let mut invocation_index = BTreeMap::new();
         let mut instance_bytes = 0_u64;
         for (instance_id, durable) in metadata.instances {
+            let materials = durable
+                .materials
+                .map(|materials| materials.resolve(&metadata.carrier_pool, &mut used_carriers))
+                .transpose()?;
             if instance_id.trim().is_empty()
                 || artifacts.get(&durable.artifact_digest).is_none()
                 || durable.owner_claim.validate().is_err()
             {
                 return Err("runtime metadata contains an invalid instance join".to_owned());
             }
-            if durable.materials.as_ref().is_some_and(|materials| {
+            if materials.as_ref().is_some_and(|materials| {
                 materials.admission.artifact_digest != durable.artifact_digest
             }) {
                 return Err(
@@ -1628,7 +1826,7 @@ impl RuntimeService {
                 instance_id,
                 InstanceState {
                     artifact_digest: durable.artifact_digest,
-                    materials: durable.materials.map(Into::into),
+                    materials,
                     owner_claim: durable.owner_claim,
                     invocation,
                     invocation_history,
@@ -1825,9 +2023,12 @@ impl RuntimeService {
                 return Err("runtime metadata contains an orphan cancellation".to_owned());
             }
         }
+        if used_carriers.len() != metadata.carrier_pool.len() {
+            return Err("runtime metadata contains an unreferenced carrier".to_owned());
+        }
         if artifact_meta.len() > self.state_policy.artifacts.max_entries
             || artifact_bytes > self.state_policy.artifacts.max_bytes
-            || metadata.artifact_admissions.len() > self.state_policy.admissions.max_entries
+            || artifact_admissions.len() > self.state_policy.admissions.max_entries
             || admission_bytes > self.state_policy.admissions.max_bytes
             || instances.len() > self.state_policy.instances.max_entries
             || instance_bytes > self.state_policy.instances.max_bytes
@@ -1852,11 +2053,7 @@ impl RuntimeService {
         self.artifacts = artifacts;
         self.artifact_meta = artifact_meta;
         self.artifact_bytes = artifact_bytes;
-        self.artifact_admissions = metadata
-            .artifact_admissions
-            .into_iter()
-            .map(|(digest, materials)| (digest, materials.into()))
-            .collect();
+        self.artifact_admissions = artifact_admissions;
         self.admission_meta = self
             .artifact_admissions
             .iter()
@@ -6814,6 +7011,39 @@ mod tests {
     }
 
     #[test]
+    fn pooled_carriers_keep_distinct_cohorts_and_refuse_a_digest_collision() {
+        let artifact = fixture_air_bytes();
+        let first = RuntimeAdmissionProfile::from_carriers(
+            br#"{"release":"first"}"#.to_vec(),
+            br#"{"provenance":"first"}"#.to_vec(),
+        )
+        .unwrap()
+        .materials_for_artifact(&artifact);
+        let second = RuntimeAdmissionProfile::from_carriers(
+            br#"{"release":"second"}"#.to_vec(),
+            br#"{"provenance":"second"}"#.to_vec(),
+        )
+        .unwrap()
+        .materials_for_artifact(&artifact);
+        let mut pool = BTreeMap::new();
+        let first_durable = DurableInvocationMaterials::pooled(&first, &mut pool).unwrap();
+        let second_durable = DurableInvocationMaterials::pooled(&second, &mut pool).unwrap();
+        assert_eq!(pool.len(), 4);
+        assert_eq!(
+            first_durable.resolve(&pool, &mut BTreeSet::new()).unwrap(),
+            first
+        );
+        assert_eq!(
+            second_durable.resolve(&pool, &mut BTreeSet::new()).unwrap(),
+            second
+        );
+
+        let digest = durable_carrier_digest(b"expected");
+        pool.insert(digest, DurableBytes(b"different".to_vec()));
+        assert!(pool_durable_carrier(b"expected", &mut pool).is_err());
+    }
+
+    #[test]
     fn authenticated_legacy_metadata_reopens_and_rewrites_exact_carriers() {
         let directory = tempfile::tempdir().unwrap();
         let state_path = directory.path().to_path_buf();
@@ -6851,13 +7081,17 @@ mod tests {
             .unwrap();
         let mut metadata = service.execution_backend.runtime_metadata().unwrap();
         assert!(metadata["artifacts"][&digest].is_string());
-        assert!(metadata["artifact_admissions"][&digest]["release_bytes"].is_string());
+        assert_eq!(metadata["carrier_pool"].as_object().unwrap().len(), 2);
+        assert!(metadata["artifact_admissions"][&digest]["release_bytes"].is_object());
         assert!(
             metadata["instances"][&program_instance_id]["materials"]["provenance_bytes"]
-                .is_string()
+                .is_object()
         );
+        let prior_admission_bytes = service.admission_bytes;
+        let prior_instance_bytes = service.instance_bytes;
         // Store the original array representation through the authenticated
         // commit-local path, then reopen it with the new private decoder.
+        metadata.as_object_mut().unwrap().remove("carrier_pool");
         metadata["artifacts"][&digest] = serde_json::json!(bytes);
         metadata["artifact_admissions"][&digest]["release_bytes"] = serde_json::json!(release);
         metadata["artifact_admissions"][&digest]["provenance_bytes"] =
@@ -6873,8 +7107,8 @@ mod tests {
         drop(service);
 
         let reopened = RuntimeService::default()
-            .with_runtime_state_dir(state_path)
-            .with_admission_profile(profile);
+            .with_runtime_state_dir(state_path.clone())
+            .with_admission_profile(profile.clone());
         assert!(
             reopened.startup_error().is_none(),
             "{:?}",
@@ -6882,6 +7116,8 @@ mod tests {
         );
         assert_eq!(reopened.artifacts.get(&digest), Some(bytes.as_slice()));
         assert_eq!(reopened.artifact_admissions.get(&digest), Some(&materials));
+        assert_eq!(reopened.admission_bytes, prior_admission_bytes);
+        assert_eq!(reopened.instance_bytes, prior_instance_bytes);
         assert_eq!(
             reopened.instances[&program_instance_id].materials.as_ref(),
             Some(&materials)
@@ -6889,12 +7125,206 @@ mod tests {
         reopened.persist_runtime_state().unwrap();
         let rewritten = reopened.execution_backend.runtime_metadata().unwrap();
         assert!(rewritten["artifacts"][&digest].is_string());
-        assert!(rewritten["artifact_admissions"][&digest]["release_bytes"].is_string());
+        assert!(rewritten["artifact_admissions"][&digest]["release_bytes"].is_object());
         assert!(
-            rewritten["instances"][&program_instance_id]["materials"]["release_bytes"].is_string()
+            rewritten["instances"][&program_instance_id]["materials"]["release_bytes"].is_object()
         );
+        assert_eq!(rewritten["carrier_pool"].as_object().unwrap().len(), 2);
+        // The preceding candidate wrote inline base64 strings. Its
+        // authenticated metadata also reopens and migrates without changing
+        // the exact carrier or logical quota accounting.
+        let mut inline = rewritten;
+        inline.as_object_mut().unwrap().remove("carrier_pool");
+        let set_inline = |materials_value: &mut Value| {
+            materials_value["release_bytes"] =
+                serde_json::json!(format!("{DURABLE_BYTES_PREFIX}{}", BASE64.encode(&release)));
+            materials_value["provenance_bytes"] = serde_json::json!(format!(
+                "{DURABLE_BYTES_PREFIX}{}",
+                BASE64.encode(&provenance)
+            ));
+        };
+        set_inline(&mut inline["artifact_admissions"][&digest]);
+        set_inline(&mut inline["instances"][&program_instance_id]["materials"]);
+        reopened
+            .execution_backend
+            .set_runtime_metadata(Some(inline))
+            .unwrap();
+        drop(reopened);
+        let inline_reopen = RuntimeService::default()
+            .with_runtime_state_dir(state_path)
+            .with_admission_profile(profile);
+        assert!(
+            inline_reopen.startup_error().is_none(),
+            "{:?}",
+            inline_reopen.startup_error()
+        );
+        assert_eq!(
+            inline_reopen.artifact_admissions.get(&digest),
+            Some(&materials)
+        );
+        assert_eq!(inline_reopen.admission_bytes, prior_admission_bytes);
+        assert_eq!(inline_reopen.instance_bytes, prior_instance_bytes);
         // This private representation does not change the public materials wire.
         assert!(serde_json::to_value(&materials).unwrap()["release_bytes"].is_array());
+    }
+
+    #[test]
+    fn authenticated_invalid_carrier_pool_refuses_before_state_install() {
+        for case in ["missing", "tampered", "wrong_ref", "mixed", "orphan"] {
+            let directory = tempfile::tempdir().unwrap();
+            let state_path = directory.path().to_path_buf();
+            let bytes = fixture_air_bytes();
+            let profile = RuntimeAdmissionProfile::from_carriers(
+                br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+                br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+            )
+            .unwrap();
+            let mut service = RuntimeService::default()
+                .with_runtime_state_dir(state_path.clone())
+                .with_admission_profile(profile.clone());
+            let digest = service.admit_artifact(bytes.clone());
+            let created = service
+                .handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInstanceCreate {
+                        request_id: format!("carrier.{case}.create"),
+                        artifact_digest: digest,
+                    },
+                )
+                .unwrap();
+            let RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                ..
+            } = created
+            else {
+                panic!("expected instance: {created:?}");
+            };
+            let materials = profile.materials_for_artifact(&bytes);
+            service
+                .bind_admission(&program_instance_id, materials.clone())
+                .unwrap();
+            let mut metadata = service.execution_backend.runtime_metadata().unwrap();
+            let release_digest = materials.admission.release_digest.clone();
+            match case {
+                "missing" => {
+                    metadata["carrier_pool"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(&release_digest);
+                }
+                "tampered" => {
+                    metadata["carrier_pool"][&release_digest] = serde_json::json!(format!(
+                        "{DURABLE_BYTES_PREFIX}{}",
+                        BASE64.encode(b"different exact bytes")
+                    ));
+                }
+                "wrong_ref" => {
+                    metadata["instances"][&program_instance_id]["materials"]["release_bytes"]["digest"] =
+                        serde_json::json!(materials.admission.provenance_digest);
+                }
+                "mixed" => {
+                    metadata["instances"][&program_instance_id]["materials"]["release_bytes"] =
+                        serde_json::json!({"digest": release_digest, "bytes": "base64:AA=="});
+                }
+                "orphan" => {
+                    let orphan = b"orphan";
+                    let orphan_digest = durable_carrier_digest(orphan);
+                    metadata["carrier_pool"][&orphan_digest] = serde_json::json!(format!(
+                        "{DURABLE_BYTES_PREFIX}{}",
+                        BASE64.encode(orphan)
+                    ));
+                }
+                _ => unreachable!(),
+            }
+            service
+                .execution_backend
+                .set_runtime_metadata(Some(metadata))
+                .unwrap();
+            drop(service);
+            let reopened = RuntimeService::default()
+                .with_runtime_state_dir(state_path)
+                .with_admission_profile(profile);
+            match reopened.startup_error() {
+                Some(RuntimeServiceStartupError::OpenRuntimeStateDir(error)) => {
+                    assert!(
+                        error.contains("carrier")
+                            || error.contains("runtime metadata decode failed"),
+                        "{case}: {error}"
+                    );
+                }
+                other => panic!("{case} must refuse authenticated metadata: {other:?}"),
+            }
+            assert!(
+                reopened.instances.is_empty(),
+                "{case} installed partial state"
+            );
+        }
+    }
+
+    #[test]
+    fn pooled_references_cannot_amplify_past_logical_instance_quota() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().to_path_buf();
+        let bytes = fixture_air_bytes();
+        let profile = RuntimeAdmissionProfile::from_carriers(
+            br#"{"schema_version":"apxm.test.release"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance"}"#.to_vec(),
+        )
+        .unwrap();
+        let mut service = RuntimeService::default()
+            .with_runtime_state_dir(state_path.clone())
+            .with_admission_profile(profile.clone());
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "carrier.quota.create".into(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            ..
+        } = created
+        else {
+            panic!("expected instance: {created:?}");
+        };
+        let materials = profile.materials_for_artifact(&bytes);
+        service
+            .bind_admission(&program_instance_id, materials.clone())
+            .unwrap();
+        let mut metadata = service.execution_backend.runtime_metadata().unwrap();
+        let one = metadata["instances"][&program_instance_id].clone();
+        for index in 0..20 {
+            let shadow = format!("shadow.{index}");
+            metadata["instances"][&shadow] = one.clone();
+        }
+        assert_eq!(metadata["carrier_pool"].as_object().unwrap().len(), 2);
+        service
+            .execution_backend
+            .set_runtime_metadata(Some(metadata))
+            .unwrap();
+        drop(service);
+
+        let mut policy = RuntimeStatePolicy::default();
+        policy.instances = StateQuota::new(
+            64,
+            RuntimeService::materials_size(&materials).unwrap() * 2,
+            Duration::from_secs(3600),
+        );
+        let reopened = RuntimeService::default()
+            .with_state_policy(policy)
+            .with_runtime_state_dir(state_path)
+            .with_admission_profile(profile);
+        match reopened.startup_error() {
+            Some(RuntimeServiceStartupError::OpenRuntimeStateDir(error)) => {
+                assert!(error.contains("configured state policy"), "{error}");
+            }
+            other => panic!("repeated references must refuse the logical quota: {other:?}"),
+        }
+        assert!(reopened.instances.is_empty());
     }
 
     #[test]

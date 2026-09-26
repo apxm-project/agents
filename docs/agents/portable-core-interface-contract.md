@@ -480,11 +480,15 @@ recovery.
 
 The local filesystem implementation authenticates its stored representation
 before restoring Runtime metadata. New writes use canonical request-identity
-fingerprints and bounded base64 encoding for private artifact and admission
-carrier bytes; public Invocation Materials retain their byte-array wire
-representation. The reader accepts authenticated legacy full identities and
-byte arrays, preserving the original bytes and admission checks. Older
-binaries cannot read the new private representation. After a new write,
+fingerprints and bounded base64 encoding for private artifact bytes. Exact
+release and provenance carriers are pooled by their SHA-256 digests within
+the authenticated metadata; references must match the admission and the
+carrier bytes. Recovery checks counts and cumulative logical sizes before
+expanding references, so pooling cannot bypass state quotas. Public Invocation
+Materials retain their byte-array wire representation. The reader accepts
+authenticated legacy full identities, byte arrays and inline base64 carriers,
+preserving the original bytes and admission checks. Older binaries cannot read
+the new private representation. After a new write,
 rollback requires a compatible reader or a coordinated pre-upgrade snapshot;
 restoring Runtime storage alone does not undo external effects. The existing
 serialized-store limit remains in force.

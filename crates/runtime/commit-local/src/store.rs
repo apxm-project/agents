@@ -697,6 +697,12 @@ impl CommitLocalStore {
         self.runtime_metadata = metadata;
     }
 
+    /// Swap opaque metadata while the filesystem owner holds its exclusive
+    /// store lock. The previous value can be restored if persistence refuses.
+    pub(crate) fn replace_runtime_metadata(&mut self, metadata: Option<Value>) -> Option<Value> {
+        std::mem::replace(&mut self.runtime_metadata, metadata)
+    }
+
     pub fn validate_schema(&self) -> Result<(), CommitLocalError> {
         if self.schema_version != COMMIT_LOCAL_SCHEMA {
             return Err(CommitLocalError::SchemaMismatch {

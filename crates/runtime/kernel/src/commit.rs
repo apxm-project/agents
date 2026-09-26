@@ -10,7 +10,8 @@
 //! shape is kept consistent with the runtime-side adapter crate.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -137,8 +138,65 @@ pub fn canonical_json_value(value: &Value) -> Value {
 /// Serialize one JSON value into its canonical, key-order-independent bytes.
 #[must_use]
 pub fn canonical_json_bytes(value: &Value) -> Vec<u8> {
-    serde_json::to_vec(&canonical_json_value(value))
+    serde_json::to_vec(&BorrowedCanonicalJson(value))
         .expect("serde_json::Value is always canonically serializable")
+}
+
+/// Serialize the canonical tree without duplicating its values. Object keys
+/// are sorted explicitly so the result is independent of serde_json's Map
+/// backing representation or feature selection.
+struct BorrowedCanonicalJson<'a>(&'a Value);
+
+impl Serialize for BorrowedCanonicalJson<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(&BorrowedCanonicalJson(value))?;
+                }
+                sequence.end()
+            }
+            Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                let mut map = serializer.serialize_map(Some(entries.len()))?;
+                for (key, value) in entries {
+                    map.serialize_entry(key, &BorrowedCanonicalJson(value))?;
+                }
+                map.end()
+            }
+            scalar => scalar.serialize(serializer),
+        }
+    }
+}
+
+#[cfg(test)]
+mod canonical_json_bytes_tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_bytes_match_the_previous_canonical_tree_for_json_edges() {
+        let mut nested = Map::new();
+        nested.insert(
+            "zebra".into(),
+            json!({"second": 2, "first": [null, true, false]}),
+        );
+        nested.insert("alpha".into(), json!({"Ω": "雪\n\t\u{0000}", "a": "\\\""}));
+        let values = [
+            Value::Object(nested),
+            json!({"array": [{"z": 0, "a": []}, {}, [], [1, 2, 3]]}),
+            json!({"numbers": [i64::MIN, i64::MAX, u64::MAX, -0.0, 0.0, 1.5e-20, 1.25e30]}),
+            json!(["é", "😀", "line\nfeed", "control\u{001f}"]),
+            Value::Null,
+            json!({}),
+            json!([]),
+        ];
+        for value in values {
+            let previous = serde_json::to_vec(&canonical_json_value(&value)).unwrap();
+            assert_eq!(canonical_json_bytes(&value), previous, "{value:?}");
+        }
+    }
 }
 
 /// Canonical digest of the exact continuation state carried by a commit.

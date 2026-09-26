@@ -119,10 +119,11 @@ impl FilesystemExecutionCommit {
     /// store. The adapter does not inspect or interpret the JSON value.
     pub fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), CommitLocalError> {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
-        let mut staged = guard.clone();
-        staged.set_runtime_metadata(metadata);
-        persist(&self.root, &staged, &self.auth_key)?;
-        *guard = staged;
+        let previous = guard.replace_runtime_metadata(metadata);
+        if let Err(error) = persist(&self.root, &guard, &self.auth_key) {
+            guard.replace_runtime_metadata(previous);
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -600,11 +601,25 @@ mod compact_store_tests {
                 CommitReplayIdentity::LegacyFull(Box::new(CommitRequestIdentity::from(&request)));
             persist(&port.root, &store, &port.auth_key).expect("persist legacy row");
         }
+        let legacy_key = port.auth_key;
         drop(port);
         let path = store_path(dir.path());
-        let old_pretty_bytes: Value =
+        let mut old_pretty_bytes: Value =
             serde_json::from_slice(&fs::read(&path).expect("read authenticated legacy row"))
                 .expect("legacy JSON");
+        let original_tag = old_pretty_bytes["integrity_tag"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        old_pretty_bytes["integrity_tag"] = Value::String(String::new());
+        let old_oracle = serde_json::to_vec(&apxm_kernel::canonical_json_value(&old_pretty_bytes))
+            .expect("legacy canonical body");
+        let old_tag = keyed_digest(&legacy_key, &old_oracle);
+        assert_eq!(
+            old_tag, original_tag,
+            "new bytes changed the legacy HMAC body"
+        );
+        old_pretty_bytes["integrity_tag"] = Value::String(old_tag);
         fs::write(
             &path,
             serde_json::to_vec_pretty(&old_pretty_bytes).expect("old pretty representation"),
@@ -620,10 +635,13 @@ mod compact_store_tests {
         ));
     }
 
-    #[test]
-    fn oversized_metadata_persist_preserves_prior_authority() {
+    #[tokio::test]
+    async fn oversized_metadata_persist_preserves_prior_authority() {
         let dir = tempfile::tempdir().expect("tempdir");
         let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+        let request = request();
+        let committed = port.commit(request.clone()).await;
+        assert!(matches!(committed, ExecutionCommitResult::Committed { .. }));
         port.set_runtime_metadata(Some(json!({"state": "before"})))
             .expect("persist initial metadata");
         assert!(matches!(
@@ -631,11 +649,23 @@ mod compact_store_tests {
             Err(CommitLocalError::StoreTooLarge { .. })
         ));
         assert_eq!(port.runtime_metadata(), Some(json!({"state": "before"})));
+        assert_eq!(port.commit(request.clone()).await, committed);
         drop(port);
         let reopened = FilesystemExecutionCommit::open(dir.path()).expect("reopen prior authority");
         assert_eq!(
             reopened.runtime_metadata(),
             Some(json!({"state": "before"}))
+        );
+        assert_eq!(reopened.commit(request).await, committed);
+        reopened
+            .set_runtime_metadata(Some(json!({"state": "after"})))
+            .expect("continue after refused metadata persistence");
+        drop(reopened);
+        let final_reopen =
+            FilesystemExecutionCommit::open(dir.path()).expect("reopen later authority");
+        assert_eq!(
+            final_reopen.runtime_metadata(),
+            Some(json!({"state": "after"}))
         );
     }
 }
