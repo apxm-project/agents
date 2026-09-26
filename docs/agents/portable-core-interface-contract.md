@@ -479,7 +479,11 @@ idempotency, and reconciliation prevent blind duplication across crash and
 recovery.
 
 The local filesystem implementation authenticates its stored representation
-before restoring Runtime metadata. New writes use canonical request-identity
+before restoring Runtime metadata. New writes use a versioned private envelope
+in the existing `execution-commit-local.v2.json` file. Its HMAC binds the
+format and exact serialized store bytes; recovery verifies it before decoding
+the store. The reader also accepts authenticated legacy naked v2 records and
+rewrites them as envelopes on the next mutation. New writes use request-identity
 fingerprints and bounded base64 encoding for private artifact bytes. Exact
 release and provenance carriers are pooled by their SHA-256 digests within
 the authenticated metadata; references must match the admission and the
@@ -487,8 +491,8 @@ carrier bytes. Recovery checks counts and cumulative logical sizes before
 expanding references, so pooling cannot bypass state quotas. Public Invocation
 Materials retain their byte-array wire representation. The reader accepts
 authenticated legacy full identities, byte arrays and inline base64 carriers,
-preserving the original bytes and admission checks. Older binaries cannot read
-the new private representation. After a new write,
+preserving the original bytes and admission checks. Older binaries fail closed
+on the envelope and other new private representations. After a new write,
 rollback requires a compatible reader or a coordinated pre-upgrade snapshot;
 restoring Runtime storage alone does not undo external effects. The existing
 serialized-store limit remains in force.

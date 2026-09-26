@@ -250,7 +250,8 @@ async fn compact_replay_identity_reopens_and_old_reader_refuses_new_rows() {
     let persisted = std::fs::read(dir.path().join("execution-commit-local.v2.json"))
         .expect("read persisted compact store");
     let store: Value = serde_json::from_slice(&persisted).expect("store JSON");
-    let identity = store["by_commit_scope"]
+    assert!(serde_json::from_slice::<CommitLocalStore>(&persisted).is_err());
+    let identity = store["body"]["by_commit_scope"]
         .as_object()
         .and_then(|scopes| scopes.values().next())
         .and_then(|row| row.get("request_identity"))
@@ -1105,7 +1106,7 @@ async fn filesystem_store_tampering_fails_authentication_before_resume() {
     let path = root.join("execution-commit-local.v2.json");
     let mut persisted: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("read store")).expect("store JSON");
-    persisted["instances"]["instance.tamper"]["continuation"]["pc"] = json!(99);
+    persisted["body"]["instances"]["instance.tamper"]["continuation"]["pc"] = json!(99);
     std::fs::write(
         &path,
         serde_json::to_vec_pretty(&persisted).expect("tampered JSON"),
