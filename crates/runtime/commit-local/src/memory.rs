@@ -77,6 +77,20 @@ impl InMemoryExecutionCommit {
             .set_runtime_metadata(metadata);
     }
 
+    /// Atomically replace Runtime metadata and remove one settled instance.
+    pub fn purge_instance(
+        &self,
+        instance_id: &str,
+        metadata: Value,
+    ) -> Result<(), CommitLocalError> {
+        let mut guard = self.store.lock().expect("commit-local memory lock");
+        let mut staged = guard.clone();
+        staged.purge_instance(instance_id)?;
+        staged.set_runtime_metadata(Some(metadata));
+        *guard = staged;
+        Ok(())
+    }
+
     #[must_use]
     pub fn invocation_status(
         &self,

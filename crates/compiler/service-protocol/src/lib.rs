@@ -18,6 +18,103 @@ pub use apxm_source_port::{
 /// Only declared protocol version. Unknown versions fail closed.
 pub const COMPILATION_PROTOCOL_VERSION: &str = "apxm.compilation.protocol/2";
 
+pub const ARTIFACT_RETENTION_VERSION: &str = "apxm.compilation.artifact-retention/1";
+pub const ARTIFACT_RETENTION_CONTRACT: &str = "apxm.compilation.artifact-retention";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactRetentionHandshake {
+    pub protocol_version: String,
+    pub contract: String,
+}
+
+impl ArtifactRetentionHandshake {
+    #[must_use]
+    pub fn server() -> Self {
+        Self {
+            protocol_version: ARTIFACT_RETENTION_VERSION.to_owned(),
+            contract: ARTIFACT_RETENTION_CONTRACT.to_owned(),
+        }
+    }
+
+    pub fn admit(&self) -> Result<(), ProtocolError> {
+        if *self == Self::server() {
+            Ok(())
+        } else {
+            Err(ProtocolError::IncompatibleVersion)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArtifactRetentionRequest {
+    ArtifactRetain {
+        request_id: String,
+        artifact_digest: String,
+        reference_id: String,
+    },
+    ArtifactRelease {
+        request_id: String,
+        artifact_digest: String,
+        reference_id: String,
+        owner_claim: String,
+    },
+    ArtifactInspect {
+        request_id: String,
+        artifact_digest: String,
+    },
+    ArtifactInventorySeal {
+        request_id: String,
+        artifact_digest: String,
+        reference_ids: Vec<String>,
+    },
+    ArtifactInventoryStatus {
+        request_id: String,
+    },
+    ArtifactCollect {
+        request_id: String,
+        artifact_digest: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactInventoryEntry {
+    pub artifact_digest: String,
+    pub state: String,
+    pub live_references: u32,
+    pub runtime_references: u32,
+    pub unmanaged: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArtifactRetentionResult {
+    ArtifactReferenceRetained {
+        request_id: String,
+        artifact_digest: String,
+        reference_id: String,
+        owner_claim: String,
+    },
+    ArtifactDisposition {
+        request_id: String,
+        artifact_digest: String,
+        state: String,
+        live_references: u32,
+        runtime_references: u32,
+        unmanaged: bool,
+    },
+    ArtifactInventory {
+        request_id: String,
+        artifacts: Vec<ArtifactInventoryEntry>,
+    },
+    Failed {
+        request_id: String,
+        code: String,
+    },
+}
+
 /// The primary code a failed compile reports when its report names no error.
 pub const COMPILE_FAILED_CODE: &str = "compile_failed";
 pub use apxm_program::EXECUTION_LINEAGE_COMPILER_IDENTITY;
@@ -342,6 +439,34 @@ mod tests {
             assert_eq!(hs.admit(), Err(ProtocolError::IncompatibleVersion));
         }
         assert_eq!(handshake().admit(), Ok(()));
+    }
+
+    #[test]
+    fn artifact_retention_inventory_is_separate_from_frozen_compilation_protocol() {
+        assert_eq!(ArtifactRetentionHandshake::server().admit(), Ok(()));
+        let mut unsupported = ArtifactRetentionHandshake::server();
+        unsupported.protocol_version = "apxm.compilation.artifact-retention/0".to_owned();
+        assert_eq!(unsupported.admit(), Err(ProtocolError::IncompatibleVersion));
+        let request = ArtifactRetentionRequest::ArtifactInventoryStatus {
+            request_id: "inventory-1".to_owned(),
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded["method"], "artifact_inventory_status");
+        assert!(serde_json::from_value::<CompilationRequest>(encoded).is_err());
+        let result = ArtifactRetentionResult::ArtifactInventory {
+            request_id: "inventory-1".to_owned(),
+            artifacts: vec![ArtifactInventoryEntry {
+                artifact_digest: format!("sha256:{}", "a".repeat(64)),
+                state: "retained".to_owned(),
+                live_references: 1,
+                runtime_references: 0,
+                unmanaged: true,
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["kind"],
+            "artifact_inventory"
+        );
     }
 
     fn located_error() -> CompileDiagnostic {

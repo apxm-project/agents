@@ -11,7 +11,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::CompilationService;
-use apxm_compilation_protocol::{CompilationHandshake, CompilationRequest};
+use apxm_compilation_protocol::{
+    ARTIFACT_RETENTION_VERSION, ArtifactRetentionHandshake, ArtifactRetentionRequest,
+    CompilationHandshake, CompilationRequest,
+};
 
 /// Maximum encoded JSONL frame, including its line terminator.
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
@@ -38,6 +41,13 @@ pub struct StdioFrame {
 struct Envelope {
     handshake: CompilationHandshake,
     request: CompilationRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetentionEnvelope {
+    handshake: ArtifactRetentionHandshake,
+    request: ArtifactRetentionRequest,
 }
 
 /// Encode one frame as a single JSONL line including the trailing newline.
@@ -131,14 +141,30 @@ fn serve_frames<R: BufRead, W: Write>(
                 frame.channel, COMPILATION_CHANNEL
             ));
         }
-        let envelope: Envelope =
+        let payload: serde_json::Value =
             serde_json::from_str(&frame.payload).map_err(|error| error.to_string())?;
-        let result = service
-            .handle(&envelope.handshake, envelope.request)
-            .map_err(|error| format!("{error:?}"))?;
+        let version = payload
+            .get("handshake")
+            .and_then(|value| value.get("protocol_version"))
+            .and_then(serde_json::Value::as_str);
+        let result = if version == Some(ARTIFACT_RETENTION_VERSION) {
+            let envelope: RetentionEnvelope =
+                serde_json::from_value(payload).map_err(|error| error.to_string())?;
+            serde_json::to_string(&service.handle_retention(&envelope.handshake, envelope.request))
+                .map_err(|error| error.to_string())?
+        } else {
+            let envelope: Envelope =
+                serde_json::from_value(payload).map_err(|error| error.to_string())?;
+            serde_json::to_string(
+                &service
+                    .handle(&envelope.handshake, envelope.request)
+                    .map_err(|error| format!("{error:?}"))?,
+            )
+            .map_err(|error| error.to_string())?
+        };
         let reply = StdioFrame {
             channel: COMPILATION_CHANNEL.to_owned(),
-            payload: serde_json::to_string(&result).map_err(|error| error.to_string())?,
+            payload: result,
         };
         writer
             .write_all(encode_jsonl(&reply).as_bytes())

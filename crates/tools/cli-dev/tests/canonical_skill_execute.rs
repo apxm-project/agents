@@ -85,7 +85,8 @@ fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
     let result: Value = serde_json::from_slice(&output.stdout).expect("canonical result JSON");
     let committed_content = envelope_content(&result);
     assert!(
-        committed_content.contains("name: context") && committed_content.contains("# APXM Context"),
-        "the typed committed Session Output contains the skill body: {committed_content}"
+        committed_content.contains("# APXM Context")
+            && !committed_content.contains("name: context"),
+        "the typed committed Session Output contains only the skill body: {committed_content}"
     );
 }

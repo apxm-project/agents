@@ -665,6 +665,85 @@ pub struct CommitLocalStore {
 }
 
 impl CommitLocalStore {
+    /// Remove only records whose exact instance join is known and settled.
+    /// The caller persists this staged store with the Runtime tombstone.
+    pub fn purge_instance(&mut self, instance_id: &str) -> Result<(), CommitLocalError> {
+        use apxm_runtime_protocol::{EvidenceFactKind, ObservationKind, ProgramInvocationStatus};
+        let invocation_ids = self
+            .invocations
+            .iter()
+            .filter(|(_, value)| value.program_instance_ref == instance_id)
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>();
+        if self
+            .invocations
+            .values()
+            .filter(|value| value.program_instance_ref == instance_id)
+            .any(|value| {
+                matches!(
+                    value.status,
+                    ProgramInvocationStatus::OutcomeUnknown
+                        | ProgramInvocationStatus::CancellationUnconfirmed
+                        | ProgramInvocationStatus::AdmissionPending
+                        | ProgramInvocationStatus::Running
+                        | ProgramInvocationStatus::WaitingEvent
+                        | ProgramInvocationStatus::Cancelling
+                )
+            })
+            || invocation_ids.iter().any(|id| {
+                self.evidence_records.get(id).is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|item| item.fact_kind == EvidenceFactKind::EffectOutcomeUnknown)
+                }) || self.observations.get(id).is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|item| item.observation_kind == ObservationKind::OutcomeUnknown)
+                })
+            })
+        {
+            return Err(CommitLocalError::InvalidRequest(
+                "instance has unsettled or uncertain effects".into(),
+            ));
+        }
+        let mut owned_commits = Vec::new();
+        for (key, result) in &self.by_commit_scope {
+            let coordinates: Vec<String> = serde_json::from_str(key).map_err(|_| {
+                CommitLocalError::InvalidRequest("commit scope cannot be attributed".into())
+            })?;
+            if coordinates.len() != 3 {
+                return Err(CommitLocalError::InvalidRequest(
+                    "commit scope cannot be attributed".into(),
+                ));
+            }
+            if coordinates[1] == instance_id {
+                if matches!(result.result, StoredCommitResult::OutcomeUnknown { .. }) {
+                    return Err(CommitLocalError::InvalidRequest(
+                        "instance has an unknown commit outcome".into(),
+                    ));
+                }
+                owned_commits.push(key.clone());
+            }
+        }
+        self.instances.remove(instance_id);
+        for id in &invocation_ids {
+            self.invocations.remove(id);
+            self.evidence_records.remove(id);
+            self.observations.remove(id);
+            self.next_evidence_sequence.remove(id);
+            self.next_observation_sequence.remove(id);
+        }
+        self.node_executions
+            .retain(|_, value| !invocation_ids.contains(value.program_invocation_id.as_str()));
+        self.prepared_outputs
+            .retain(|_, value| value.program_instance_ref != instance_id);
+        self.committed_outputs
+            .retain(|_, value| value.program_instance_ref != instance_id);
+        for key in owned_commits {
+            self.by_commit_scope.remove(&key);
+        }
+        Ok(())
+    }
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -2067,6 +2146,49 @@ impl CommitLocalStore {
             },
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::{CommitLocalStore, StoredInvocation};
+    use apxm_runtime_protocol::ProgramInvocationStatus;
+
+    fn invocation(instance: &str, status: ProgramInvocationStatus) -> StoredInvocation {
+        StoredInvocation {
+            program_instance_ref: instance.to_owned(),
+            status,
+            node_execution_refs: Vec::new(),
+            output_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            child_program_refs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn purge_removes_only_the_exact_instance_and_refuses_unknown_effects() {
+        let mut store = CommitLocalStore::new();
+        store.invocations.insert(
+            "inv-a".into(),
+            invocation("pi-a", ProgramInvocationStatus::OutcomeUnknown),
+        );
+        store.invocations.insert(
+            "inv-b".into(),
+            invocation("pi-b", ProgramInvocationStatus::CommittedReturn),
+        );
+        assert!(store.purge_instance("pi-a").is_err());
+        assert!(store.invocations.contains_key("inv-a"));
+        assert!(store.invocations.contains_key("inv-b"));
+        store
+            .invocations
+            .get_mut("inv-a")
+            .expect("invocation")
+            .status = ProgramInvocationStatus::Cancelled;
+        store
+            .purge_instance("pi-a")
+            .expect("settled instance may purge");
+        assert!(!store.invocations.contains_key("inv-a"));
+        assert!(store.invocations.contains_key("inv-b"));
     }
 }
 

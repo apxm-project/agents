@@ -869,7 +869,7 @@ ReviewModel = Model[ReviewRequest, Review]("review.model")
 SearchWeb = Tool[ReviewRequest, Review]("search_web")
 
 
-@Agent(input=ReviewRequest, output=Review)
+@Agent(model=ReviewModel, input=ReviewRequest, output=Review)
 async def Reviewer(agent, request):
     evidence = await SearchWeb(request)
     return await ReviewModel(evidence)
@@ -982,14 +982,14 @@ async def Reviewer(agent, request):
         fs::write(
             dir.join("src/agent.py"),
             r#"from typing import TypedDict
-from apxm_program import Agent
+from apxm_program import Workflow
 
 
 class Echo(TypedDict):
     message: str
 
 
-@Agent(input=Echo, output=Echo)
+@Workflow(input=Echo, output=Echo)
 async def EchoAgent(agent, request):
     return request
 "#,

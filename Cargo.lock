@@ -118,6 +118,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-artifact-registry"
+version = "0.1.0"
+dependencies = [
+ "apxm-core",
+ "apxm-program",
+ "fs2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "apxm-backend-registry"
 version = "0.1.0"
 dependencies = [
@@ -305,9 +319,11 @@ name = "apxm-compilation-service"
 version = "0.1.0"
 dependencies = [
  "apxm-ais",
+ "apxm-artifact-registry",
  "apxm-compilation-protocol",
  "apxm-core",
  "apxm-program",
+ "apxm-runtime-protocol",
  "apxm-source-port",
  "serde",
  "serde_json",
@@ -509,6 +525,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-ais",
+ "apxm-artifact-registry",
  "apxm-backend-registry",
  "apxm-backends",
  "apxm-capability",

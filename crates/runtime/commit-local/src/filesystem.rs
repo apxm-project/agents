@@ -232,6 +232,21 @@ impl FilesystemExecutionCommit {
         Ok(())
     }
 
+    /// Persist the tombstone and scoped execution removal as one authenticated store.
+    pub fn purge_instance(
+        &self,
+        instance_id: &str,
+        metadata: Value,
+    ) -> Result<(), CommitLocalError> {
+        let mut guard = self.store.lock().expect("commit-local filesystem lock");
+        let mut staged = guard.clone();
+        staged.purge_instance(instance_id)?;
+        staged.set_runtime_metadata(Some(metadata));
+        persist(&self.root, &staged, &self.auth_key)?;
+        *guard = staged;
+        Ok(())
+    }
+
     pub fn prepare_output(
         &self,
         preparation: SessionOutputPreparation,

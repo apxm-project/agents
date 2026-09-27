@@ -324,6 +324,9 @@ impl RuntimeService {
             return Ok(None);
         }
         let instance = self.instances.get(&instance_id).ok_or("unknown_instance")?;
+        if instance.quiesced {
+            return Ok(None);
+        }
         let invocation = instance
             .invocation
             .as_ref()

@@ -451,12 +451,23 @@ fn read_instruction(
                 format!("securely read {}: {error}", instructions.display()),
             )
         })?;
-    String::from_utf8(bytes).map_err(|error| {
+    let text = String::from_utf8(bytes).map_err(|error| {
         capability_error(
             capability,
             format!("{} is not valid UTF-8: {error}", instructions.display()),
         )
-    })
+    })?;
+    if frontmatter(&text).is_none() {
+        return Err(capability_error(
+            capability,
+            format!("{} has no readable frontmatter", instructions.display()),
+        ));
+    }
+    let after_open = text.strip_prefix("---\n").expect("frontmatter checked");
+    let (_, body) = after_open
+        .split_once("\n---\n")
+        .expect("frontmatter checked");
+    Ok(body.strip_prefix('\n').unwrap_or(body).to_owned())
 }
 
 // ---------------------------------------------------------------------------
