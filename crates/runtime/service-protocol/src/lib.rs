@@ -64,6 +64,76 @@ pub const RUNTIME_PROTOCOL_VERSION: &str = "apxm.runtime.protocol/1";
 /// This is intentionally not the read-only Protocol/2 surface below.
 pub const RUNTIME_EXECUTION_ADMISSION_VERSION: &str = "apxm.runtime.execution-admission/1";
 pub const EXECUTION_ADMISSION_CONTRACT: &str = "apxm.runtime.execution-admission";
+/// Separately negotiated owner-local instance retirement mutations.
+pub const RUNTIME_RETIREMENT_VERSION: &str = "apxm.runtime.retirement/1";
+pub const RUNTIME_RETIREMENT_CONTRACT: &str = "apxm.runtime.retirement";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRetirementHandshake {
+    pub protocol_version: String,
+    pub contract: String,
+}
+
+impl RuntimeRetirementHandshake {
+    #[must_use]
+    pub fn server() -> Self {
+        Self {
+            protocol_version: RUNTIME_RETIREMENT_VERSION.to_owned(),
+            contract: RUNTIME_RETIREMENT_CONTRACT.to_owned(),
+        }
+    }
+
+    pub fn admit(&self) -> Result<(), ProtocolError> {
+        if *self == Self::server() {
+            Ok(())
+        } else {
+            Err(ProtocolError::IncompatibleVersion)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeRetirementRequest {
+    ArtifactReferenceInspect {
+        request_id: String,
+        artifact_digest: String,
+    },
+    ProgramInstanceQuiesce {
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+    },
+    ProgramInstancePurge {
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeRetirementResult {
+    ArtifactReferenceCount {
+        request_id: String,
+        artifact_digest: String,
+        live_instances: u32,
+    },
+    ProgramInstanceDisposition {
+        request_id: String,
+        program_instance_id: String,
+        live_data: String,
+        active: u32,
+        parked: u32,
+        uncertain_effects: u32,
+        retained_artifact_refs: u32,
+    },
+    Failed {
+        request_id: String,
+        code: String,
+    },
+}
 
 /// Additive read/observation protocol. Protocol/1 remains frozen and is not
 /// silently widened; clients opt into this separately negotiated surface.
@@ -1685,6 +1755,22 @@ mod tests {
         assert!(serde_json::from_value::<RuntimeRequest>(wire.clone()).is_err());
         assert!(serde_json::from_value::<RuntimeRequestV2>(wire).is_err());
         assert_eq!(RuntimeExecutionAdmissionHandshake::server().admit(), Ok(()));
+    }
+
+    #[test]
+    fn retirement_is_separately_negotiated_and_owner_claim_bound() {
+        let request = RuntimeRetirementRequest::ProgramInstanceQuiesce {
+            request_id: "retire.1".to_owned(),
+            program_instance_id: "pi-1".to_owned(),
+            owner_claim: RuntimeOwnerClaim::mint(),
+        };
+        let wire = serde_json::to_value(&request).expect("retirement wire");
+        assert!(serde_json::from_value::<RuntimeRequest>(wire.clone()).is_err());
+        assert!(serde_json::from_value::<RuntimeRequestV2>(wire).is_err());
+        assert_eq!(RuntimeRetirementHandshake::server().admit(), Ok(()));
+        let mut wrong = RuntimeRetirementHandshake::server();
+        wrong.contract.push_str(".other");
+        assert_eq!(wrong.admit(), Err(ProtocolError::IncompatibleVersion));
     }
 
     #[test]

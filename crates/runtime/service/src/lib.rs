@@ -36,6 +36,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use apxm_ais::permissions::PermissionDecision;
+use apxm_artifact_registry::ArtifactRegistry;
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_commit_local::{
     CommitLocalError, FilesystemExecutionCommit, InMemoryExecutionCommit, PersistencePhase,
@@ -60,6 +61,7 @@ use apxm_runtime_protocol::{
     RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
     RuntimeExecutionAdmissionRequest, RuntimeFailureCode, RuntimeHandshake, RuntimeHandshakeV2,
     RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2,
+    RuntimeRetirementHandshake, RuntimeRetirementRequest, RuntimeRetirementResult,
     capability_fulfillment_is_well_formed,
 };
 use async_trait::async_trait;
@@ -75,6 +77,11 @@ use uuid::Uuid;
 /// Reads are bounded before allocation and verified against the requested
 /// content digest after the bounded read.
 const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PURGED_INSTANCE_TOMBSTONES: usize = 10_000;
+
+fn retirement_claim_digest(claim: &RuntimeOwnerClaim) -> String {
+    format!("sha256:{:x}", Sha256::digest(claim.value.as_bytes()))
+}
 
 /// A typed bound for one class of service-owned state.
 ///
@@ -151,6 +158,7 @@ pub struct RuntimeService {
     admission_meta: BTreeMap<String, StateEntry>,
     admission_bytes: u64,
     instances: BTreeMap<String, InstanceState>,
+    purged_instances: BTreeMap<String, PurgedInstanceTombstone>,
     invocation_index: BTreeMap<String, String>,
     instance_bytes: u64,
     applications: BTreeMap<String, ApplicationState>,
@@ -375,6 +383,7 @@ impl RuntimeService {
             admission_meta: BTreeMap::new(),
             admission_bytes: 0,
             instances: BTreeMap::new(),
+            purged_instances: BTreeMap::new(),
             invocation_index: BTreeMap::new(),
             instance_bytes: 0,
             applications: BTreeMap::new(),
@@ -728,6 +737,18 @@ impl RuntimeExecutionBackend {
         }
     }
 
+    fn purge_instance(&self, instance_id: &str, metadata: Value) -> Result<(), String> {
+        match self {
+            Self::Memory(commit) => commit
+                .purge_instance(instance_id, metadata)
+                .map_err(|error| error.to_string()),
+            Self::Filesystem(commit) => commit
+                .purge_instance(instance_id, metadata)
+                .map_err(|error| error.to_string()),
+            Self::Unavailable(reason) => Err(reason.clone()),
+        }
+    }
+
     fn invocation_status(
         &self,
         invocation: &str,
@@ -841,6 +862,7 @@ struct InstanceState {
     artifact_digest: String,
     materials: Option<InvocationMaterials>,
     owner_claim: RuntimeOwnerClaim,
+    quiesced: bool,
     invocation: Option<InvocationState>,
     /// Immutable request-id history retained after a terminal invocation so
     /// retries replay their original result even after the instance admits a
@@ -848,6 +870,14 @@ struct InstanceState {
     invocation_history: BTreeMap<String, InvocationState>,
     invocation_bytes: u64,
     state_entry: StateEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PurgedInstanceTombstone {
+    claim_digest: String,
+    artifact_digest: String,
+    artifact_ref_released: bool,
 }
 
 #[derive(Clone)]
@@ -1303,6 +1333,8 @@ struct DurableRuntimeMetadata {
     carrier_pool: BTreeMap<String, DurableBytes<MAX_DURABLE_CARRIER_BYTES>>,
     artifact_admissions: BTreeMap<String, DurableInvocationMaterials>,
     instances: BTreeMap<String, DurableInstanceState>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    purged_instances: BTreeMap<String, PurgedInstanceTombstone>,
     reservations: Vec<DurableReservationState>,
     applications: BTreeMap<String, DurableApplicationState>,
     #[serde(default)]
@@ -1317,6 +1349,8 @@ struct DurableInstanceState {
     artifact_digest: String,
     materials: Option<DurableInvocationMaterials>,
     owner_claim: RuntimeOwnerClaim,
+    #[serde(default)]
+    quiesced: bool,
     invocation: Option<DurableInvocationState>,
     #[serde(default)]
     invocation_history: BTreeMap<String, DurableInvocationState>,
@@ -1527,6 +1561,7 @@ impl RuntimeService {
                             })
                             .transpose()?,
                         owner_claim: instance.owner_claim.clone(),
+                        quiesced: instance.quiesced,
                         invocation: instance.invocation.as_ref().map(durable_invocation),
                         invocation_history: instance
                             .invocation_history
@@ -1555,6 +1590,7 @@ impl RuntimeService {
             carrier_pool,
             artifact_admissions,
             instances,
+            purged_instances: self.purged_instances.clone(),
             reservations: self
                 .reservations
                 .iter()
@@ -1641,6 +1677,19 @@ impl RuntimeService {
                 metadata.schema_version
             ));
         }
+        for (instance_id, tombstone) in &metadata.purged_instances {
+            if instance_id.trim().is_empty()
+                || !apxm_core::grammar::is_digest(&tombstone.claim_digest)
+                || !apxm_core::grammar::is_digest(&tombstone.artifact_digest)
+                || metadata.instances.contains_key(instance_id)
+            {
+                return Err("runtime metadata contains an invalid purged instance".to_owned());
+            }
+        }
+        if metadata.purged_instances.len() > MAX_PURGED_INSTANCE_TOMBSTONES {
+            return Err("runtime metadata exceeds purged instance tombstone bound".to_owned());
+        }
+        self.purged_instances = metadata.purged_instances.clone();
 
         let mut pooled_bytes = 0_u64;
         for (digest, bytes) in &metadata.carrier_pool {
@@ -1847,6 +1896,7 @@ impl RuntimeService {
                     artifact_digest: durable.artifact_digest,
                     materials,
                     owner_claim: durable.owner_claim,
+                    quiesced: durable.quiesced,
                     invocation,
                     invocation_history,
                     invocation_bytes: durable.invocation_bytes,
@@ -2165,7 +2215,10 @@ impl RuntimeService {
                     .invocation
                     .as_ref()
                     .is_some_and(|invocation| invocation.result.is_none());
-                (instance.state_entry.expired(now) && !running).then_some(id.clone())
+                // Retirement needs the exact claim until an explicit scoped
+                // purge has either completed or reported a blocker.
+                (instance.state_entry.expired(now) && !running && !instance.quiesced)
+                    .then_some(id.clone())
             })
             .collect::<Vec<_>>();
         for id in expired_instances {
@@ -2983,6 +3036,12 @@ impl RuntimeService {
                 code: "owner_mismatch".to_owned(),
             };
         }
+        if instance.quiesced {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "instance_quiesced".to_owned(),
+            };
+        }
         let Some(profile) = self.admission_profile.as_ref() else {
             return RuntimeResult::Failed {
                 request_id,
@@ -3038,6 +3097,343 @@ impl RuntimeService {
 }
 
 impl RuntimeService {
+    fn purge_quiesced_instance(
+        &mut self,
+        request_id: String,
+        instance_id: String,
+        claim: RuntimeOwnerClaim,
+    ) -> RuntimeRetirementResult {
+        let failed = |code: &str| RuntimeRetirementResult::Failed {
+            request_id: request_id.clone(),
+            code: code.to_owned(),
+        };
+        let Some(instance) = self.instances.get(&instance_id) else {
+            return failed("unknown_instance");
+        };
+        if !instance.quiesced || instance.owner_claim != claim {
+            return failed("invalid_request");
+        }
+        if self.purged_instances.len() >= MAX_PURGED_INSTANCE_TOMBSTONES {
+            return failed("retirement_capacity_exhausted");
+        }
+        let Ok(mut metadata) = self.runtime_metadata() else {
+            return failed("runtime_state_unavailable");
+        };
+        let event_refs = metadata
+            .reservations
+            .iter()
+            .filter(|value| value.program_instance_id == instance_id)
+            .map(|value| (value.event_id.clone(), value.generation))
+            .collect::<BTreeSet<_>>();
+        let invocation_ids = instance
+            .invocation_history
+            .values()
+            .map(|value| value.program_invocation_id.clone())
+            .collect::<BTreeSet<_>>();
+        let tombstone = PurgedInstanceTombstone {
+            claim_digest: retirement_claim_digest(&claim),
+            artifact_digest: instance.artifact_digest.clone(),
+            artifact_ref_released: self.artifact_dir.is_none(),
+        };
+        metadata.instances.remove(&instance_id);
+        metadata
+            .purged_instances
+            .insert(instance_id.clone(), tombstone.clone());
+        metadata
+            .reservations
+            .retain(|value| value.program_instance_id != instance_id);
+        metadata.applications.retain(|_, value| {
+            !event_refs.contains(&(value.event_ref.event_id.clone(), value.event_ref.generation))
+        });
+        metadata
+            .host_capability_settlements
+            .retain(|_, value| value.program_instance_id != instance_id);
+        metadata
+            .cancelled
+            .retain(|value| !invocation_ids.contains(value));
+        let Ok(encoded) = serde_json::to_value(metadata) else {
+            return failed("runtime_state_unavailable");
+        };
+        if self
+            .execution_backend
+            .purge_instance(&instance_id, encoded)
+            .is_err()
+        {
+            return failed("instance_purge_blocked");
+        }
+        let instance = self
+            .instances
+            .remove(&instance_id)
+            .expect("checked instance");
+        self.instance_bytes = self
+            .instance_bytes
+            .saturating_sub(instance.state_entry.bytes);
+        for invocation in instance.invocation_history.values() {
+            self.invocation_index
+                .remove(&invocation.program_invocation_id);
+            self.cancelled.remove(&invocation.program_invocation_id);
+        }
+        self.reservations
+            .retain(|_, value| value.program_instance_id != instance_id);
+        self.applications.retain(|_, value| {
+            !event_refs.contains(&(value.event_ref.event_id.clone(), value.event_ref.generation))
+        });
+        self.host_capability_settlements
+            .retain(|_, value| value.program_instance_id != instance_id);
+        self.reservation_bytes = self
+            .reservations
+            .values()
+            .map(|value| value.state_entry.bytes)
+            .sum();
+        self.application_bytes = self
+            .applications
+            .values()
+            .map(|value| value.state_entry.bytes)
+            .sum();
+        self.host_capability_settlement_bytes = self
+            .host_capability_settlements
+            .values()
+            .map(|value| value.state_entry.bytes)
+            .sum();
+        self.cancellation_bytes = self.cancelled.values().map(|value| value.bytes).sum();
+        self.purged_instances.insert(instance_id.clone(), tombstone);
+        self.event_wait_dirty.remove(&instance_id);
+        let _ = self.refresh_event_index();
+        if self
+            .release_purged_artifact_reference(&instance_id, &claim)
+            .is_err()
+        {
+            return failed("artifact_reference_release_unavailable");
+        }
+        // Digest-addressed artifact files can be referenced by a publisher
+        // outside this Runtime. Their separate owner must release them.
+        RuntimeRetirementResult::ProgramInstanceDisposition {
+            request_id,
+            program_instance_id: instance_id,
+            live_data: "purged".to_owned(),
+            active: 0,
+            parked: 0,
+            uncertain_effects: 0,
+            retained_artifact_refs: 1,
+        }
+    }
+
+    fn release_purged_artifact_reference(
+        &mut self,
+        instance_id: &str,
+        claim: &RuntimeOwnerClaim,
+    ) -> Result<(), String> {
+        let Some(tombstone) = self.purged_instances.get(instance_id) else {
+            return Err("unknown tombstone".to_owned());
+        };
+        if tombstone.claim_digest != retirement_claim_digest(claim) {
+            return Err("owner mismatch".to_owned());
+        }
+        if tombstone.artifact_ref_released {
+            return Ok(());
+        }
+        let dir = self
+            .artifact_dir
+            .as_ref()
+            .ok_or("artifact directory unavailable")?;
+        ArtifactRegistry::new(dir.clone()).release_runtime(
+            &tombstone.artifact_digest,
+            instance_id,
+            &claim.value,
+        )?;
+        self.purged_instances
+            .get_mut(instance_id)
+            .expect("checked tombstone")
+            .artifact_ref_released = true;
+        if let Err(error) = self.persist_runtime_state() {
+            self.purged_instances
+                .get_mut(instance_id)
+                .expect("checked tombstone")
+                .artifact_ref_released = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Retire one exact owner-local instance without interpreting a host tenant.
+    pub fn handle_retirement(
+        &mut self,
+        handshake: &RuntimeRetirementHandshake,
+        request: RuntimeRetirementRequest,
+    ) -> RuntimeRetirementResult {
+        if let RuntimeRetirementRequest::ArtifactReferenceInspect {
+            request_id,
+            artifact_digest,
+        } = &request
+        {
+            if handshake.admit().is_err()
+                || request_id.trim().is_empty()
+                || !apxm_core::grammar::is_digest(artifact_digest)
+            {
+                return RuntimeRetirementResult::Failed {
+                    request_id: request_id.clone(),
+                    code: "invalid_request".to_owned(),
+                };
+            }
+            return RuntimeRetirementResult::ArtifactReferenceCount {
+                request_id: request_id.clone(),
+                artifact_digest: artifact_digest.clone(),
+                live_instances: self
+                    .instances
+                    .values()
+                    .filter(|instance| instance.artifact_digest == *artifact_digest)
+                    .count()
+                    .try_into()
+                    .unwrap_or(u32::MAX),
+            };
+        }
+        let (request_id, instance_id, claim, purge) = match request {
+            RuntimeRetirementRequest::ArtifactReferenceInspect { .. } => {
+                unreachable!("handled above")
+            }
+            RuntimeRetirementRequest::ProgramInstanceQuiesce {
+                request_id,
+                program_instance_id,
+                owner_claim,
+            } => (request_id, program_instance_id, owner_claim, false),
+            RuntimeRetirementRequest::ProgramInstancePurge {
+                request_id,
+                program_instance_id,
+                owner_claim,
+            } => (request_id, program_instance_id, owner_claim, true),
+        };
+        let failed = |code: &str| RuntimeRetirementResult::Failed {
+            request_id: request_id.clone(),
+            code: code.to_owned(),
+        };
+        if handshake.admit().is_err()
+            || request_id.trim().is_empty()
+            || instance_id.trim().is_empty()
+            || claim.validate().is_err()
+        {
+            return failed("invalid_request");
+        }
+        if let Some(prior) = self.purged_instances.get(&instance_id) {
+            if prior.claim_digest != retirement_claim_digest(&claim) {
+                return failed("owner_mismatch");
+            }
+            if self
+                .release_purged_artifact_reference(&instance_id, &claim)
+                .is_err()
+            {
+                return failed("artifact_reference_release_unavailable");
+            }
+            return RuntimeRetirementResult::ProgramInstanceDisposition {
+                request_id,
+                program_instance_id: instance_id,
+                live_data: "purged".to_owned(),
+                active: 0,
+                parked: 0,
+                uncertain_effects: 0,
+                retained_artifact_refs: 1,
+            };
+        }
+        let Some(instance) = self.instances.get(&instance_id) else {
+            return failed("unknown_instance");
+        };
+        if instance.owner_claim != claim {
+            return failed("owner_mismatch");
+        }
+        if !instance.quiesced {
+            self.instances
+                .get_mut(&instance_id)
+                .expect("checked instance")
+                .quiesced = true;
+            if self.persist_runtime_state().is_err() {
+                self.instances
+                    .get_mut(&instance_id)
+                    .expect("checked instance")
+                    .quiesced = false;
+                return failed("runtime_state_unavailable");
+            }
+        }
+        let invocations = self.instances[&instance_id]
+            .invocation_history
+            .values()
+            .map(|item| item.program_invocation_id.clone())
+            .collect::<BTreeSet<_>>();
+        for invocation_id in &invocations {
+            if let Some(token) = self.active_cancellations.get(invocation_id) {
+                token.cancel();
+            }
+            let status = self.execution_backend.invocation_status(invocation_id);
+            if matches!(
+                status,
+                Some(
+                    ProgramInvocationStatus::WaitingEvent
+                        | ProgramInvocationStatus::CommittedYield
+                        | ProgramInvocationStatus::Running
+                        | ProgramInvocationStatus::AdmissionPending
+                        | ProgramInvocationStatus::Cancelling
+                )
+            ) && let RuntimeResult::Failed { .. } =
+                self.cancel_invocation(request_id.clone(), claim.clone(), invocation_id.clone())
+            {
+                return failed("retirement_cancel_failed");
+            }
+        }
+        let mut active = 0_u32;
+        let mut parked = 0_u32;
+        let mut uncertain_effects = 0_u32;
+        for invocation in self.instances[&instance_id].invocation_history.values() {
+            let status = self
+                .execution_backend
+                .invocation_status(&invocation.program_invocation_id);
+            if self
+                .active_cancellations
+                .contains_key(&invocation.program_invocation_id)
+            {
+                active = active.saturating_add(1);
+            } else if matches!(
+                status,
+                Some(
+                    ProgramInvocationStatus::WaitingEvent
+                        | ProgramInvocationStatus::CommittedYield
+                        | ProgramInvocationStatus::Running
+                        | ProgramInvocationStatus::AdmissionPending
+                )
+            ) || invocation.result.is_none()
+            {
+                parked = parked.saturating_add(1);
+            }
+            if matches!(
+                status,
+                Some(
+                    ProgramInvocationStatus::OutcomeUnknown
+                        | ProgramInvocationStatus::CancellationUnconfirmed
+                )
+            ) {
+                uncertain_effects = uncertain_effects.saturating_add(1);
+            }
+        }
+        if self
+            .execution_backend
+            .load_continuation(&ProgramInstanceRef::new(instance_id.clone()))
+            .is_some()
+        {
+            parked = parked.max(1);
+        }
+        if purge && active == 0 && parked == 0 && uncertain_effects == 0 {
+            // The owner-local commit adapter decides whether all retained
+            // execution rows can be removed atomically with the tombstone.
+            return self.purge_quiesced_instance(request_id, instance_id, claim);
+        }
+        RuntimeRetirementResult::ProgramInstanceDisposition {
+            request_id,
+            program_instance_id: instance_id,
+            live_data: "retained".to_owned(),
+            active,
+            parked,
+            uncertain_effects,
+            retained_artifact_refs: 1,
+        }
+    }
+
     fn create_instance(
         &mut self,
         request_id: String,
@@ -3075,12 +3471,23 @@ impl RuntimeService {
         }
         let id = format!("pi-{}", Uuid::new_v4());
         let owner_claim = RuntimeOwnerClaim::mint();
+        if let Some(dir) = self.artifact_dir.as_ref()
+            && ArtifactRegistry::new(dir.clone())
+                .retain_runtime(&artifact_digest, &id, &owner_claim.value)
+                .is_err()
+        {
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "artifact_reference_unavailable".to_owned(),
+            });
+        }
         self.instances.insert(
             id.clone(),
             InstanceState {
                 artifact_digest: artifact_digest.clone(),
                 materials,
                 owner_claim: owner_claim.clone(),
+                quiesced: false,
                 invocation: None,
                 invocation_history: BTreeMap::new(),
                 invocation_bytes: 0,
@@ -3179,6 +3586,12 @@ impl RuntimeService {
             return Err(RuntimeResult::Failed {
                 request_id,
                 code: "owner_mismatch".to_owned(),
+            });
+        }
+        if instance.quiesced {
+            return Err(RuntimeResult::Failed {
+                request_id,
+                code: "instance_quiesced".to_owned(),
             });
         }
         let input_fingerprint = serde_json::to_string(&input).unwrap_or_default();
@@ -3555,6 +3968,9 @@ impl RuntimeService {
                 .instances
                 .get(&instance_id)
                 .ok_or_else(|| "unknown_instance".to_owned())?;
+            if instance.quiesced {
+                return Ok(None);
+            }
             let invocation = instance
                 .invocation
                 .as_ref()
@@ -3639,6 +4055,9 @@ impl RuntimeService {
             .cloned()
             .ok_or_else(|| "unknown_invocation".to_owned())?;
         let instance_for_profile = self.instances.get(&instance_id).ok_or("unknown_instance")?;
+        if instance_for_profile.quiesced {
+            return Ok(false);
+        }
         let artifact_bytes = self
             .artifacts
             .get(&instance_for_profile.artifact_digest)
@@ -3727,6 +4146,13 @@ impl RuntimeService {
         &mut self,
         prepared: &PreparedResume,
     ) -> Result<bool, String> {
+        if self
+            .instances
+            .get(&prepared.program_instance_id)
+            .is_some_and(|instance| instance.quiesced)
+        {
+            return Ok(false);
+        }
         if !self
             .active_cancellations
             .contains_key(&prepared.invocation_id)
@@ -4366,6 +4792,12 @@ impl RuntimeService {
             .ok_or(ProtocolError::OwnerMismatch)?;
         if instance.owner_claim != instance_owner_claim {
             return Err(ProtocolError::OwnerMismatch);
+        }
+        if instance.quiesced {
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "instance_quiesced".to_owned(),
+            });
         }
         if request_id.trim().is_empty() || type_id.trim().is_empty() {
             return Err(ProtocolError::ForbiddenEventMethod);
@@ -8402,6 +8834,138 @@ mod tests {
             .expect("instance claim")
             .owner_claim
             .clone()
+    }
+
+    #[test]
+    fn retirement_quiesces_one_instance_and_preserves_shared_artifact_and_sibling_after_restart() {
+        let directory = tempfile::tempdir().expect("runtime state directory");
+        let path = directory.path().to_path_buf();
+        let bytes = fixture_air_bytes();
+        let (first, first_claim, second, second_claim) = {
+            let mut service = RuntimeService::default().with_runtime_state_dir(path.clone());
+            let first = create_started(&mut service, bytes.clone());
+            let second = create_started(&mut service, bytes.clone());
+            let first_claim = owner_claim(&service, &first);
+            let second_claim = owner_claim(&service, &second);
+            let quiesced = service.handle_retirement(
+                &RuntimeRetirementHandshake::server(),
+                RuntimeRetirementRequest::ProgramInstanceQuiesce {
+                    request_id: "retire.first".into(),
+                    program_instance_id: first.clone(),
+                    owner_claim: first_claim.clone(),
+                },
+            );
+            assert!(
+                matches!(quiesced, RuntimeRetirementResult::ProgramInstanceDisposition { live_data, active: 0, parked: 0, .. } if live_data == "retained")
+            );
+            assert!(
+                matches!(service.prepare_invocation("blocked".into(), first.clone(), first_claim.clone(), serde_json::json!({})),
+                Err(RuntimeResult::Failed { code, .. }) if code == "instance_quiesced")
+            );
+            let foreign = service.handle_retirement(
+                &RuntimeRetirementHandshake::server(),
+                RuntimeRetirementRequest::ProgramInstancePurge {
+                    request_id: "foreign".into(),
+                    program_instance_id: first.clone(),
+                    owner_claim: second_claim.clone(),
+                },
+            );
+            assert!(
+                matches!(foreign, RuntimeRetirementResult::Failed { code, .. } if code == "owner_mismatch")
+            );
+            let purged = service.handle_retirement(
+                &RuntimeRetirementHandshake::server(),
+                RuntimeRetirementRequest::ProgramInstancePurge {
+                    request_id: "purge.first".into(),
+                    program_instance_id: first.clone(),
+                    owner_claim: first_claim.clone(),
+                },
+            );
+            assert!(
+                matches!(purged, RuntimeRetirementResult::ProgramInstanceDisposition { live_data, retained_artifact_refs: 1, .. } if live_data == "purged")
+            );
+            assert!(service.instances.contains_key(&second));
+            assert!(
+                service
+                    .artifacts
+                    .get(&service.instances[&second].artifact_digest)
+                    .is_some()
+            );
+            (first, first_claim, second, second_claim)
+        };
+        let retained = fs::read_to_string(path.join("execution-commit-local.v2.json"))
+            .expect("authenticated store");
+        assert!(
+            !retained.contains(&first_claim.value),
+            "purged bearer claim stayed in the store"
+        );
+        let mut reopened = RuntimeService::default().with_runtime_state_dir(path);
+        assert!(reopened.startup_error().is_none());
+        assert!(!reopened.instances.contains_key(&first));
+        let replay = reopened.handle_retirement(
+            &RuntimeRetirementHandshake::server(),
+            RuntimeRetirementRequest::ProgramInstancePurge {
+                request_id: "purge.replay".into(),
+                program_instance_id: first,
+                owner_claim: first_claim,
+            },
+        );
+        assert!(
+            matches!(replay, RuntimeRetirementResult::ProgramInstanceDisposition { live_data, retained_artifact_refs: 1, .. } if live_data == "purged")
+        );
+        assert!(
+            reopened
+                .prepare_invocation(
+                    "sibling".into(),
+                    second,
+                    second_claim,
+                    serde_json::json!({})
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn retirement_never_purges_a_claimed_invocation_before_worker_settlement() {
+        let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, fixture_air_bytes());
+        let claim = owner_claim(&service, &instance);
+        let prepared = service
+            .prepare_invocation(
+                "running".into(),
+                instance.clone(),
+                claim.clone(),
+                serde_json::json!({}),
+            )
+            .expect("claimed invocation");
+        let quiesced = service.handle_retirement(
+            &RuntimeRetirementHandshake::server(),
+            RuntimeRetirementRequest::ProgramInstanceQuiesce {
+                request_id: "retire.running".into(),
+                program_instance_id: instance.clone(),
+                owner_claim: claim.clone(),
+            },
+        );
+        assert!(
+            matches!(quiesced, RuntimeRetirementResult::ProgramInstanceDisposition { active: 1, live_data, .. } if live_data == "retained")
+        );
+        assert!(
+            !service
+                .begin_invocation(&prepared.invocation_id)
+                .expect("blocked before effect")
+        );
+        let purge = service.handle_retirement(
+            &RuntimeRetirementHandshake::server(),
+            RuntimeRetirementRequest::ProgramInstancePurge {
+                request_id: "purge.running".into(),
+                program_instance_id: instance.clone(),
+                owner_claim: claim,
+            },
+        );
+        assert!(
+            matches!(purge, RuntimeRetirementResult::ProgramInstanceDisposition { active: 1, live_data, .. } if live_data == "retained")
+        );
+        assert!(service.instances.contains_key(&instance));
     }
 
     fn ask_air_bytes() -> Vec<u8> {

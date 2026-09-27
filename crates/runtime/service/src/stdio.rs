@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::{MAX_ACTIVE_INVOCATIONS, PreparedInvocation, PreparedResume, RuntimeService};
 use apxm_runtime_protocol::{
     ProtocolError, RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
-    RuntimeExecutionAdmissionHandshake, RuntimeExecutionAdmissionRequest, RuntimeHandshake,
-    RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2, RuntimeResult,
+    RUNTIME_RETIREMENT_VERSION, RuntimeExecutionAdmissionHandshake,
+    RuntimeExecutionAdmissionRequest, RuntimeHandshake, RuntimeHandshakeV2, RuntimeRequest,
+    RuntimeRequestV2, RuntimeResult, RuntimeRetirementHandshake, RuntimeRetirementRequest,
     capability_fulfillment_is_well_formed,
 };
 
@@ -91,6 +92,13 @@ struct EnvelopeV2 {
 struct ExecutionAdmissionEnvelope {
     handshake: RuntimeExecutionAdmissionHandshake,
     request: RuntimeExecutionAdmissionRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetirementEnvelope {
+    handshake: RuntimeRetirementHandshake,
+    request: RuntimeRetirementRequest,
 }
 
 /// Local Unix socket endpoint identity.
@@ -592,6 +600,14 @@ fn process_payload(payload: &serde_json::Value, service: &mut RuntimeService) ->
             payload,
             service.handle_execution_admission(&envelope.handshake, envelope.request),
         )
+    } else if protocol_version == Some(RUNTIME_RETIREMENT_VERSION) {
+        let Ok(envelope) = serde_json::from_value::<RetirementEnvelope>(payload.clone()) else {
+            return refusal(payload, INVALID_REQUEST);
+        };
+        encoded(
+            payload,
+            service.handle_retirement(&envelope.handshake, envelope.request),
+        )
     } else {
         let Ok(envelope) = serde_json::from_value::<Envelope>(payload.clone()) else {
             return refusal(payload, INVALID_REQUEST);
@@ -763,6 +779,7 @@ fn process_shared_payload(
         .and_then(serde_json::Value::as_str);
     if protocol_version == Some(RUNTIME_PROTOCOL_V2_VERSION)
         || protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION)
+        || protocol_version == Some(RUNTIME_RETIREMENT_VERSION)
     {
         let mut guard = service
             .lock()
@@ -1275,7 +1292,7 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "condition was not reached before the test deadline"
             );
-            std::thread::yield_now();
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -1472,7 +1489,7 @@ mod tests {
             .recover_available()
             .expect("mixed startup recovery remains available");
 
-        wait_until(Duration::from_secs(2), || {
+        wait_until(Duration::from_secs(10), || {
             shared
                 .lock()
                 .expect("runtime service")

@@ -12,18 +12,26 @@ pub use stdio::{
 };
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_ais::{SLOT_CAPABILITY_REF, SemanticOpKind};
+use apxm_artifact_registry::ArtifactRegistry;
 use apxm_compilation_protocol::{
-    CompilationHandshake, CompilationRequest, CompilationResult, CompileDiagnostic,
-    DiagnosticReport, Location, Phase, ProtocolError, Severity,
+    ArtifactInventoryEntry, ArtifactRetentionHandshake, ArtifactRetentionRequest,
+    ArtifactRetentionResult, CompilationHandshake, CompilationRequest, CompilationResult,
+    CompileDiagnostic, DiagnosticReport, Location, Phase, ProtocolError, Severity,
 };
 use apxm_core::types::host_capability::{
     ManifestCapabilities, host_capability_ref, minted_host_capability_refs,
 };
 use apxm_program::{ExecutableArtifact, air::AirModule};
+use apxm_runtime_protocol::{
+    RuntimeRetirementHandshake, RuntimeRetirementRequest, RuntimeRetirementResult,
+};
 use apxm_source_port::{
     Frontend, FrontendDrivers, FrontendRoots, PackageSnapshot, SnapshotError, SourceBundleRequest,
     compile_source_bundle, content_digest, diagnostic_report,
@@ -66,6 +74,7 @@ pub struct CompilationService {
     roots: FrontendRoots,
     drivers: FrontendDrivers,
     artifact_dir: Option<PathBuf>,
+    runtime_socket: Option<PathBuf>,
 }
 
 impl Default for CompilationService {
@@ -75,6 +84,109 @@ impl Default for CompilationService {
 }
 
 impl CompilationService {
+    pub fn handle_retention(
+        &mut self,
+        handshake: &ArtifactRetentionHandshake,
+        request: ArtifactRetentionRequest,
+    ) -> ArtifactRetentionResult {
+        let request_id = match &request {
+            ArtifactRetentionRequest::ArtifactRetain { request_id, .. }
+            | ArtifactRetentionRequest::ArtifactRelease { request_id, .. }
+            | ArtifactRetentionRequest::ArtifactInspect { request_id, .. }
+            | ArtifactRetentionRequest::ArtifactInventorySeal { request_id, .. }
+            | ArtifactRetentionRequest::ArtifactInventoryStatus { request_id }
+            | ArtifactRetentionRequest::ArtifactCollect { request_id, .. } => request_id.clone(),
+        };
+        let failed = |code: &str| ArtifactRetentionResult::Failed {
+            request_id: request_id.clone(),
+            code: code.to_owned(),
+        };
+        if handshake.admit().is_err() || request_id.trim().is_empty() {
+            return failed("invalid_request");
+        }
+        let Some(dir) = self.artifact_dir.as_ref() else {
+            return failed("artifact_store_unavailable");
+        };
+        let registry = ArtifactRegistry::new(dir.clone());
+        if matches!(
+            request,
+            ArtifactRetentionRequest::ArtifactInventoryStatus { .. }
+        ) {
+            return match registry.inventory() {
+                Ok(artifacts) => ArtifactRetentionResult::ArtifactInventory {
+                    request_id,
+                    artifacts: artifacts
+                        .into_iter()
+                        .map(|value| ArtifactInventoryEntry {
+                            artifact_digest: value.artifact_digest,
+                            state: value.state,
+                            live_references: value.live_references,
+                            runtime_references: value.runtime_references,
+                            unmanaged: value.unmanaged,
+                        })
+                        .collect(),
+                },
+                Err(error) => failed(retention_error_code(&error)),
+            };
+        }
+        let operation = match request {
+            ArtifactRetentionRequest::ArtifactRetain {
+                artifact_digest,
+                reference_id,
+                ..
+            } => {
+                return match registry.retain(&artifact_digest, &reference_id) {
+                    Ok((claim, _)) => ArtifactRetentionResult::ArtifactReferenceRetained {
+                        request_id,
+                        artifact_digest,
+                        reference_id,
+                        owner_claim: claim,
+                    },
+                    Err(error) => failed(retention_error_code(&error)),
+                };
+            }
+            ArtifactRetentionRequest::ArtifactRelease {
+                artifact_digest,
+                reference_id,
+                owner_claim,
+                ..
+            } => registry.release(&artifact_digest, &reference_id, &owner_claim),
+            ArtifactRetentionRequest::ArtifactInspect {
+                artifact_digest, ..
+            } => registry.inspect(&artifact_digest),
+            ArtifactRetentionRequest::ArtifactInventorySeal {
+                artifact_digest,
+                reference_ids,
+                ..
+            } => registry.seal_inventory(&artifact_digest, &reference_ids),
+            ArtifactRetentionRequest::ArtifactInventoryStatus { .. } => {
+                unreachable!("handled above")
+            }
+            ArtifactRetentionRequest::ArtifactCollect {
+                artifact_digest, ..
+            } => {
+                let Some(socket) = self.runtime_socket.as_ref() else {
+                    return failed("runtime_reference_unavailable");
+                };
+                let Ok(live) = runtime_artifact_count(socket, &artifact_digest, &request_id) else {
+                    return failed("runtime_reference_unavailable");
+                };
+                registry.collect(&artifact_digest, live)
+            }
+        };
+        match operation {
+            Ok(value) => ArtifactRetentionResult::ArtifactDisposition {
+                request_id,
+                artifact_digest: value.artifact_digest,
+                state: value.state,
+                live_references: value.live_references,
+                runtime_references: value.runtime_references,
+                unmanaged: value.unmanaged,
+            },
+            Err(error) => failed(retention_error_code(&error)),
+        }
+    }
+
     /// Bind exact frontend package roots and interpreter drivers.
     #[must_use]
     pub fn with_frontends(roots: FrontendRoots, drivers: FrontendDrivers) -> Self {
@@ -84,6 +196,7 @@ impl CompilationService {
             roots,
             drivers,
             artifact_dir: None,
+            runtime_socket: None,
         }
     }
 
@@ -97,6 +210,11 @@ impl CompilationService {
         {
             service.artifact_dir = Some(PathBuf::from(dir));
         }
+        if let Ok(socket) = std::env::var("APXM_RUNTIME_SOCKET")
+            && !socket.trim().is_empty()
+        {
+            service.runtime_socket = Some(PathBuf::from(socket));
+        }
         service
     }
 
@@ -105,6 +223,12 @@ impl CompilationService {
     #[must_use]
     pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
         self.artifact_dir = Some(dir);
+        self
+    }
+
+    #[must_use]
+    pub fn with_runtime_socket(mut self, socket: PathBuf) -> Self {
+        self.runtime_socket = Some(socket);
         self
     }
 
@@ -175,7 +299,9 @@ impl CompilationService {
                     .clone()
                     .ok_or(ProtocolError::InvalidRequest)?;
                 if let Some(dir) = &self.artifact_dir
-                    && persist_artifact(dir, &artifact_digest, artifact_json.as_bytes()).is_err()
+                    && ArtifactRegistry::new(dir.clone())
+                        .publish(&artifact_digest, artifact_json.as_bytes())
+                        .is_err()
                 {
                     return Ok(CompilationResult::failed_with(
                         request_id,
@@ -196,6 +322,70 @@ impl CompilationService {
             }
             Err(diagnostics) => Ok(CompilationResult::failed(request_id, diagnostics)),
         }
+    }
+}
+
+fn runtime_artifact_count(socket: &Path, digest: &str, request_id: &str) -> Result<u32, String> {
+    if !socket.is_absolute() {
+        return Err("Runtime socket is not absolute".to_owned());
+    }
+    let mut stream = UnixStream::connect(socket).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| error.to_string())?;
+    let id = format!("{request_id}:artifact-reference-inspect");
+    let payload = serde_json::json!({
+        "handshake": RuntimeRetirementHandshake::server(),
+        "request": RuntimeRetirementRequest::ArtifactReferenceInspect {
+            request_id: id.clone(), artifact_digest: digest.to_owned(),
+        },
+    });
+    let frame = serde_json::json!({"channel":"runtime", "payload": payload.to_string()});
+    stream
+        .write_all(format!("{frame}\n").as_bytes())
+        .map_err(|error| error.to_string())?;
+    let mut reader = std::io::BufReader::new(stream.take(8 * 1024 * 1024));
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())?;
+    let reply: serde_json::Value =
+        serde_json::from_str(&line).map_err(|error| error.to_string())?;
+    if reply.get("channel").and_then(serde_json::Value::as_str) != Some("runtime") {
+        return Err("Runtime reference channel mismatch".to_owned());
+    }
+    let body = reply
+        .get("payload")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Runtime reference response is empty")?;
+    match serde_json::from_str::<RuntimeRetirementResult>(body)
+        .map_err(|error| error.to_string())?
+    {
+        RuntimeRetirementResult::ArtifactReferenceCount {
+            request_id: response_id,
+            artifact_digest,
+            live_instances,
+        } if response_id == id && artifact_digest == digest => Ok(live_instances),
+        _ => Err("Runtime reference response is not exact".to_owned()),
+    }
+}
+
+fn retention_error_code(error: &str) -> &str {
+    match error {
+        "unknown_artifact"
+        | "unknown_reference"
+        | "owner_mismatch"
+        | "reference_released"
+        | "artifact_purged"
+        | "inventory_mismatch"
+        | "duplicate_reference"
+        | "artifact_reference_capacity_exhausted" => error,
+        "invalid artifact digest" => "invalid_artifact_digest",
+        "invalid reference id" => "invalid_reference_id",
+        _ => "artifact_store_unavailable",
     }
 }
 
@@ -252,6 +442,7 @@ pub fn artifact_file_name(digest: &str) -> String {
     digest.replace(':', "-")
 }
 
+#[cfg(test)]
 fn persist_artifact(dir: &Path, digest: &str, bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let directory = std::fs::symlink_metadata(dir).map_err(|error| error.to_string())?;
@@ -919,6 +1110,55 @@ mod tests {
     use apxm_compilation_protocol::{COMPILATION_PROTOCOL_VERSION, CompilationRequest};
     use apxm_source_port::{Frontend, SnapshotContent};
 
+    #[test]
+    fn artifact_inventory_reports_legacy_blob_and_collect_requires_runtime_proof() {
+        let directory = std::env::temp_dir().join(format!(
+            "apxm-retention-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&directory).expect("artifact directory");
+        let digest = format!("sha256:{}", "a".repeat(64));
+        std::fs::write(directory.join(digest.replace(':', "-")), b"legacy").expect("legacy blob");
+        let mut service = CompilationService::with_frontends(
+            declared_frontend_roots(),
+            declared_frontend_drivers(),
+        );
+        service.artifact_dir = Some(directory.clone());
+        let handshake = ArtifactRetentionHandshake::server();
+        let inventory = service.handle_retention(
+            &handshake,
+            ArtifactRetentionRequest::ArtifactInventoryStatus {
+                request_id: "inventory".to_owned(),
+            },
+        );
+        let ArtifactRetentionResult::ArtifactInventory { artifacts, .. } = inventory else {
+            panic!("legacy blob missing from inventory");
+        };
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].artifact_digest, digest);
+        assert!(artifacts[0].unmanaged);
+        let collect = service.handle_retention(
+            &handshake,
+            ArtifactRetentionRequest::ArtifactCollect {
+                request_id: "collect".to_owned(),
+                artifact_digest: digest.clone(),
+            },
+        );
+        assert_eq!(
+            collect,
+            ArtifactRetentionResult::Failed {
+                request_id: "collect".to_owned(),
+                code: "runtime_reference_unavailable".to_owned(),
+            }
+        );
+        assert!(directory.join(digest.replace(':', "-")).exists());
+        std::fs::remove_dir_all(directory).expect("remove isolated test directory");
+    }
+
     const PYTHON_PROGRAM: &str = r#"from apxm_program import Agent, Model, Tool
 
 
@@ -1033,7 +1273,16 @@ export const Reviewer = Agent<ReviewRequest, Review>({
 
     #[test]
     fn python_and_typescript_commit_through_one_handler() {
-        let mut service = CompilationService::default();
+        let directory = std::env::temp_dir().join(format!(
+            "apxm-compiled-store-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let mut service = CompilationService::default().with_artifact_dir(directory.clone());
         for (frontend, entry, source) in [
             (Frontend::Python, "src/agent.py", PYTHON_PROGRAM),
             (Frontend::Typescript, "src/agent.ts", TYPESCRIPT_PROGRAM),
@@ -1081,6 +1330,47 @@ export const Reviewer = Agent<ReviewRequest, Review>({
                 frontend.wire()
             );
         }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn compiled_wire_keeps_the_artifact_canonical_bytes() {
+        if !frontend_present(Frontend::Typescript) {
+            return;
+        }
+        let snapshot = package_snapshot(Frontend::Typescript, "src/agent.ts", TYPESCRIPT_PROGRAM);
+        let frame = crate::StdioFrame {
+            channel: crate::COMPILATION_CHANNEL.to_owned(),
+            payload: serde_json::json!({
+                "handshake": handshake(),
+                "request": CompilationRequest::Compile {
+                    request_id: "wire-canonical".to_owned(),
+                    idempotency_key: "wire-canonical".to_owned(),
+                    snapshot,
+                },
+            })
+            .to_string(),
+        };
+        let mut output = Vec::new();
+        crate::serve_stdio(
+            crate::encode_jsonl(&frame).as_bytes(),
+            &mut output,
+            CompilationService::default(),
+        )
+        .expect("wire compile");
+        let reply = crate::decode_jsonl(std::str::from_utf8(&output).unwrap()).unwrap();
+        let result: CompilationResult = serde_json::from_str(&reply.payload).unwrap();
+        let CompilationResult::ArtifactCommitted { artifact, .. } = result else {
+            panic!("expected a committed artifact");
+        };
+        let encoded = artifact.encode().unwrap();
+        let fragment = format!("\"artifact\":{}", std::str::from_utf8(&encoded).unwrap());
+        assert!(
+            reply.payload.contains(&fragment),
+            "wire reordered the artifact"
+        );
+        ExecutableArtifact::decode_for_execution(&encoded, &artifact.artifact_digest)
+            .expect("wire artifact digest remains canonical");
     }
 
     #[test]

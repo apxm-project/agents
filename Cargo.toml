@@ -9,6 +9,7 @@ members = [
 	"crates/compiler/source-port",
 	"crates/compiler/service-protocol",
 	"crates/compiler/service",
+	"crates/compiler/artifact-registry",
 	"crates/compiler/frontend/native/python",
 	"crates/compiler/frontend/native/typescript",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -57,6 +58,7 @@ apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
 apxm-source-port = { version = "0.1.0", path = "crates/compiler/source-port" }
 apxm-compilation-protocol = { version = "0.1.0", path = "crates/compiler/service-protocol" }
 apxm-compilation-service = { version = "0.1.0", path = "crates/compiler/service" }
+apxm-artifact-registry = { version = "0.1.0", path = "crates/compiler/artifact-registry" }
 apxm-capability-iface = { version = "0.1.0", path = "crates/runtime/capability-iface" }
 apxm-capability = { version = "0.1.0", path = "crates/runtime/capability" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
